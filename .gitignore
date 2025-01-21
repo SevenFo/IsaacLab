@@ -57,3 +57,8 @@ _build
 **/runs/*
 **/logs/*
 **/recordings/*
+
+# VoxPoser
+cache/*
+*.png
+*.txt

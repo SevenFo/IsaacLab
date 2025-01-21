@@ -1,0 +1,6 @@
+[submodule "Voxposer"]
+	path = Voxposer
+	url = git@github.com:SevenFo/VoxPoser.git
+[submodule "MetaGPT"]
+	path = MetaGPT
+	url = https://github.com/SevenFo/MetaGPT_Embodied.git

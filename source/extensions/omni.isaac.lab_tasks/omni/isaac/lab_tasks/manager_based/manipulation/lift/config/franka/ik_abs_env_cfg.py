@@ -5,7 +5,9 @@
 
 from omni.isaac.lab.assets import DeformableObjectCfg
 from omni.isaac.lab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
-from omni.isaac.lab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
+from omni.isaac.lab.envs.mdp.actions.actions_cfg import (
+    DifferentialInverseKinematicsActionCfg,
+)
 from omni.isaac.lab.managers import EventTermCfg as EventTerm
 from omni.isaac.lab.managers import SceneEntityCfg
 from omni.isaac.lab.sim.spawners import UsdFileCfg
@@ -35,15 +37,21 @@ class FrankaCubeLiftEnvCfg(joint_pos_env_cfg.FrankaCubeLiftEnvCfg):
 
         # Set Franka as robot
         # We switch here to a stiffer PD controller for IK tracking to be better.
-        self.scene.robot = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot = FRANKA_PANDA_HIGH_PD_CFG.replace(
+            prim_path="{ENV_REGEX_NS}/Robot"
+        )
 
         # Set actions for the specific robot type (franka)
         self.actions.arm_action = DifferentialInverseKinematicsActionCfg(
             asset_name="robot",
             joint_names=["panda_joint.*"],
             body_name="panda_hand",
-            controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
-            body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.107]),
+            controller=DifferentialIKControllerCfg(
+                command_type="pose", use_relative_mode=False, ik_method="dls"
+            ),
+            body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(
+                pos=[0.02, 0.0, 0.08]
+            ),
         )
 
 
@@ -72,7 +80,9 @@ class FrankaTeddyBearLiftEnvCfg(FrankaCubeLiftEnvCfg):
 
         self.scene.object = DeformableObjectCfg(
             prim_path="{ENV_REGEX_NS}/Object",
-            init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.05), rot=(0.707, 0, 0, 0.707)),
+            init_state=DeformableObjectCfg.InitialStateCfg(
+                pos=(0.5, 0, 0.05), rot=(0.707, 0, 0, 0.707)
+            ),
             spawn=UsdFileCfg(
                 usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Teddy_Bear/teddy_bear.usd",
                 scale=(0.01, 0.01, 0.01),
@@ -93,7 +103,11 @@ class FrankaTeddyBearLiftEnvCfg(FrankaCubeLiftEnvCfg):
             func=mdp.reset_nodal_state_uniform,
             mode="reset",
             params={
-                "position_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
+                "position_range": {
+                    "x": (-0.1, 0.1),
+                    "y": (-0.25, 0.25),
+                    "z": (0.0, 0.0),
+                },
                 "velocity_range": {},
                 "asset_cfg": SceneEntityCfg("object"),
             },

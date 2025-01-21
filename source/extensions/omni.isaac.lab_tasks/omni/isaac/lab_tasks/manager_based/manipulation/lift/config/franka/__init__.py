@@ -72,7 +72,36 @@ gym.register(
     entry_point="omni.isaac.lab.envs:ManagerBasedRLEnv",
     kwargs={
         "env_cfg_entry_point": f"{__name__}.ik_rel_env_cfg:FrankaCubeLiftEnvCfg",
-        "robomimic_bc_cfg_entry_point": os.path.join(agents.__path__[0], "robomimic/bc.json"),
+        "robomimic_bc_cfg_entry_point": os.path.join(
+            agents.__path__[0], "robomimic/bc.json"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+##
+# Inverse Kinematics - Relative / Absolute Pose Control with Camera Observations
+##
+
+gym.register(
+    id="Isaac-Lift-Cube-Franka-IK-Abs-Cam-v0",
+    entry_point="omni.isaac.lab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.ik_cam_env_cfg:FrankaCubeLiftAbsCameraEnvCfg",
+        "robomimic_bc_cfg_entry_point": os.path.join(
+            agents.__path__[0], "robomimic/bc.json"
+        ),
+    },
+    disable_env_checker=True,
+)
+gym.register(
+    id="Isaac-Lift-Cube-Franka-IK-Rel-Cam-v0",
+    entry_point="omni.isaac.lab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.ik_cam_env_cfg:FrankaCubeLiftRelCameraEnvCfg",
+        "robomimic_bc_cfg_entry_point": os.path.join(
+            agents.__path__[0], "robomimic/bc.json"
+        ),
     },
     disable_env_checker=True,
 )

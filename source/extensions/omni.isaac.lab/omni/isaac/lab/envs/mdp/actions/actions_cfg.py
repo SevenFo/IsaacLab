@@ -9,7 +9,13 @@ from omni.isaac.lab.controllers import DifferentialIKControllerCfg
 from omni.isaac.lab.managers.action_manager import ActionTerm, ActionTermCfg
 from omni.isaac.lab.utils import configclass
 
-from . import binary_joint_actions, joint_actions, joint_actions_to_limits, non_holonomic_actions, task_space_actions
+from . import (
+    binary_joint_actions,
+    joint_actions,
+    joint_actions_to_limits,
+    non_holonomic_actions,
+    task_space_actions,
+)
 
 ##
 # Joint actions.
@@ -132,7 +138,9 @@ class EMAJointPositionToLimitsActionCfg(JointPositionToLimitsActionCfg):
     See :class:`EMAJointPositionToLimitsAction` for more details.
     """
 
-    class_type: type[ActionTerm] = joint_actions_to_limits.EMAJointPositionToLimitsAction
+    class_type: type[ActionTerm] = (
+        joint_actions_to_limits.EMAJointPositionToLimitsAction
+    )
 
     alpha: float | dict[str, float] = 1.0
     """The weight for the moving average (float or dict of regex expressions). Defaults to 1.0.
@@ -236,7 +244,9 @@ class DifferentialInverseKinematicsActionCfg(ActionTermCfg):
         rot: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
         """Quaternion rotation ``(w, x, y, z)`` w.r.t. the parent frame. Defaults to (1.0, 0.0, 0.0, 0.0)."""
 
-    class_type: type[ActionTerm] = task_space_actions.DifferentialInverseKinematicsAction
+    class_type: type[ActionTerm] = (
+        task_space_actions.DifferentialInverseKinematicsAction
+    )
 
     joint_names: list[str] = MISSING
     """List of joint names or regex expressions that the action will be mapped to."""
