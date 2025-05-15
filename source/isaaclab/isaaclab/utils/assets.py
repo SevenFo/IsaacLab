@@ -21,7 +21,10 @@ from typing import Literal
 import carb
 import omni.client
 
-NUCLEUS_ASSET_ROOT_DIR = carb.settings.get_settings().get("/persistent/isaac/asset_root/cloud")
+# NUCLEUS_ASSET_ROOT_DIR = carb.settings.get_settings().get("/persistent/isaac/asset_root/cloud")
+NUCLEUS_ASSET_ROOT_DIR = (
+    "/data/shared_folder/IssacAsserts/isaacsim_assets/Assets/Isaac/4.5"
+)
 """Path to the root directory on the Nucleus Server."""
 
 NVIDIA_NUCLEUS_DIR = f"{NUCLEUS_ASSET_ROOT_DIR}/NVIDIA"
@@ -56,7 +59,9 @@ def check_file_path(path: str) -> Literal[0, 1, 2]:
         return 0
 
 
-def retrieve_file_path(path: str, download_dir: str | None = None, force_download: bool = True) -> str:
+def retrieve_file_path(
+    path: str, download_dir: str | None = None, force_download: bool = True
+) -> str:
     """Retrieves the path to a file on the Nucleus Server or locally.
 
     If the file exists locally, then the absolute path to the file is returned.
@@ -92,14 +97,18 @@ def retrieve_file_path(path: str, download_dir: str | None = None, force_downloa
         if not os.path.exists(download_dir):
             os.makedirs(download_dir)
         # download file in temp directory using os
-        file_name = os.path.basename(omni.client.break_url(path.replace(os.sep, "/")).path)
+        file_name = os.path.basename(
+            omni.client.break_url(path.replace(os.sep, "/")).path
+        )
         target_path = os.path.join(download_dir, file_name)
         # check if file already exists locally
         if not os.path.isfile(target_path) or force_download:
             # copy file to local machine
             result = omni.client.copy(path.replace(os.sep, "/"), target_path)
             if result != omni.client.Result.OK and force_download:
-                raise RuntimeError(f"Unable to copy file: '{path}'. Is the Nucleus Server running?")
+                raise RuntimeError(
+                    f"Unable to copy file: '{path}'. Is the Nucleus Server running?"
+                )
         return os.path.abspath(target_path)
     else:
         raise FileNotFoundError(f"Unable to find the file: {path}")
