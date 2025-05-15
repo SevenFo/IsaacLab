@@ -240,10 +240,10 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene):
             # clear internal buffers
             # robot
             # -- root state
-            root_state = robot.data.default_root_state.clone()
-            root_state[:, :3] += scene.env_origins
-            robot.write_root_pose_to_sim(root_state[:, :7])
-            robot.write_root_velocity_to_sim(root_state[:, 7:])
+            robotroot_state = robot.data.default_root_state.clone()
+            robotroot_state[:, :3] += scene.env_origins
+            robot.write_root_pose_to_sim(robotroot_state[:, :7])
+            robot.write_root_velocity_to_sim(robotroot_state[:, 7:])
             # -- joint state
             joint_pos, joint_vel = (
                 robot.data.default_joint_pos.clone(),
@@ -263,21 +263,12 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene):
                 torch.cat((lin_vel, torch.zeros_like(lin_vel)), dim=1)
             )  # not effective
             # scene.reset()
-        robot_state = robot.data.default_joint_pos.clone()
-        robot_state[:, :6] = (
-            robot.data.default_joint_pos
-            - torch.randn_like(robot.data.default_joint_pos)
-        )[:, :6] * torch.pi
-        finger_joint_index = robot.find_joints("finger_joint")[0]
-        robot_state[:, finger_joint_index + [7] + [12, 13]] = (
-            robot.data.default_joint_pos[:, finger_joint_index + [7] + [12, 13]]
-            + torch.randn_like(
-                robot.data.joint_pos[:, finger_joint_index + [7] + [12, 13]]
-            )
-            * 1.0
-        )
+
         # Apply action to robot
-        robot.set_joint_position_target(robot_state)
+        robot.set_joint_position_target(
+            torch.ones_like(robot.data.joint_pos[:, [6]]) * 1.0,
+            [6],
+        )
         # Write data to sim
         scene.write_data_to_sim()
         # Perform step
