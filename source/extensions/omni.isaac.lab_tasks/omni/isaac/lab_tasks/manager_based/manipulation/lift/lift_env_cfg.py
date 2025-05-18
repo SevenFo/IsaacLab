@@ -53,22 +53,25 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     object: RigidObjectCfg | DeformableObjectCfg = MISSING
 
     # Table
-    table = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/Table",
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=[0.5, 0, 0], rot=[0.707, 0, 0, 0.707]
-        ),
-        spawn=UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"
-        ),
-    )
+    # table = AssetBaseCfg(
+    #     prim_path="{ENV_REGEX_NS}/Table",
+    #     init_state=AssetBaseCfg.InitialStateCfg(
+    #         pos=[0.5, 0, 0], rot=[0.707, 0, 0, 0.707]
+    #     ),
+    #     spawn=UsdFileCfg(
+    #         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"
+    #     ),
+    # )
     house = AssetBaseCfg(
         prim_path="/World/House",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"omniverse://localhost/Projects/lunarbase/box.usd",
-            scale=(0.01, 0.01, 0.01),
+            # usd_path=f"/data/shared_folder/IssacAsserts/Projects/lunarbase/box.usd",
+            usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd",
+            # scale=(0.01, 0.01, 0.01),
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0, 0, -1.05]),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=[-0.62562, 2.29608, -2.85021],
+        ),
     )
     # X 45 Y -70 Z 0
     # X 0 Y 0 Z 180
@@ -76,7 +79,7 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     # people = AssetBaseCfg(
     #     prim_path="/World/House/People",
     #     spawn=sim_utils.UsdFileCfg(
-    #         usd_path=f"omniverse://localhost/Projects/lunarbase/chars/astro/astro.usd",
+    #         usd_path=f"/data/shared_folder/IssacAsserts/Projects/lunarbase/chars/astro/astro.usd",
     #     ),
     #     init_state=AssetBaseCfg.InitialStateCfg(pos=[45, -70, 0], rot=[0, 0, 0, 1]),
     # )
@@ -84,7 +87,9 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     # plane
     plane = AssetBaseCfg(
         prim_path="/World/GroundPlane",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0, 0, -1.10]),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=[-0.62562, 1.29608, -2.95021 - 1.10]
+        ),
         spawn=GroundPlaneCfg(),
     )
 
@@ -168,7 +173,7 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (0, 0.3), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
+            "pose_range": {"x": (0, 0.3), "y": (-0.01, 0.01), "z": (0.0, 0.0)},
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("object", body_names="Object"),
         },
@@ -217,7 +222,7 @@ class TerminationsCfg:
 
     object_dropping = DoneTerm(
         func=mdp.root_height_below_minimum,
-        params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object")},
+        params={"minimum_height": -3, "asset_cfg": SceneEntityCfg("object")},
     )
 
 

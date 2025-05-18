@@ -56,15 +56,16 @@ class FrankaCubeLiftEnvCfg(LiftEnvCfg):
                 pos=[0.5, 0, 0.055], rot=[1, 0, 0, 0]
             ),
             spawn=UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+                usd_path=f"/data/shared_folder/IssacAsserts/isaacsim_assets/Assets/Isaac/4.5/Isaac/Props/Blocks/DexCube/dex_cube_instanceable.usd",
                 # usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/yellow_block.usd",
                 scale=(0.8, 0.8, 0.8),
                 rigid_props=RigidBodyPropertiesCfg(
-                    solver_position_iteration_count=16,
-                    solver_velocity_iteration_count=1,
-                    max_angular_velocity=1000.0,
-                    max_linear_velocity=1000.0,
-                    max_depenetration_velocity=5.0,
+                    # solver_position_iteration_count=16,
+                    # solver_velocity_iteration_count=1,
+                    # max_angular_velocity=1000.0,
+                    # max_linear_velocity=1000.0,
+                    # max_depenetration_velocity=5.0,
+                    kinematic_enabled=True,
                     disable_gravity=False,
                 ),
             ),

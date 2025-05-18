@@ -2,6 +2,7 @@
 
 from dataclasses import field
 from typing import Literal
+import numpy as np
 
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.sim import PinholeCameraCfg
@@ -14,6 +15,7 @@ from . import ik_abs_env_cfg
 from . import ik_rel_env_cfg
 import omni.isaac.lab_tasks.manager_based.manipulation.lift.mdp as mdp
 from ...lift_env_cfg import ObjectTableSceneCfg, ObservationsCfg
+from omni.isaac.lab_assets.franka import FRANKA_PANDA_HIGH_PD_CFG
 
 
 @configclass
@@ -57,6 +59,9 @@ class ObservationWithRGBCfg(ObservationsCfg):
     rgb: RGBCameraPolicyCfg = RGBCameraPolicyCfg()
 
 
+FRANKA_PANDA_HIGH_PD_CFG = FRANKA_PANDA_HIGH_PD_CFG.copy()
+
+
 @configclass
 class FrankaCubeLiftAbsCameraEnvCfg(ik_abs_env_cfg.FrankaCubeLiftEnvCfg):
     """绝对姿态控制的相机环境配置"""
@@ -66,6 +71,26 @@ class FrankaCubeLiftAbsCameraEnvCfg(ik_abs_env_cfg.FrankaCubeLiftEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
+        # pos_offset = (0.62562, -1.29608, 2.95021)
+        # rot_offset = (0.707, 0.0, 0, -0.707)  # z轴旋转-90度
+        # self.scene.object.init_state.pos = tuple(
+        #     np.array(self.scene.object.init_state.pos) + np.array(pos_offset)
+        # )
+        # self.scene.robot.init_state.pos = tuple(
+        #     np.array(self.scene.robot.init_state.pos) + np.array(pos_offset)
+        # )
+        # object_pos_offset_x = (
+        #     self.scene.object.init_state.pos[0] - self.scene.robot.init_state.pos[0]
+        # )
+        # self.scene.object.init_state.pos = tuple(
+        #     np.array(self.scene.object.init_state.pos)
+        #     + np.array([-object_pos_offset_x, -object_pos_offset_x, 0])
+        #     + np.array([-0.2, 0.0, 0.0])
+        # )
+        # self.scene.robot.init_state.rot = rot_offset
+        # self.scene.tiled_camera.offset.rot = tuple(
+        #     np.array(self.scene.tiled_camera.offset.rot) + np.array(rot_offset)
+        # )
 
 
 @configclass
