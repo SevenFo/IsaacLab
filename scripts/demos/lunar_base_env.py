@@ -14,30 +14,6 @@
 
 from __future__ import annotations
 
-"""Launch Isaac Sim Simulator first."""
-
-
-import argparse
-
-from isaaclab.app import AppLauncher
-
-# add argparse arguments
-parser = argparse.ArgumentParser(
-    description="Demo on spawning different objects in multiple environments."
-)
-parser.add_argument(
-    "--num_envs", type=int, default=1, help="Number of environments to spawn."
-)
-# append AppLauncher cli args
-AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
-args_cli = parser.parse_args()
-
-# launch omniverse app
-app_launcher = AppLauncher(args_cli)
-simulation_app = app_launcher.app
-
-"""Rest everything follows."""
 
 import random
 import math
@@ -68,6 +44,8 @@ from isaaclab.assets import (
 from isaaclab.sensors import TiledCameraCfg, TiledCamera
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.envs import DirectRLEnvCfg, DirectMARLEnv
+from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.sim import SimulationContext
 from isaaclab.utils import Timer, configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
@@ -109,7 +87,7 @@ def randomize_shape_color(prim_path_expr: str):
 
 
 @configclass
-class MultiObjectSceneCfg(InteractiveSceneCfg):
+class LunarBaseEnvConfig(DirectRLEnvCfg):
     """Configuration for a multi-object scene."""
 
     # ground plane
@@ -123,7 +101,7 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
     )
 
-    lunar_base = AssetBaseCfg(
+    terrain = AssetBaseCfg(
         prim_path="/World/LunarBase",
         spawn=sim_utils.UsdFileCfg(
             usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd"
@@ -290,6 +268,120 @@ class MultiObjectSceneCfg(InteractiveSceneCfg):
     )
 
 
+import gymnasium as gym
+
+
+class LunarBaseEnv(gym.Env):
+    def __init__(
+        self, scene_cfg: LunarBaseEnvConfig, simulation_context: SimulationContext
+    ):
+        super().__init__()
+        self.scene_cfg = scene_cfg
+        self.sim = simulation_context
+        self.sim.set_camera_view(
+            (2.08, -1.12, 3.95),
+            (0.6256159257955498, -1.2960845679032278, 2.9002112950938577),
+        )
+
+        with Timer("[INFO] Time to create scene: "):
+            self.scene = InteractiveScene(self.scene_cfg)
+
+        with Timer("[INFO] Time to randomize scene: "):
+            # DO YOUR OWN OTHER KIND OF RANDOMIZATION HERE!
+            # Note: Just need to acquire the right attribute about the property you want to set
+            # Here is an example on setting color randomly
+            # randomize_shape_color(scene_cfg.object.prim_path)
+            pass
+
+        self.robot: Articulation = self.scene["robot"]
+        self.sim_dt = self.sim.get_physics_dt()
+        self.step_count = 0
+
+        # Play the simulator
+        self.sim.reset()
+        # Now we are ready!
+        print("[INFO]: Setup complete...")
+
+        self.arm_actuator: ImplicitActuatorCfg = self.robot.actuators["arm"]
+        self.gripper_actuator: ImplicitActuatorCfg = self.robot.actuators["gripper"]
+
+        self.num_env = self.scene_cfg.num_envs
+        self.action_space = gym.spaces.Dict(
+            {
+                "end_effector": gym.spaces.Box(
+                    low=-1.0,
+                    high=1.0,
+                    shape=(self.num_env, 7),
+                    dtype=np.float32,
+                ),
+                "gripper": gym.spaces.Box(
+                    low=0.0,
+                    high=1.0,
+                    shape=(self.num_env, 1),
+                    dtype=np.float32,
+                ),
+            }
+        )
+        self.observation_space = gym.spaces.Dict(
+            {
+                "end_effector": gym.spaces.Box(
+                    low=-1.0,
+                    high=1.0,
+                    shape=(self.num_env, 7),
+                    dtype=np.float32,
+                ),
+                "gripper": gym.spaces.Box(
+                    low=0.0,
+                    high=1.0,
+                    shape=(self.num_env, 1),
+                    dtype=np.float32,
+                ),
+                "front_rgb": gym.spaces.Box(
+                    low=0.0,
+                    high=255.0,
+                    shape=(self.num_env, 480, 640, 3),
+                    dtype=np.uint8,
+                ),
+                "top_rgb": gym.spaces.Box(
+                    low=0.0,
+                    high=255.0,
+                    shape=(self.num_env, 480, 640, 3),
+                    dtype=np.uint8,
+                ),
+                "front_depth": gym.spaces.Box(
+                    low=0.0,
+                    high=1.0e5,
+                    shape=(self.num_env, 480, 640, 1),
+                    dtype=np.float32,
+                ),
+                "top_depth": gym.spaces.Box(
+                    low=0.0,
+                    high=1.0e5,
+                    shape=(self.num_env, 480, 640, 1),
+                    dtype=np.float32,
+                ),
+            }
+        )
+
+    def reset(self):
+        with Timer("[INFO] Time to reset scene: "):
+            self.step_count = 0
+            robotroot_state = self.robot.data.default_root_state.clone()
+            robot_default_joint_pos = self.robot.data.default_joint_pos.clone()
+            robotroot_state[:, :3] += self.scene.env_origins
+            self.robot.write_root_pose_to_sim(robotroot_state[:, :7])
+            self.robot.write_root_velocity_to_sim(robotroot_state[:, 7:])
+            # -- joint state
+            joint_pos, joint_vel = (
+                self.robot.data.default_joint_pos.clone(),
+                self.robot.data.default_joint_vel.clone(),
+            )
+            self.robot.write_joint_state_to_sim(joint_pos, joint_vel)
+
+            self.scene.reset()
+            print("[INFO]: Resetting scene state...")
+
+
 ##
 # Simulation Loop
 ##
@@ -380,7 +472,7 @@ def main():
         (0.6256159257955498, -1.2960845679032278, 2.9002112950938577),
     )
     # Design scene
-    scene_cfg = MultiObjectSceneCfg(
+    scene_cfg = LunarBaseEnvConfig(
         num_envs=args_cli.num_envs, env_spacing=2.0, replicate_physics=False
     )
     with Timer("[INFO] Time to create scene: "):
