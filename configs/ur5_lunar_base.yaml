@@ -1,0 +1,10 @@
+scene:
+  ground:
+    spawn:
+      usd_path: /data/shiqi/IsaacLab/assets/GroundPlane.usd
+  lunar_base:
+    spawn:
+      usd_path: /data/shiqi/IsaacLab/assets/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd
+  robot:
+    spawn:
+      usd_path: /data/shiqi/IsaacLab/assets/ur5_with_gripper_single_articulation.usd

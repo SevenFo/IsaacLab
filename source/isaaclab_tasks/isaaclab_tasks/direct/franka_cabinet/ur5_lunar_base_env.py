@@ -11,20 +11,19 @@ import gymnasium as gym
 import math
 
 from isaacsim.core.utils.stage import get_current_stage
-from isaacsim.core.utils.torch.transformations import tf_combine, tf_inverse, tf_vector
+from isaacsim.core.utils.torch.transformations import tf_combine
 from pxr import UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
-from isaaclab.assets import Articulation, ArticulationCfg, AssetBaseCfg
-from isaaclab.sensors import TiledCameraCfg, TiledCamera
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.sensors import TiledCameraCfg
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
-from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import sample_uniform, quat_from_euler_xyz
+from isaaclab.controllers import DifferentialIKControllerCfg
 from isaaclab.envs.mdp.actions import DifferentialInverseKinematicsActionCfg
 from isaaclab.envs.mdp.actions.task_space_actions import (
     DifferentialInverseKinematicsAction,
@@ -32,100 +31,124 @@ from isaaclab.envs.mdp.actions.task_space_actions import (
 
 
 @configclass
-class FrankaCabinetEnvCfg(DirectRLEnvCfg):
-    # env
-    episode_length_s = 8.3333  # 500 timesteps
-    decimation = 2
+class LunarBaseScene(InteractiveSceneCfg):
+    """Configuration for a multi-object scene."""
 
-    action_space = gym.spaces.Dict(
-        {
-            "end_effector": gym.spaces.Box(
-                low=-1.0,
-                high=1.0,
-                shape=(7,),
-                dtype=np.float32,
-            ),
-            "gripper": gym.spaces.Box(
-                low=0.0,
-                high=1.0,
-                shape=(2,),
-                dtype=np.float32,
-            ),
-        }
-    )
+    # ground plane
+    # ground = AssetBaseCfg(
+    #     prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg()
+    # )
 
-    observation_space = gym.spaces.Dict(
-        {
-            "end_effector": gym.spaces.Box(
-                low=-1.0,
-                high=1.0,
-                shape=(7,),
-                dtype=np.float32,
-            ),
-            "gripper": gym.spaces.Box(
-                low=0.0,
-                high=1.0,
-                shape=(2,),
-                dtype=np.float32,
-            ),
-            "front_rgb": gym.spaces.Box(
-                low=0.0,
-                high=255.0,
-                shape=(480, 640, 3),
-                dtype=np.uint8,
-            ),
-            "top_rgb": gym.spaces.Box(
-                low=0.0,
-                high=255.0,
-                shape=(480, 640, 3),
-                dtype=np.uint8,
-            ),
-            "front_depth": gym.spaces.Box(
-                low=0.0,
-                high=1.0e5,
-                shape=(480, 640, 1),
-                dtype=np.float32,
-            ),
-            "top_depth": gym.spaces.Box(
-                low=0.0,
-                high=1.0e5,
-                shape=(480, 640, 1),
-                dtype=np.float32,
-            ),
-        }
-    )
-
-    state_space = gym.spaces.Dict(
-        {
-            "joint_positions": gym.spaces.Box(
-                low=-np.pi,
-                high=np.pi,
-                shape=(7,),
-                dtype=np.float32,
-            ),
-        }
-    )
-
-    # simulation
-    sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120,
-        render_interval=decimation,
-        disable_contact_processing=True,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
+    # lights
+    dome_light = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(
+            intensity=3000.0, color=(0.75, 0.75, 0.75)
         ),
     )
 
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=4096, env_spacing=3.0, replicate_physics=True
+    lunar_base = AssetBaseCfg(
+        prim_path="/World/LunarBase",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd"
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=(0.0, 0.0, 0.0),
+            rot=(1.0, 0.0, 0.0, 0.0),
+        ),
     )
 
-    # robot
+    # Isaac Sim Property Panel 中的 Transform.Orien 属性欧拉角采用的模式为 X-Y-Z-intrinsic
+    gripper_camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/ur5/wrist_3_link/wrist_camera",
+        update_period=0.1,
+        height=480,
+        width=640,
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=0.193,  # 1.93mm
+            focus_distance=400.0,
+            f_stop=0.0,  # disable DOF
+            horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
+            vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
+            clipping_range=(0.1, 1.0e5),
+        ),
+        offset=TiledCameraCfg.OffsetCfg(
+            pos=(-0.05, 0.0, 0.0),
+            rot=(
+                math.sqrt(2) / 2,
+                0,
+                0,
+                math.sqrt(2) / 2,
+            ),  # w-x-y-z # x-y-z-intrinsic (0,0,90) # orient
+            convention="ros",  # +z: forward, -y: up
+        ),
+    )
+    front_camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/ur5/base_link/top_camera",
+        update_period=0.1,
+        height=480,
+        width=640,
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=0.193,  # 1.93mm
+            focus_distance=400.0,
+            f_stop=0.0,  # disable DOF
+            horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
+            vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
+            clipping_range=(0.1, 1.0e5),
+        ),
+        offset=TiledCameraCfg.OffsetCfg(
+            pos=(1.62, 0.0, 2.35),
+            rot=quat_from_euler_xyz(
+                roll=torch.deg2rad(torch.scalar_tensor(30)),
+                pitch=torch.deg2rad(torch.scalar_tensor(0)),
+                yaw=torch.deg2rad(torch.scalar_tensor(90)),
+            )  # w-x-y-z # x-y-z-extrinsic == z-y-x-instrinsic != x-y-z-instrinsic (30,0,90) # orient
+            .squeeze()
+            .numpy(),  # extrinsic
+            convention="opengl",  # forward: -z, up: +y,isaac sim default
+        ),
+    )
+
+    # # rigid object
+    # object: RigidObjectCfg = RigidObjectCfg(
+    #     prim_path="/World/envs/env_.*/Object",
+    #     spawn=sim_utils.MultiAssetSpawnerCfg(
+    #         assets_cfg=[
+    #             sim_utils.ConeCfg(
+    #                 radius=0.3,
+    #                 height=0.6,
+    #                 visual_material=sim_utils.PreviewSurfaceCfg(
+    #                     diffuse_color=(0.0, 1.0, 0.0), metallic=0.2
+    #                 ),
+    #             ),
+    #             sim_utils.CuboidCfg(
+    #                 size=(0.3, 0.3, 0.3),
+    #                 visual_material=sim_utils.PreviewSurfaceCfg(
+    #                     diffuse_color=(1.0, 0.0, 0.0), metallic=0.2
+    #                 ),
+    #             ),
+    #             sim_utils.SphereCfg(
+    #                 radius=0.3,
+    #                 visual_material=sim_utils.PreviewSurfaceCfg(
+    #                     diffuse_color=(0.0, 0.0, 1.0), metallic=0.2
+    #                 ),
+    #             ),
+    #         ],
+    #         random_choice=True,
+    #         rigid_props=sim_utils.RigidBodyPropertiesCfg(
+    #             solver_position_iteration_count=4,
+    #             solver_velocity_iteration_count=0,
+    #             disable_gravity=False,
+    #         ),
+    #         mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+    #         collision_props=sim_utils.CollisionPropertiesCfg(),
+    #     ),
+    #     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 2.0)),
+    # )
+
+    # articulation
     robot: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -155,8 +178,12 @@ class FrankaCabinetEnvCfg(DirectRLEnvCfg):
                 ".*shoulder_lift.*": float(
                     np.deg2rad(-118.1)
                 ),  # 1.56,  # both front HFE
-                ".*elbow_joint.*": float(np.deg2rad(45)),  # 1.56,  # both hind HFE
-                ".*wrist_1.*": float(np.deg2rad(-84.2)),  # 1.56,  # both front KFE
+                ".*elbow_joint.*": float(
+                    np.deg2rad(45)
+                ),  # 1.56,  # both hind HFE
+                ".*wrist_1.*": float(
+                    np.deg2rad(-84.2)
+                ),  # 1.56,  # both front KFE
                 ".*wrist_2.*": float(np.deg2rad(272)),  # 1.56,  # both hind KFE
                 ".*wrist_3.*": float(np.deg2rad(93)),  # 1.56,  # both front TFE
                 # ".*outer_finger_joint": 0.0,  # both front TFE
@@ -190,86 +217,130 @@ class FrankaCabinetEnvCfg(DirectRLEnvCfg):
         },
     )
 
-    # ground plane
-    terrain = AssetBaseCfg(
-        prim_path="/World/LunarBase",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd"
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(1.0, 0.0, 0.0, 0.0),
-        ),
-    )
-    # ground plane
-    ground = AssetBaseCfg(
-        prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg()
+
+@configclass
+class LunarBaseEnvCfg(DirectRLEnvCfg):
+    # env
+    episode_length_s = 8.3333  # 500 timesteps
+    decimation = 2
+
+    action_space = gym.spaces.Dict(
+        {
+            # delat pose: pos, rot, axis-angle
+            "end_effector": gym.spaces.Box(
+                low=-1.0,
+                high=1.0,
+                shape=(6,),
+                dtype=np.float32,
+            ),
+            "gripper": gym.spaces.Box(
+                low=0.0,
+                high=1.0,
+                shape=(2,),
+                dtype=np.float32,
+            ),
+        }
     )
 
-    gripper_camera = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/ur5/wrist_3_link/wrist_camera",
-        update_period=0.1,
-        height=480,
-        width=640,
-        data_types=["rgb", "distance_to_image_plane"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=0.193,  # 1.93mm
-            focus_distance=400.0,
-            f_stop=0.0,  # disable DOF
-            horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
-            vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
-            clipping_range=(0.1, 1.0e5),
-        ),
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(-0.05, 0.0, 0.0),
-            rot=(
-                math.sqrt(2) / 2,
-                0,
-                0,
-                math.sqrt(2) / 2,
-            ),  # w-x-y-z # x-y-z-intrinsic (0,0,90) # orient
-            convention="ros",  # +z: forward, -y: up
+    observation_space = gym.spaces.Dict(
+        {
+            "policy": gym.spaces.Dict(
+                {
+                    "end_effector": gym.spaces.Box(
+                        low=-1.0,
+                        high=1.0,
+                        shape=(6,),
+                        dtype=np.float32,
+                    ),
+                    "gripper": gym.spaces.Box(
+                        low=0.0,
+                        high=1.0,
+                        shape=(2,),
+                        dtype=np.float32,
+                    ),
+                }
+            ),
+            "rgb": gym.spaces.Dict(
+                {
+                    "gripper_rgb": gym.spaces.Box(
+                        low=0.0,
+                        high=255.0,
+                        shape=(480, 640, 3),
+                        dtype=np.uint8,
+                    ),
+                    "front_rgb": gym.spaces.Box(
+                        low=0.0,
+                        high=255.0,
+                        shape=(480, 640, 3),
+                        dtype=np.uint8,
+                    ),
+                }
+            ),
+            "depth": gym.spaces.Dict(
+                {
+                    "gripper_depth": gym.spaces.Box(
+                        low=0.0,
+                        high=1.0e5,
+                        shape=(480, 640, 1),
+                        dtype=np.float32,
+                    ),
+                    "front_depth": gym.spaces.Box(
+                        low=0.0,
+                        high=1.0e5,
+                        shape=(480, 640, 1),
+                        dtype=np.float32,
+                    ),
+                }
+            ),
+        }
+    )
+
+    state_space = gym.spaces.Dict(
+        {
+            "joint_positions": gym.spaces.Box(
+                low=-np.pi,
+                high=np.pi,
+                shape=(7,),
+                dtype=np.float32,
+            ),
+        }
+    )
+
+    # simulation
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 120,
+        render_interval=decimation,
+        disable_contact_processing=True,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
         ),
     )
-    top_camera = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/ur5/base_link/top_camera",
-        update_period=0.1,
-        height=480,
-        width=640,
-        data_types=["rgb", "distance_to_image_plane"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=0.193,  # 1.93mm
-            focus_distance=400.0,
-            f_stop=0.0,  # disable DOF
-            horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
-            vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
-            clipping_range=(0.1, 1.0e5),
-        ),
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(1.62, 0.0, 2.35),
-            rot=quat_from_euler_xyz(
-                roll=torch.deg2rad(torch.scalar_tensor(30)),
-                pitch=torch.deg2rad(torch.scalar_tensor(0)),
-                yaw=torch.deg2rad(torch.scalar_tensor(90)),
-            )  # w-x-y-z # x-y-z-extrinsic == z-y-x-instrinsic != x-y-z-instrinsic (30,0,90) # orient
-            .squeeze()
-            .numpy(),  # extrinsic
-            convention="opengl",  # forward: -z, up: +y,isaac sim default
-        ),
+
+    # scene
+    scene: InteractiveSceneCfg = LunarBaseScene(
+        num_envs=1, env_spacing=3.0, replicate_physics=True
     )
 
     dikconfig = DifferentialInverseKinematicsActionCfg(
         asset_name="robot",
         joint_names=[".*shoulder.*", ".*elbow.*", ".*wrist_.*"],
-        body_name="gripper",
+        body_name="base_link_gripper",
         scale=0.5,
+        controller=DifferentialIKControllerCfg(
+            command_type="pose", use_relative_mode=True, ik_method="dls"
+        ),
         body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(
             pos=(0.0, 0.0, 0)  # TODO
         ),
     )
 
+    dof_velocity_scale = 0.1
 
-class FrankaCabinetEnv(DirectRLEnv):
+class LunarBaseEnv(DirectRLEnv):
     # pre-physics step calls
     #   |-- _pre_physics_step(action)
     #   |-- _apply_action()
@@ -279,10 +350,10 @@ class FrankaCabinetEnv(DirectRLEnv):
     #   |-- _reset_idx(env_ids)
     #   |-- _get_observations()
 
-    cfg: FrankaCabinetEnvCfg
+    cfg: LunarBaseEnvCfg
 
     def __init__(
-        self, cfg: FrankaCabinetEnvCfg, render_mode: str | None = None, **kwargs
+        self, cfg: LunarBaseEnvCfg, render_mode: str | None = None, **kwargs
     ):
         super().__init__(cfg, render_mode, **kwargs)
 
@@ -349,22 +420,27 @@ class FrankaCabinetEnv(DirectRLEnv):
         self.dik_action = DifferentialInverseKinematicsAction(self.cfg.dikconfig, self)
 
     def _setup_scene(self):
-        self._robot = Articulation(self.cfg.robot)
-        self.scene.articulations["robot"] = self._robot
-
-        self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
-
-        # clone and replicate
+        self._robot = self.scene.articulations.get("robot")
+        self._front_camera = self.scene.sensors.get("front_camera")
+        self._gripper_camera = self.scene.sensors.get("gripper_camera")
+        # clone and replicate # TODO still need?
         self.scene.clone_environments(copy_from_source=False)
 
     # pre-physics step calls
 
     def _pre_physics_step(self, actions: torch.Tensor):
+        # tensor([[0.0724, 0.1214, 0.9045]], device='cuda:0')
+        # tensor([[-0.9691, -0.0589, -0.2302, -0.0654]], device='cuda:0')
         self.dik_action.process_actions(actions)
 
     def _apply_action(self):
         self.dik_action.apply_actions()
         # self._robot.set_joint_position_target(self.robot_dof_targets)
+
+    def step(self, action: dict):
+        end_effector_action = action["end_effector"]
+        gripper_action = action["gripper"]
+        return super().step(end_effector_action)
 
     # post-physics step calls
 
@@ -400,25 +476,62 @@ class FrankaCabinetEnv(DirectRLEnv):
 
     def _get_observations(self) -> dict:
         # TODO
+        gripper_camera_rgb = self._gripper_camera.data.output["rgb"]
+        front_camera_rgb = self._front_camera.data.output["rgb"]
+        gripper_camera_depth = self._gripper_camera.data.output[
+            "distance_to_image_plane"
+        ]
+        front_camera_depth = self._front_camera.data.output[
+            "distance_to_image_plane"
+        ]
+
+        assert gripper_camera_rgb.dtype == torch.uint8
+
+        rgb = (
+            {"gripper_rgb": gripper_camera_rgb, "front_rgb": front_camera_rgb},
+        )
+
+        depth = {
+            "gripper_depth": gripper_camera_depth,
+            "front_camera_depth": front_camera_depth,
+        }
+
+        # save_images_grid(
+        #     gripper_camera,
+        #     subtitles=[f"Cam{i}" for i in range(gripper_camera.shape[0])],
+        #     title="Tiled RGB Image",
+        #     filename=os.path.join(
+        #         "./output/vis", "gripper_camera", f"{count:04d}.jpg"
+        #     ),
+        # )
+
+        # save_images_grid(
+        #     front_camera,
+        #     subtitles=[f"Cam{i}" for i in range(front_camera.shape[0])],
+        #     title="Tiled RGB Image",
+        #     filename=os.path.join(
+        #         "./output/vis", "front_camera", f"{count:04d}.jpg"
+        #     ),
+        # )
         dof_pos_scaled = (
             2.0
             * (self._robot.data.joint_pos - self.robot_dof_lower_limits)
             / (self.robot_dof_upper_limits - self.robot_dof_lower_limits)
             - 1.0
         )
-        to_target = self.drawer_grasp_pos - self.robot_grasp_pos
 
-        obs = torch.cat(
+        policy_obs = torch.cat(
             (
                 dof_pos_scaled,
                 self._robot.data.joint_vel * self.cfg.dof_velocity_scale,
-                to_target,
-                self._cabinet.data.joint_pos[:, 3].unsqueeze(-1),
-                self._cabinet.data.joint_vel[:, 3].unsqueeze(-1),
             ),
             dim=-1,
         )
-        return {"policy": torch.clamp(obs, -5.0, 5.0)}
+        return {
+            "policy": torch.clamp(policy_obs, -5.0, 5.0),
+            "rbg": rgb,
+            "depth": depth,
+        }
 
     # auxiliary methods
 
