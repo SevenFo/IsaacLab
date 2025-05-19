@@ -144,6 +144,7 @@ class DifferentialIKController:
             else:
                 self.ee_pos_des = self._command[:, 0:3]
                 self.ee_quat_des = self._command[:, 3:7]
+        return
 
     def compute(
         self, ee_pos: torch.Tensor, ee_quat: torch.Tensor, jacobian: torch.Tensor, joint_pos: torch.Tensor

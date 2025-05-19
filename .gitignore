@@ -63,3 +63,4 @@ _build
 
 # Isaac-Sim Python Venv
 env_isaacsim/
+assets/

@@ -18,6 +18,12 @@ parser.add_argument(
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument(
+    "--env_config_file",
+    type=str,
+    default=None,
+    help="Env Config YAML file Path, use to update default env config",
+)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -31,6 +37,7 @@ simulation_app = app_launcher.app
 
 import gymnasium as gym
 import torch
+import yaml
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import parse_env_cfg
@@ -42,6 +49,27 @@ def main():
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
+
+    if args_cli.env_config_file:
+        with open(args_cli.env_config_file, "r") as f:
+            env_new_cfg = yaml.safe_load(f)
+
+        def dynamic_set_attr(object: object, kwargs: dict, path: list[str]):
+            for k, v in kwargs.items():
+                if k in object.__dict__:
+                    if isinstance(v, dict):
+                        next_path = path.copy()
+                        next_path.append(k)
+                        dynamic_set_attr(
+                            object.__getattribute__(k), v, next_path
+                        )
+                    else:
+                        print(
+                            f"set {'.'.join(path + [k])} from {object.__getattribute__(k)} to {v}"
+                        )
+                        object.__setattr__(k, v)
+
+        dynamic_set_attr(env_cfg, env_new_cfg, path=["env_cfg"])
     # create environment
     env = gym.make(args_cli.task, cfg=env_cfg)
 
@@ -55,7 +83,11 @@ def main():
         # run everything in inference mode
         with torch.inference_mode():
             # compute zero actions
-            actions = torch.zeros(env.action_space.shape, device=env.unwrapped.device)
+            device = env.unwrapped.device  # 获取设备信息
+            actions = {
+                key: torch.zeros(space.shape, device=device)
+                for key, space in env.action_space.spaces.items()
+            }
             # apply actions
             env.step(actions)
 
