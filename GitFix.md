@@ -1,3 +1,5 @@
+# Git 修改历史中的错误作者信息
+
 **推荐方法：使用 `git rebase -i` (交互式变基)**
 
 这是针对修改少量特定 commit 的推荐方法。
@@ -130,3 +132,144 @@
     # git rebase origin/<被修改的分支名>
     ```
     这期间可能会有冲突，需要解决。
+
+
+# Git 选择应用其他分支的 commit
+
+**方法一：使用 `git cherry-pick` (推荐用于选择性地应用少量 commit)**
+
+`git cherry-pick` 命令允许你选择一个或多个来自其他分支的 commit，并将它们作为新的 commit 应用到你当前所在的分支上。
+
+1.  **确保你的本地仓库有最新的信息（如果其他分支是远程分支）：**
+    ```bash
+    git fetch origin # 或者其他远程仓库名
+    ```
+    如果你要 cherry-pick 的分支是本地的，则不需要这一步。
+
+2.  **切换到你的目标分支（你想要将 commit 应用到的分支）：**
+    ```bash
+    git checkout my-branch # 替换为你的分支名
+    ```
+
+3.  **找到你要 cherry-pick 的 commit 的 SHA-1 哈希值：**
+    你可以使用 `git log` 查看其他分支的提交历史。
+    ```bash
+    git log other-branch-name # 替换为包含你想要commit的分支名
+    # 例如：git log feature-xyz
+    ```
+    从输出中复制你想要的 commit 的 SHA-1 哈希值 (通常是一长串字母和数字，比如 `a1b2c3d4e5f6...`)。
+
+4.  **执行 `cherry-pick`：**
+    ```bash
+    git cherry-pick <commit-sha-1>
+    ```
+    例如：
+    ```bash
+    git cherry-pick a1b2c3d4
+    ```
+    这会在 `my-branch` 上创建一个新的 commit，这个新 commit 的内容（文件更改）与 `a1b2c3d4` 完全相同，但它会有新的 commit 时间戳，并且它的父 commit 是 `my-branch` 当前的 `HEAD`。它的 SHA-1 哈希值也会是全新的。
+
+    **如果要 cherry-pick 多个 commit：**
+    你可以按顺序提供多个 SHA-1 值：
+    ```bash
+    git cherry-pick <commit-sha-1> <commit-sha-2> <commit-sha-3>
+    ```
+    Git 会按照你给出的顺序（通常是较旧的 commit 在前）逐个应用它们。
+
+    **如果要 cherry-pick 一个连续范围的 commit：**
+    假设你要从 `other-branch-name` 上 cherry-pick 从 `commit-A` (不包括) 到 `commit-B` (包括) 之间的所有 commit：
+    ```bash
+    git cherry-pick <commit-A-sha>^..<commit-B-sha>
+    # 例如: git cherry-pick abcdef1^..uvwxyz7
+    ```
+    注意 `^` 符号，它表示 `commit-A` 的父 commit，所以 `commit-A` 本身也会被包含。
+    或者，如果你想包含 `commit-A`：
+    ```bash
+    git cherry-pick <commit-A-sha>..<commit-B-sha> # 这种写法 commit-A 不会被包含
+    # 更清晰的范围：
+    # 假设你要应用 commit X, Y, Z，它们在 other-branch 上是连续的
+    # 找到 X 的父 commit P
+    # git cherry-pick P..Z  (应用 X, Y, Z)
+    # 或者简单地:
+    # git cherry-pick X Y Z
+    ```
+
+5.  **解决冲突（如果发生）：**
+    如果 cherry-pick 的 commit 修改了与你当前分支上已有更改相冲突的文件部分，Git 会暂停并提示你解决冲突。
+    *   使用 `git status` 查看冲突文件。
+    *   手动编辑这些文件以解决冲突。
+    *   使用 `git add <resolved-file-name>` 将解决后的文件标记为已解决。
+    *   然后继续 cherry-pick 过程：
+        ```bash
+        git cherry-pick --continue
+        ```
+    *   如果想放弃当前的 cherry-pick 操作：
+        ```bash
+        git cherry-pick --abort
+        ```
+
+**方法二：使用 `git rebase --onto` (更高级，适用于移动一系列 commit)**
+
+如果你想将一个分支上的一系列 commit（不是整个分支）移动到另一个分支的顶部，`rebase --onto` 非常有用。这和 cherry-pick 连续范围的 commit 效果类似，但有时语义上更清晰。
+
+假设你有如下历史：
+
+```
+      A---B---C topic
+     /
+D---E---F---G main
+```
+
+你只想把 `topic` 分支上的 `B` 和 `C` 提交应用到 `main` 分支的 `G` 之后，而不是整个 `topic` 分支。
+
+```bash
+# 1. 切换到你希望这些commit最终基于的分支（或者只是一个临时指针）
+# git checkout main (如果你想直接在 main 上操作)
+
+# 2. 执行 rebase --onto
+# git rebase --onto <新基底> <旧基底> <要移动的分支/commit>
+git rebase --onto main topic~2 topic # topic~2 是 A，topic 是 C
+                                     # 表示将从 A 之后到 C (即 B 和 C) 的 commit
+                                     # 变基到 main 的顶部
+```
+
+执行后，`topic` 分支会变成：
+
+```
+      A topic~2 (旧的 topic 分支指针可能还在，或者被移动)
+     /
+D---E---F---G---B'---C' main, topic (新的 topic 指向 C')
+```
+
+如果你只是想把这些 commit 应用到当前分支，而不是移动 `topic` 分支本身，可以先切换到目标分支：
+
+```bash
+git checkout main
+git rebase --onto HEAD topic~2 topic
+```
+
+这会把 `B` 和 `C` 变成 `B'` 和 `C'` 应用到 `main` 的顶部。
+
+**方法三：使用 `git format-patch` 和 `git am` (生成补丁文件)**
+
+这是一种更通用的方法，不直接依赖于 Git 的分支结构，而是通过文件。
+
+1.  **在源分支上生成补丁文件：**
+    ```bash
+    git checkout other-branch-name
+    git format-patch -N <commit-sha> # -N 表示从 <commit-sha> 往前的 N 个 commit
+    # 或者
+    git format-patch <commit-sha-A>^..<commit-sha-B> # 生成 A 到 B (含) 的补丁
+    # 例如，只生成一个 commit 的补丁：
+    git format-patch -1 <commit-sha>
+    ```
+    这会生成一个或多个 `.patch` 文件。
+
+2.  **切换到目标分支并应用补丁：**
+    ```bash
+    git checkout my-branch
+    git am <path/to/patch-file.patch> # 应用单个补丁
+    # 或者应用目录下所有补丁
+    git am <path/to/patches>/*.patch
+    ```
+    `git am` (apply mail) 会尝试应用这些补丁并创建新的 commit。
