@@ -88,6 +88,7 @@ def main():
                 key: torch.zeros(space.shape, device=device)
                 for key, space in env.action_space.spaces.items()
             }
+            actions["end_effector"][:, 2] = 0.1
             # apply actions
             env.step(actions)
 

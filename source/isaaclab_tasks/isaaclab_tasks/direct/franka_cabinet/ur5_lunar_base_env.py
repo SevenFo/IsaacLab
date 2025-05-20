@@ -35,9 +35,9 @@ class LunarBaseScene(InteractiveSceneCfg):
     """Configuration for a multi-object scene."""
 
     # ground plane
-    # ground = AssetBaseCfg(
-    #     prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg()
-    # )
+    ground = AssetBaseCfg(
+        prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg(color=None)
+    )
 
     # lights
     dome_light = AssetBaseCfg(
@@ -47,16 +47,16 @@ class LunarBaseScene(InteractiveSceneCfg):
         ),
     )
 
-    lunar_base = AssetBaseCfg(
-        prim_path="/World/LunarBase",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd"
-        ),
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(1.0, 0.0, 0.0, 0.0),
-        ),
-    )
+    # lunar_base = AssetBaseCfg(
+    #     prim_path="/World/LunarBase",
+    #     spawn=sim_utils.UsdFileCfg(
+    #         usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd"
+    #     ),
+    #     init_state=AssetBaseCfg.InitialStateCfg(
+    #         pos=(0.0, 0.0, 0.0),
+    #         rot=(1.0, 0.0, 0.0, 0.0),
+    #     ),
+    # )
 
     # Isaac Sim Property Panel 中的 Transform.Orien 属性欧拉角采用的模式为 X-Y-Z-intrinsic
     gripper_camera = TiledCameraCfg(
@@ -438,9 +438,82 @@ class LunarBaseEnv(DirectRLEnv):
         # self._robot.set_joint_position_target(self.robot_dof_targets)
 
     def step(self, action: dict):
-        end_effector_action = action["end_effector"]
-        gripper_action = action["gripper"]
-        return super().step(end_effector_action)
+        if action is not None:
+            end_effector_action = action["end_effector"]
+            gripper_action = action["gripper"]
+            if isinstance(end_effector_action, np.ndarray):
+                end_effector_action = torch.from_numpy(end_effector_action)
+            return super().step(end_effector_action)
+        else:
+            return self.step_without_applying_action()
+
+    def step_without_applying_action(self) -> VecEnvStepReturn:
+        """执行环境的一个步骤而不应用任何动作。
+
+        与 `step()` 类似，但跳过动作处理，仅推进物理状态并更新观测值、奖励等。
+        """
+
+        # 检查是否需要在物理循环中渲染
+        is_rendering = self.sim.has_gui() or self.sim.has_rtx_sensors()
+
+        # 执行物理步进循环
+        for _ in range(self.cfg.decimation):
+            self._sim_step_counter += 1
+            # 不应用动作，但需更新场景数据到模拟（如传感器、状态等）
+            self.scene.write_data_to_sim()
+            # 模拟一步
+            self.sim.step(render=False)
+            # 渲染检查
+            if (
+                self._sim_step_counter % self.cfg.sim.render_interval == 0
+                and is_rendering
+            ):
+                self.sim.render()
+            # 更新场景数据（如传感器、状态等）
+            self.scene.update(dt=self.physics_dt)
+
+        # 更新环境计数器
+        self.episode_length_buf += 1  # 当前episode步数（每个env）
+        self.common_step_counter += 1  # 总步数（所有env共用）
+
+        # 获取done标志和奖励
+        self.reset_terminated[:], self.reset_time_outs[:] = self._get_dones()
+        self.reset_buf = self.reset_terminated | self.reset_time_outs
+        self.reward_buf = self._get_rewards()
+
+        # 重置终止的环境
+        reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if len(reset_env_ids) > 0:
+            self._reset_idx(reset_env_ids)
+            # 更新关节运动学
+            self.scene.write_data_to_sim()
+            self.sim.forward()
+            # 如果有传感器，重新渲染
+            if self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:
+                self.sim.render()
+
+        # 应用间隔事件
+        if self.cfg.events:
+            if "interval" in self.event_manager.available_modes:
+                self.event_manager.apply(mode="interval", dt=self.step_dt)
+
+        # 获取观测值
+        self.obs_buf = self._get_observations()
+
+        # 添加观测噪声
+        if self.cfg.observation_noise_model:
+            self.obs_buf["policy"] = self._observation_noise_model.apply(
+                self.obs_buf["policy"]
+            )
+
+        # 返回观测、奖励、重置标志和额外信息
+        return (
+            self.obs_buf,
+            self.reward_buf,
+            self.reset_terminated,
+            self.reset_time_outs,
+            self.extras,
+        )
 
     # post-physics step calls
 
