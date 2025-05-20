@@ -36,7 +36,8 @@ class LunarBaseScene(InteractiveSceneCfg):
 
     # ground plane
     ground = AssetBaseCfg(
-        prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg(color=None)
+        prim_path="/World/defaultGroundPlane",
+        spawn=sim_utils.GroundPlaneCfg(color=None),
     )
 
     # lights
@@ -47,16 +48,16 @@ class LunarBaseScene(InteractiveSceneCfg):
         ),
     )
 
-    # lunar_base = AssetBaseCfg(
-    #     prim_path="/World/LunarBase",
-    #     spawn=sim_utils.UsdFileCfg(
-    #         usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd"
-    #     ),
-    #     init_state=AssetBaseCfg.InitialStateCfg(
-    #         pos=(0.0, 0.0, 0.0),
-    #         rot=(1.0, 0.0, 0.0, 0.0),
-    #     ),
-    # )
+    lunar_base = AssetBaseCfg(
+        prim_path="/World/LunarBase",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0416/ROOM_set_fix.usd"
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=(0.0, 0.0, 0.0),
+            rot=(1.0, 0.0, 0.0, 0.0),
+        ),
+    )
 
     # Isaac Sim Property Panel 中的 Transform.Orien 属性欧拉角采用的模式为 X-Y-Z-intrinsic
     gripper_camera = TiledCameraCfg(
@@ -184,8 +185,12 @@ class LunarBaseScene(InteractiveSceneCfg):
                 ".*wrist_1.*": float(
                     np.deg2rad(-84.2)
                 ),  # 1.56,  # both front KFE
-                ".*wrist_2.*": float(np.deg2rad(272)),  # 1.56,  # both hind KFE
-                ".*wrist_3.*": float(np.deg2rad(93)),  # 1.56,  # both front TFE
+                ".*wrist_2.*": float(
+                    np.deg2rad(272)
+                ),  # 1.56,  # both hind KFE
+                ".*wrist_3.*": float(
+                    np.deg2rad(93)
+                ),  # 1.56,  # both front TFE
                 # ".*outer_finger_joint": 0.0,  # both front TFE
                 # ".*inner_finger_joint": 0.0,  # both hind TFE
                 # '.*inner_finger_knuckle_joint': 0.0,  # both hind TFE
@@ -340,6 +345,7 @@ class LunarBaseEnvCfg(DirectRLEnvCfg):
 
     dof_velocity_scale = 0.1
 
+
 class LunarBaseEnv(DirectRLEnv):
     # pre-physics step calls
     #   |-- _pre_physics_step(action)
@@ -358,7 +364,9 @@ class LunarBaseEnv(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         def get_env_local_pose(
-            env_pos: torch.Tensor, xformable: UsdGeom.Xformable, device: torch.device
+            env_pos: torch.Tensor,
+            xformable: UsdGeom.Xformable,
+            device: torch.device,
         ):
             """Compute pose in env-local coordinates"""
             world_transform = xformable.ComputeLocalToWorldTransform(0)
@@ -385,7 +393,9 @@ class LunarBaseEnv(DirectRLEnv):
             0, :, 1
         ].to(device=self.device)
 
-        self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
+        self.robot_dof_speed_scales = torch.ones_like(
+            self.robot_dof_lower_limits
+        )
 
         self.robot_dof_targets = torch.zeros(
             (self.num_envs, self._robot.num_joints), device=self.device
@@ -414,10 +424,16 @@ class LunarBaseEnv(DirectRLEnv):
         #     self.device,
         # )
 
-        self.robot_grasp_rot = torch.zeros((self.num_envs, 4), device=self.device)
-        self.robot_grasp_pos = torch.zeros((self.num_envs, 3), device=self.device)
+        self.robot_grasp_rot = torch.zeros(
+            (self.num_envs, 4), device=self.device
+        )
+        self.robot_grasp_pos = torch.zeros(
+            (self.num_envs, 3), device=self.device
+        )
 
-        self.dik_action = DifferentialInverseKinematicsAction(self.cfg.dikconfig, self)
+        self.dik_action = DifferentialInverseKinematicsAction(
+            self.cfg.dikconfig, self
+        )
 
     def _setup_scene(self):
         self._robot = self.scene.articulations.get("robot")
@@ -518,7 +534,9 @@ class LunarBaseEnv(DirectRLEnv):
     # post-physics step calls
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        terminated = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        terminated = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
         truncated = self.episode_length_buf >= self.max_episode_length - 1
         return terminated, truncated
 
@@ -531,7 +549,9 @@ class LunarBaseEnv(DirectRLEnv):
     def _reset_idx(self, env_ids: torch.Tensor | None):
         super()._reset_idx(env_ids)
         # robot state
-        joint_pos = self._robot.data.default_joint_pos[env_ids] + sample_uniform(
+        joint_pos = self._robot.data.default_joint_pos[
+            env_ids
+        ] + sample_uniform(
             -0.125,
             0.125,
             (len(env_ids), self._robot.num_joints),
@@ -542,7 +562,9 @@ class LunarBaseEnv(DirectRLEnv):
         )
         joint_vel = torch.zeros_like(joint_pos)
         self._robot.set_joint_position_target(joint_pos, env_ids=env_ids)
-        self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+        self._robot.write_joint_state_to_sim(
+            joint_pos, joint_vel, env_ids=env_ids
+        )
 
         # Need to refresh the intermediate values so that _get_observations() can use the latest values
         self._compute_intermediate_values(env_ids)
@@ -608,7 +630,9 @@ class LunarBaseEnv(DirectRLEnv):
 
     # auxiliary methods
 
-    def _compute_intermediate_values(self, env_ids: torch.Tensor | None = None):
+    def _compute_intermediate_values(
+        self, env_ids: torch.Tensor | None = None
+    ):
         if env_ids is None:
             env_ids = self._robot._ALL_INDICES
 
@@ -636,7 +660,10 @@ class LunarBaseEnv(DirectRLEnv):
             hand_rot, hand_pos, franka_local_grasp_rot, franka_local_grasp_pos
         )
         global_drawer_rot, global_drawer_pos = tf_combine(
-            drawer_rot, drawer_pos, drawer_local_grasp_rot, drawer_local_grasp_pos
+            drawer_rot,
+            drawer_pos,
+            drawer_local_grasp_rot,
+            drawer_local_grasp_pos,
         )
 
         return (
