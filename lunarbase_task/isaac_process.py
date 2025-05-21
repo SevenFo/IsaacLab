@@ -9,8 +9,6 @@ from isaaclab.app import AppLauncher  # This is the one crucial safe import
 import enum
 
 
-# dynamic_set_attr is a generic utility, safe to define globally
-# if it doesn't import any isaac specific modules itself.
 def dynamic_set_attr(obj: object, kwargs: dict, path: list):
     if kwargs is None:
         return
@@ -58,7 +56,9 @@ def isaac_simulation_entry(conn: multiprocessing.connection.Connection, cli_args
     from isaaclab_tasks.utils import parse_env_cfg
     from isaaclab.envs.direct_rl_env import DirectRLEnv
     from isaaclab.sim.simulation_context import SimulationContext
-
+    from isaaclab.utils import Timer
+    from isaaclab_tasks.direct.franka_cabinet.ur5_lunar_base_env import LunarBaseEnv
+    
     print("[Isaac Process] Initializing environment...")
     env_cfg = parse_env_cfg(
         cli_args.task,
@@ -75,7 +75,7 @@ def isaac_simulation_entry(conn: multiprocessing.connection.Connection, cli_args
             dynamic_set_attr(env_cfg, env_new_cfg, path=["env_cfg"])
 
     env = gym.make(cli_args.task, cfg=env_cfg)
-    _env: DirectRLEnv = env.unwrapped  # type: ignore
+    _env: DirectRLEnv|LunarBaseEnv = env.unwrapped  # type: ignore
     _sim: SimulationContext = _env.sim
     print(
         f"[Isaac Process] Environment '{cli_args.task}' created. Device: {_env.device}"
@@ -194,7 +194,69 @@ def isaac_simulation_entry(conn: multiprocessing.connection.Connection, cli_args
                         current_mode == SimulationMode.MANUAL_STEP and _sim.is_playing()
                     ):
                         _sim.pause()  # Re-pause if in manual mode
-
+                        
+                elif cmd_type == "get_observation":
+                    try:
+                        # 获取原始观测数据
+                        obs: dict = _env._get_observations()
+                        key_path = command.get("key")
+                        env_id = command.get("env_id")
+                        
+                        #-------------------------------------------
+                        # 1. 数据切片函数（递归处理字典）
+                        #-------------------------------------------
+                        def slice_data(data):
+                            if isinstance(data, (torch.Tensor, np.ndarray)):
+                                return data[env_id, ...] if env_id is not None else data
+                            elif isinstance(data, dict):
+                                return {k: slice_data(v) for k, v in data.items()}
+                            else:
+                                return data  # 非可切片类型保持原样
+                        
+                        #-------------------------------------------
+                        # 2. 按 key_path 提取数据
+                        #-------------------------------------------
+                        def get_data_by_key(obs, kp):
+                            keys = kp.split('.')
+                            current_data = obs
+                            for key in keys:
+                                current_data = current_data[key]
+                            return current_data
+                        
+                        result_data = {}
+                        if key_path:
+                            # 统一转为列表格式（支持多 key 请求）
+                            key_paths = [key_path] if isinstance(key_path, str) else key_path
+                            for kp in key_paths:
+                                current_data = get_data_by_key(obs, kp)
+                                result_data[kp] = slice_data(current_data)
+                        else:
+                            # 无 key 时返回全部数据（并切片）
+                            result_data = slice_data(obs)
+                        
+                        #-------------------------------------------
+                        # 3. 转换 Torch.Tensor 为 Numpy
+                        #-------------------------------------------
+                        def tensor_to_numpy(data):
+                            if isinstance(data, torch.Tensor):
+                                return data.cpu().numpy()
+                            elif isinstance(data, dict):
+                                return {k: tensor_to_numpy(v) for k, v in data.items()}
+                            else:
+                                return data
+                        
+                        result_data = tensor_to_numpy(result_data)
+                        conn.send(result_data)
+                        
+                    except KeyError as e:
+                        conn.send({"error": f"Invalid key path: {key_path} (KeyError: {str(e)})"})
+                    except IndexError as e:
+                        conn.send({"error": f"Invalid env_id: {env_id} (IndexError: {str(e)})"})
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        conn.send({"error": f"Internal error: {str(e)}"})
+                        
                 elif cmd_type == "set_mode":
                     new_mode_val = command.get("mode")
                     try:
@@ -299,6 +361,10 @@ def isaac_simulation_entry(conn: multiprocessing.connection.Connection, cli_args
                     #     _sim.step(render=True) # Default step if no action
                     # For simplicity now, just keep sim stepping:
                     _sim.step(render=True)  # render=True to see what's happening
+                    obs = _env._get_observations()
+                    policy_sum = obs['policy'].sum()
+                    rgb_sum = torch.stack(list(obs['rgb'].values()),dim=0).sum()
+                    print(f"policy_sun: {policy_sum}, rgb_sum: {rgb_sum}")
                 # uses FULL_RENDERING set for this mode
                 else:
                     # Should not be paused in AUTO_STEP unless transitioning or error

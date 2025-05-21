@@ -5,7 +5,7 @@ import os
 
 
 def save_images_grid(
-    images: list[torch.Tensor],
+    images: list[torch.Tensor | np.ndarray],
     cmap: str | None = None,
     nrow: int = 1,
     subtitles: list[str] | None = None,
@@ -31,7 +31,7 @@ def save_images_grid(
 
     # plot images
     for idx, (img, ax) in enumerate(zip(images, axes)):
-        img = img.detach().cpu().numpy()
+        img = img.detach().cpu().numpy() if isinstance(img, torch.Tensor) else img
         ax.imshow(img, cmap=cmap)
         ax.axis("off")
         if subtitles:
@@ -49,5 +49,7 @@ def save_images_grid(
     if filename:
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         plt.savefig(filename)
-    # close the figure
-    plt.close()
+        plt.close()
+        # close the figure
+    else:
+        plt.show(block=True)  # 主要修改点在这里

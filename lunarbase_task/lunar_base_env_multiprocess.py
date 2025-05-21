@@ -7,6 +7,8 @@ from aiohttp import web
 import multiprocessing
 import time
 
+from isaaclab.app import AppLauncher  # Import for adding args
+
 from isaac_process import isaac_simulation_entry, SimulationMode  # Import Enum too
 
 # --- Argument Parsing ---
@@ -59,21 +61,6 @@ parser.add_argument(
     default=250,
     help="Max steps per episode on server.",
 )
-
-# Add AppLauncher args (needed for the isaac_process)
-# You might need to manually add relevant ones or find a way to pass them if AppLauncher isn't directly used here
-# For simplicity, let's assume the isaac_process.py will also parse its own AppLauncher args
-# or we pass the full args_cli to it.
-# Let's assume AppLauncher.add_app_launcher_args(parser) is done before parsing if needed by isaac_process
-# For now, we'll pass the parsed args_cli to the child process.
-# The AppLauncher specific args will be parsed within isaac_process.py when AppLauncher is initialized.
-
-# It's better if isaac_process.py also defines its own AppLauncher args if it's a separate script.
-# For now, we'll pass the full args_cli.
-# from isaaclab.app import AppLauncher # This line might be problematic if AppLauncher tries to init early
-# AppLauncher.add_app_launcher_args(parser) # If isaac_process directly uses cli_args for AppLauncher
-
-from isaaclab.app import AppLauncher  # Import for adding args
 
 AppLauncher.add_app_launcher_args(parser)  # Add app launcher args to the parser
 args_cli = parser.parse_args()  # Re-parse with app launcher args
@@ -129,6 +116,59 @@ async def handle_step(request: web.Request) -> web.Response:
         print(f"HTTP: Exception during /step: {e}")
         return web.json_response({"error": f"Failed to process step: {e}"}, status=400)
 
+async def handle_get_observation(request: web.Request) -> web.Response:
+    """
+    Request payload:
+    {
+        "key": Optional[[List[str]] = None,     # 用点号分隔的路径（如 ["rgb.front_camera",'depth"]）
+        "env_id": Optional[Union[int, List[int]]] = None  # 指定环境ID（支持单个或多个）
+    }
+    """
+    loop = asyncio.get_event_loop()
+    print("HTTP: Received /get_observation request.")
+    
+    if g_isaac_conn is None:
+        return web.json_response({"error": "Isaac Sim process not ready."}, status=503)
+    
+    try:
+        payload = await request.json()
+        key_path = payload.get("key")
+        env_id = payload.get("env_id")
+        
+        # 将参数直接传递给 Isaac 进程处理
+        g_isaac_conn.send({
+            "type": "get_observation",
+            "key": key_path,
+            "env_id": env_id
+        })
+        
+        # 接收处理后的数据
+        result = await loop.run_in_executor(None, g_isaac_conn.recv)
+        
+        if "error" in result:
+            print(f"HTTP: Error from Isaac/get_observation: {result['error']}")
+            return web.json_response({"error": result["error"]},
+                status=400  # 或根据错误类型细化状态码
+            )
+        
+        return web.Response(
+            body=pickle.dumps(result),
+            content_type="application/python-pickle"
+        )
+    
+    except pickle.UnpicklingError as e:
+        error_msg = f"Invalid Pickle payload: {str(e)}"
+        print(f"HTTP: {error_msg}")
+        return web.json_response({"error": error_msg},
+            status=400
+        )
+    
+    except Exception as e:
+        error_msg = f"Server error: {str(e)}"
+        print(f"HTTP: {error_msg}")
+        return web.json_response({"error": error_msg},
+            status=500
+        )
 
 async def handle_set_mode(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
@@ -229,6 +269,7 @@ def main():
             web.post("/reset", handle_reset),
             web.post("/step", handle_step),
             web.post("/set_mode", handle_set_mode),  # Add new route
+            web.post("/get_observation", handle_get_observation)
         ]
     )
 

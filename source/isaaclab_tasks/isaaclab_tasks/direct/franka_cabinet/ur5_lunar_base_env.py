@@ -582,9 +582,7 @@ class LunarBaseEnv(DirectRLEnv):
 
         assert gripper_camera_rgb.dtype == torch.uint8
 
-        rgb = (
-            {"gripper_rgb": gripper_camera_rgb, "front_rgb": front_camera_rgb},
-        )
+        rgb = {"gripper_rgb": gripper_camera_rgb, "front_rgb": front_camera_rgb}
 
         depth = {
             "gripper_depth": gripper_camera_depth,
@@ -624,7 +622,7 @@ class LunarBaseEnv(DirectRLEnv):
         )
         return {
             "policy": torch.clamp(policy_obs, -5.0, 5.0),
-            "rbg": rgb,
+            "rgb": rgb,
             "depth": depth,
         }
 

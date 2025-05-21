@@ -2,6 +2,11 @@ import requests
 import pickle
 import numpy as np
 import json  # For printing JSON responses nicely
+import os
+
+os.environ['DISPLAY'] = "109.105.4.86:0.0"
+
+from scripts.demos.utils import save_images_grid
 
 BASE_URL = "http://127.0.0.1:18861"
 
@@ -122,7 +127,53 @@ def get_sample_action(num_envs=1):
     action["end_effector"][:, 0] = 0.05  # Move a bit in +x
     return action
 
-
+def get_observation(key_path=None, env_id=None):
+    """Get observation data from server by key path and env_id."""
+    print("Testing /get_observation...")
+    try:
+        payload = {
+            "key": key_path,
+            "env_id": env_id
+        }
+        response = requests.post(
+            f"{BASE_URL}/get_observation",
+            json=payload,
+            timeout=10
+        )
+        
+        # Handle response
+        if response.ok:
+            content_type = response.headers.get("Content-Type", "")
+            if "application/python-pickle" in content_type:
+                try:
+                    data = pickle.loads(response.content)
+                    print("Observation data received:")
+                    # Recursively print shapes for numpy arrays
+                    def print_shapes(d, indent=0):
+                        if isinstance(d, dict):
+                            for k, v in d.items():
+                                print(" " * indent + f"{k}:")
+                                print_shapes(v, indent + 2)
+                        elif isinstance(d, np.ndarray):
+                            print(" " * indent + f"shape={d.shape}, dtype={d.dtype}")
+                        else:
+                            print(" " * indent + str(type(d)))
+                    print_shapes(data)
+                    return data
+                except pickle.UnpicklingError as e:
+                    print(f"Failed to unpickle: {e}")
+                    return None
+            else:
+                print_response(response)
+                return None
+        else:
+            print_response(response)
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed for /get_observation: {e}")
+        return None
+    
 if __name__ == "__main__":
     # --- Initial Reset (usually needed first) ---
     print("--- Performing Initial Reset ---")
@@ -160,7 +211,7 @@ if __name__ == "__main__":
 
     print("\n--- Interactive Stepping (MANUAL_STEP mode assumed) ---")
     print(
-        "Enter 's' to step, 'r' to reset, 'm1' for manual mode, 'm2' for auto mode, 'q' to quit."
+        "Enter 's' to step, 'r' to reset, 'm1' for manual, 'm2' for auto, 'o' to get obs, 'q' to quit."
     )
 
     while True:
@@ -209,7 +260,20 @@ if __name__ == "__main__":
                     )
                 else:
                     print("Step failed to return a result.")
-
+            elif command == "o":
+                print("--- Getting Observation ---")
+                # 示例请求参数（可根据需要修改）
+                obs_data = get_observation(
+                    key_path=["policy", "rgb.gripper_rgb", "rgb.front_rgb"],  # 或 "rbg.front_rgb" 等路径
+                    env_id=0  # 或 [0,1] 等多环境ID
+                )
+                if obs_data is None:
+                    print(f"Raw observation data type: {type(obs_data)}")
+                    continue
+                save_images_grid(
+                    [obs_data['rgb.gripper_rgb'], obs_data['rgb.front_rgb']]
+                )
+                print(f"Raw observation data type: {type(obs_data)}")
             elif command == "m1":
                 print("--- Setting Mode to MANUAL_STEP (1) ---")
                 set_simulation_mode(1)
