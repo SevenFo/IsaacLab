@@ -9,6 +9,7 @@ import torch
 import numpy as np
 import gymnasium as gym
 import math
+from collections import OrderedDict
 
 from isaacsim.core.utils.stage import get_current_stage
 from isaacsim.core.utils.torch.transformations import tf_combine
@@ -576,7 +577,7 @@ class LunarBaseEnv(DirectRLEnv):
         self._compute_intermediate_values(env_ids)
 
     def _get_observations(self) -> dict:
-        # TODO
+        # Camera data
         gripper_camera_rgb = self._gripper_camera.data.output["rgb"]
         front_camera_rgb = self._front_camera.data.output["rgb"]
         gripper_camera_depth = self._gripper_camera.data.output[
@@ -586,53 +587,136 @@ class LunarBaseEnv(DirectRLEnv):
             "distance_to_image_plane"
         ]
 
-        assert gripper_camera_rgb.dtype == torch.uint8
-
-        rgb = {
+        # For non-policy observations (e.g., for human rendering, separate critics)
+        full_rgb_obs = {
             "gripper_rgb": gripper_camera_rgb,
             "front_rgb": front_camera_rgb,
         }
-
-        depth = {
+        full_depth_obs = {
             "gripper_depth": gripper_camera_depth,
-            "front_camera_depth": front_camera_depth,
+            "front_depth": front_camera_depth,  # Original key was front_camera_depth
         }
 
-        # save_images_grid(
-        #     gripper_camera,
-        #     subtitles=[f"Cam{i}" for i in range(gripper_camera.shape[0])],
-        #     title="Tiled RGB Image",
-        #     filename=os.path.join(
-        #         "./output/vis", "gripper_camera", f"{count:04d}.jpg"
-        #     ),
-        # )
+        # --- Prepare policy observations (MUST BE A DICTIONARY) ---
+        policy_obs_dict = OrderedDict()
 
-        # save_images_grid(
-        #     front_camera,
-        #     subtitles=[f"Cam{i}" for i in range(front_camera.shape[0])],
-        #     title="Tiled RGB Image",
-        #     filename=os.path.join(
-        #         "./output/vis", "front_camera", f"{count:04d}.jpg"
-        #     ),
-        # )
-        dof_pos_scaled = (
+        # Arm joint positions and velocities
+        # Assuming first N joints are arm, next M are gripper
+        num_arm_joints = 6  # For UR5 (shoulder_pan to wrist_3)
+        # Update this based on your self._robot.num_joints and actuator groups
+
+        # Get all joint positions and velocities
+        all_joint_pos = self._robot.data.joint_pos
+        all_joint_vel = self._robot.data.joint_vel
+
+        # Arm joints
+        arm_joint_pos = all_joint_pos[:, :num_arm_joints]
+        arm_joint_vel = all_joint_vel[:, :num_arm_joints]
+
+        # Gripper joints (example, assuming they are after arm joints)
+        # You need to know the indices of your gripper joints
+        # Example: if gripper joints are indices 6 through 11 (for a 6-DOF gripper)
+        gripper_joint_indices_start = num_arm_joints
+        # num_gripper_joints = self._robot.num_joints - num_arm_joints # if all remaining are gripper
+        # For your 'gripper' actuator group which has 5 joint_names_expr patterns:
+        # "finger_joint", ".*outer_finger_joint", ".*inner_finger_joint", ".*inner_finger_knuckle_joint", "right_outer_knuckle_joint"
+        # You'll need to find the actual indices these correspond to in self._robot.data.joint_pos
+        # Let's assume for now you have a way to get these indices.
+        # E.g., gripper_joint_indices = self._robot.get_joint_indices(self.cfg.robot.actuators["gripper"].joint_names_expr)
+        # For simplicity, let's hardcode an example. This needs to be correct for your robot.
+        # If finger_joint is index 6, outer_finger 7, inner_finger 8, inner_knuckle 9, right_outer 10
+        gripper_joint_indices = torch.tensor(
+            [6, 7, 8, 9, 10], device=self.device
+        )  # EXAMPLE! Update this!
+        if self._robot.num_joints > gripper_joint_indices.max():  # Basic check
+            gripper_qpos = all_joint_pos[:, gripper_joint_indices]
+            gripper_qvel = all_joint_vel[:, gripper_joint_indices]
+        else:  # Fallback if indices are wrong, to prevent crash. Log error ideally.
+            print(
+                "WARNING: Gripper joint indices seem out of bounds. Using zeros for gripper obs."
+            )
+            num_gripper_dof_example = 5  # Based on your actuator config
+            gripper_qpos = torch.zeros(
+                (self.num_envs, num_gripper_dof_example), device=self.device
+            )
+            gripper_qvel = torch.zeros(
+                (self.num_envs, num_gripper_dof_example), device=self.device
+            )
+
+        # Scale them (example, adjust scaling as needed or if policy handles unscaled)
+        # Using -1 to 1 scaling based on limits:
+        arm_dof_pos_scaled = (
             2.0
-            * (self._robot.data.joint_pos - self.robot_dof_lower_limits)
-            / (self.robot_dof_upper_limits - self.robot_dof_lower_limits)
+            * (arm_joint_pos - self.robot_dof_lower_limits[:num_arm_joints])
+            / (
+                self.robot_dof_upper_limits[:num_arm_joints]
+                - self.robot_dof_lower_limits[:num_arm_joints]
+            )
             - 1.0
         )
+        arm_dof_vel_scaled = (
+            arm_joint_vel * self.cfg.dof_velocity_scale
+        )  # Or another scaling factor
 
-        policy_obs = torch.cat(
-            (
-                dof_pos_scaled,
-                self._robot.data.joint_vel * self.cfg.dof_velocity_scale,
-            ),
-            dim=-1,
+        # Gripper scaling (assuming limits for gripper joints are also in robot_dof_lower/upper_limits)
+        gripper_dof_pos_scaled = (
+            2.0
+            * (
+                gripper_qpos
+                - self.robot_dof_lower_limits[gripper_joint_indices]
+            )
+            / (
+                self.robot_dof_upper_limits[gripper_joint_indices]
+                - self.robot_dof_lower_limits[gripper_joint_indices]
+            )
+            - 1.0
         )
+        gripper_dof_vel_scaled = (
+            gripper_qvel * self.cfg.dof_velocity_scale
+        )  # Adjust scaling factor if different
+
+        # Populate policy_obs_dict with keys your Robomimic model expects
+        # COMMON KEYS (ADJUST TO YOUR TRAINING CONFIG):
+        policy_obs_dict["robot0_joint_pos"] = (
+            arm_dof_pos_scaled  # Or "robot_qpos", "arm_qpos" etc.
+        )
+        policy_obs_dict["robot0_joint_vel"] = (
+            arm_dof_vel_scaled  # Or "robot_qvel", "arm_qvel"
+        )
+        policy_obs_dict["robot0_gripper_qpos"] = (
+            gripper_dof_pos_scaled  # Or "gripper_qpos"
+        )
+        policy_obs_dict["robot0_gripper_qvel"] = (
+            gripper_dof_vel_scaled  # Or "gripper_qvel"
+        )
+
+        # Example: End-effector pose (if used in training)
+        # self.dik_action.target_ee_pose_w is (N, 13) [pos, quat, vel, ang_vel]
+        # You might need to get the current EE pose, not target.
+        # current_ee_pose_w = self._robot.data.body_state_w[:, self.dik_action._body_idx, :7] # pos, quat (w,x,y,z)
+        # policy_obs_dict["robot0_eef_pos"] = current_ee_pose_w[:, :3]
+        # policy_obs_dict["robot0_eef_quat"] = current_ee_pose_w[:, 3:7]
+
+        # Example: Object poses (if used in training)
+        # if hasattr(self, "_object_to_assemble"): # Assuming you have objects
+        #    object_pose = self._object_to_assemble.data.root_state_w[:, :7]
+        #    policy_obs_dict["object_pose"] = object_pose
+
+        # Example: Image observations (if used in training AND configured in Robomimic)
+        # The keys here MUST match Robomimic config (e.g., config.observation.modalities.rgb.obs_keys)
+        # policy_obs_dict["agentview_image"] = front_camera_rgb # if "agentview_image" was a key
+        # policy_obs_dict["robot0_eye_in_hand_image"] = gripper_camera_rgb # if "robot0_eye_in_hand_image" was a key
+
+        # Clamp observations if necessary (often done by policy wrapper or normalization)
+        for k_obs, v_obs in policy_obs_dict.items():
+            policy_obs_dict[k_obs] = torch.clamp(
+                v_obs, -5.0, 5.0
+            )  # Generic clamp, adjust per obs type
+
         return {
-            "policy": torch.clamp(policy_obs, -5.0, 5.0),
-            "rgb": rgb,
-            "depth": depth,
+            "policy": policy_obs_dict,  # This is the dictionary the Robomimic policy will receive
+            "rgb": full_rgb_obs,
+            "depth": full_depth_obs,
         }
 
     # auxiliary methods
