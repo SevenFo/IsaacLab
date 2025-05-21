@@ -313,7 +313,7 @@ class LunarBaseEnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120,
+        dt=1 / 10,
         render_interval=decimation,
         disable_contact_processing=True,
         physics_material=sim_utils.RigidBodyMaterialCfg(
@@ -323,8 +323,14 @@ class LunarBaseEnvCfg(DirectRLEnvCfg):
             dynamic_friction=1.0,
             restitution=0.0,
         ),
+        render=sim_utils.RenderCfg(
+            antialiasing_mode="DLAA",
+            enable_dl_denoiser=True,
+            samples_per_pixel=2,
+            enable_reflections=True,
+            enable_global_illumination=True,
+        ),
     )
-
     # scene
     scene: InteractiveSceneCfg = LunarBaseScene(
         num_envs=1, env_spacing=3.0, replicate_physics=True
@@ -453,7 +459,7 @@ class LunarBaseEnv(DirectRLEnv):
         self.dik_action.apply_actions()
         # self._robot.set_joint_position_target(self.robot_dof_targets)
 
-    def step(self, action: dict|None):
+    def step(self, action: dict | None):
         if action is not None:
             end_effector_action = action["end_effector"]
             gripper_action = action["gripper"]
@@ -582,7 +588,10 @@ class LunarBaseEnv(DirectRLEnv):
 
         assert gripper_camera_rgb.dtype == torch.uint8
 
-        rgb = {"gripper_rgb": gripper_camera_rgb, "front_rgb": front_camera_rgb}
+        rgb = {
+            "gripper_rgb": gripper_camera_rgb,
+            "front_rgb": front_camera_rgb,
+        }
 
         depth = {
             "gripper_depth": gripper_camera_depth,

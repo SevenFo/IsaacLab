@@ -47,7 +47,9 @@ class SensorBase(ABC):
         """
         # check that config is valid
         if cfg.history_length < 0:
-            raise ValueError(f"History length must be greater than 0! Received: {cfg.history_length}")
+            raise ValueError(
+                f"History length must be greater than 0! Received: {cfg.history_length}"
+            )
         # check that the config is valid
         cfg.validate()
         # store inputs
@@ -60,16 +62,26 @@ class SensorBase(ABC):
         # note: Use weakref on callbacks to ensure that this object can be deleted when its destructor is called.
         # add callbacks for stage play/stop
         # The order is set to 10 which is arbitrary but should be lower priority than the default order of 0
-        timeline_event_stream = omni.timeline.get_timeline_interface().get_timeline_event_stream()
-        self._initialize_handle = timeline_event_stream.create_subscription_to_pop_by_type(
-            int(omni.timeline.TimelineEventType.PLAY),
-            lambda event, obj=weakref.proxy(self): obj._initialize_callback(event),
-            order=10,
+        timeline_event_stream = (
+            omni.timeline.get_timeline_interface().get_timeline_event_stream()
         )
-        self._invalidate_initialize_handle = timeline_event_stream.create_subscription_to_pop_by_type(
-            int(omni.timeline.TimelineEventType.STOP),
-            lambda event, obj=weakref.proxy(self): obj._invalidate_initialize_callback(event),
-            order=10,
+        self._initialize_handle = (
+            timeline_event_stream.create_subscription_to_pop_by_type(
+                int(omni.timeline.TimelineEventType.PLAY),
+                lambda event,
+                obj=weakref.proxy(self): obj._initialize_callback(event),
+                order=10,
+            )
+        )
+        self._invalidate_initialize_handle = (
+            timeline_event_stream.create_subscription_to_pop_by_type(
+                int(omni.timeline.TimelineEventType.STOP),
+                lambda event,
+                obj=weakref.proxy(self): obj._invalidate_initialize_callback(
+                    event
+                ),
+                order=10,
+            )
         )
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
         self._debug_vis_handle = None
@@ -169,7 +181,8 @@ class SensorBase(ABC):
             if self._debug_vis_handle is None:
                 app_interface = omni.kit.app.get_app_interface()
                 self._debug_vis_handle = app_interface.get_post_update_event_stream().create_subscription_to_pop(
-                    lambda event, obj=weakref.proxy(self): obj._debug_vis_callback(event)
+                    lambda event,
+                    obj=weakref.proxy(self): obj._debug_vis_callback(event)
                 )
         else:
             # remove the subscriber if it exists
@@ -195,13 +208,23 @@ class SensorBase(ABC):
         self._is_outdated[env_ids] = True
 
     def update(self, dt: float, force_recompute: bool = False):
+        """Mostly use for update the timestamp and outdated status of the sensors, not guarantee to update the sensor data.
+        Even if use force_recompute, whether the sensor data is updated or not still depends on the outdated status.
+        """
         # Update the timestamp for the sensors
         self._timestamp += dt
-        self._is_outdated |= self._timestamp - self._timestamp_last_update + 1e-6 >= self.cfg.update_period
+        self._is_outdated |= (
+            self._timestamp - self._timestamp_last_update + 1e-6
+            >= self.cfg.update_period
+        )
         # Update the buffers
         # TODO (from @mayank): Why is there a history length here when it doesn't mean anything in the sensor base?!?
         #   It is only for the contact sensor but there we should redefine the update function IMO.
-        if force_recompute or self._is_visualizing or (self.cfg.history_length > 0):
+        if (
+            force_recompute
+            or self._is_visualizing
+            or (self.cfg.history_length > 0)
+        ):
             self._update_outdated_buffers(force_recompute)
 
     """
@@ -224,7 +247,9 @@ class SensorBase(ABC):
         self._parent_prims = sim_utils.find_matching_prims(env_prim_path_expr)
         self._num_envs = len(self._parent_prims)
         # Boolean tensor indicating whether the sensor data has to be refreshed
-        self._is_outdated = torch.ones(self._num_envs, dtype=torch.bool, device=self._device)
+        self._is_outdated = torch.ones(
+            self._num_envs, dtype=torch.bool, device=self._device
+        )
         # Current timestamp (in seconds)
         self._timestamp = torch.zeros(self._num_envs, device=self._device)
         # Timestamp from last update
@@ -249,14 +274,18 @@ class SensorBase(ABC):
         and input ``debug_vis`` is True. If the visualization objects exist, the function should
         set their visibility into the stage.
         """
-        raise NotImplementedError(f"Debug visualization is not implemented for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Debug visualization is not implemented for {self.__class__.__name__}."
+        )
 
     def _debug_vis_callback(self, event):
         """Callback for debug visualization.
 
         This function calls the visualization objects and sets the data to visualize into them.
         """
-        raise NotImplementedError(f"Debug visualization is not implemented for {self.__class__.__name__}.")
+        raise NotImplementedError(
+            f"Debug visualization is not implemented for {self.__class__.__name__}."
+        )
 
     """
     Internal simulation callbacks.
@@ -290,6 +319,8 @@ class SensorBase(ABC):
             # obtain new data
             self._update_buffers_impl(outdated_env_ids)
             # update the timestamp from last update
-            self._timestamp_last_update[outdated_env_ids] = self._timestamp[outdated_env_ids]
+            self._timestamp_last_update[outdated_env_ids] = self._timestamp[
+                outdated_env_ids
+            ]
             # set outdated flag to false for the updated sensors
             self._is_outdated[outdated_env_ids] = False
