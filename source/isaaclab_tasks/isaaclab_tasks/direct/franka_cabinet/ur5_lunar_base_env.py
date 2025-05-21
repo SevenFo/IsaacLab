@@ -453,7 +453,7 @@ class LunarBaseEnv(DirectRLEnv):
         self.dik_action.apply_actions()
         # self._robot.set_joint_position_target(self.robot_dof_targets)
 
-    def step(self, action: dict):
+    def step(self, action: dict|None):
         if action is not None:
             end_effector_action = action["end_effector"]
             gripper_action = action["gripper"]
@@ -476,7 +476,7 @@ class LunarBaseEnv(DirectRLEnv):
         for _ in range(self.cfg.decimation):
             self._sim_step_counter += 1
             # 不应用动作，但需更新场景数据到模拟（如传感器、状态等）
-            self.scene.write_data_to_sim()
+            # self.scene.write_data_to_sim()
             # 模拟一步
             self.sim.step(render=False)
             # 渲染检查

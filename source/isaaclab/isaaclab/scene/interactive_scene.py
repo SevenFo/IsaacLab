@@ -112,11 +112,11 @@ class InteractiveScene:
         self.cfg = cfg
         # initialize scene elements
         self._terrain = None
-        self._articulations = dict()
+        self._articulations:dict[str,Articulation] = dict()
         self._deformable_objects = dict()
         self._rigid_objects = dict()
         self._rigid_object_collections = dict()
-        self._sensors = dict()
+        self._sensors:dict[str,SensorBase] = dict()
         self._extras = dict()
         # obtain the current stage
         self.stage = omni.usd.get_context().get_stage()

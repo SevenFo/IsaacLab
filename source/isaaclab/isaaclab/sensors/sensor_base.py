@@ -202,7 +202,7 @@ class SensorBase(ABC):
         # TODO (from @mayank): Why is there a history length here when it doesn't mean anything in the sensor base?!?
         #   It is only for the contact sensor but there we should redefine the update function IMO.
         if force_recompute or self._is_visualizing or (self.cfg.history_length > 0):
-            self._update_outdated_buffers()
+            self._update_outdated_buffers(force_recompute)
 
     """
     Implementation specific.
@@ -281,8 +281,10 @@ class SensorBase(ABC):
     Helper functions.
     """
 
-    def _update_outdated_buffers(self):
+    def _update_outdated_buffers(self, force_recompute: bool = False):
         """Fills the sensor data for the outdated sensors."""
+        if force_recompute:
+            self._is_outdated |= True
         outdated_env_ids = self._is_outdated.nonzero().squeeze(-1)
         if len(outdated_env_ids) > 0:
             # obtain new data

@@ -100,13 +100,13 @@ def isaac_simulation_entry(conn: multiprocessing.connection.Connection, cli_args
         _sim.set_render_mode(
             SimulationContext.RenderMode.FULL_RENDERING
         )  # For debugging
+        _env.scene.cfg.lazy_sensor_update = False
     elif current_mode == SimulationMode.AUTO_STEP:
         if not _sim.is_playing():
             _sim.play()
         _sim.set_render_mode(
             SimulationContext.RenderMode.FULL_RENDERING
         )  # For observation
-
     last_action_torch_dict = None  # For AUTO_STEP if no new action is received
 
     try:
@@ -338,8 +338,15 @@ def isaac_simulation_entry(conn: multiprocessing.connection.Connection, cli_args
                 if not _sim.is_playing():
                     # In manual mode, if sim is paused, we just render to keep UI alive
                     # _sim.render() will use the current render_mode (FULL_RENDERING for debug)
-                    _sim.render()
+                    # 将 render mode 设置成 FULL_RENDERING 是不合适的, 这将会导致 camera 的 source data 更新而 scene buffer 数据不更新, 并且累积到一定程度的时候会出现跳变
+                    # 要么 render mode = full_rendering 和 scenec.cfg.lazy_sensor_update = False 一起使用
+                    # 要么 render mode = NO RENDERING 和 scenec.cfg.lazy_sensor_update = True (default) 一起使用
+                    _env.scene.cfg.lazy_sensor_update = False
+                    _sim.render(mode=_sim.RenderMode.FULL_RENDERING) # 渲染并不会推进物理仿真，也不会更新scene的buffer数据，但是会更新RTX的数据
+                    # _env.scene.cfg.lazy_sensor_update = True
+                    # _sim.render(mode=_sim.RenderMode.NO_RENDERING) # 渲染并不会推进物理仿真，也不会更新scene的buffer数据，但是会更新RTX的数据
                 else:
+                    assert False, "This case should ideally not happen if logic is correct,"
                     # This case should ideally not happen if logic is correct,
                     # as steps are command-driven and sim should be paused after.
                     # If it is playing, it means a command just finished, and it will be paused above.
@@ -359,17 +366,18 @@ def isaac_simulation_entry(conn: multiprocessing.connection.Connection, cli_args
                     #     env.step(last_action_torch_dict) # This would send data back via conn
                     # else:
                     #     _sim.step(render=True) # Default step if no action
-                    # For simplicity now, just keep sim stepping:
-                    _sim.step(render=True)  # render=True to see what's happening
-                    obs = _env._get_observations()
-                    policy_sum = obs['policy'].sum()
-                    rgb_sum = torch.stack(list(obs['rgb'].values()),dim=0).sum()
-                    print(f"policy_sun: {policy_sum}, rgb_sum: {rgb_sum}")
+                    # _sim.render() # viewport 不会显示，但是内部的相机传感器是会更新的
+                    _env.step(None)
                 # uses FULL_RENDERING set for this mode
                 else:
                     # Should not be paused in AUTO_STEP unless transitioning or error
                     _sim.play()
                     _sim.step(render=True)
+            obs = _env._get_observations()
+            policy_sum = obs['policy'][:,:6].sum()
+            rgb_sum = torch.stack(list(obs['rgb'].values()),dim=0).sum()
+
+            print(f"policy_sun: {policy_sum}, rgb_sum: {rgb_sum}")
 
             # A very small sleep to prevent this loop from pegging CPU if conn.poll is too short
             # and no sim.step or sim.render with internal update is called.
