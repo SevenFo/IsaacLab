@@ -220,3 +220,23 @@ AVAILABLE_TASK_METHODS = {
     "assemble": assemble,
     # "another_task": another_task,
 }
+
+if __name__ == '__main__':
+    # test
+    checkpoint_path = '/data/shiqi/IsaacLab/assets/model_epoch_4000.pth'
+    specified_policy_device = 'cuda'
+    policy_device = TorchUtils.get_torch_device(
+        try_to_use_cuda=(specified_policy_device == "cuda")
+    )
+    try:
+        policy, _ = FileUtils.policy_from_checkpoint(
+            ckpt_path=checkpoint_path, device=policy_device, verbose=True
+        )
+    except Exception as e:
+        print(
+            f"[assemble_task] ERROR: Failed to load policy from checkpoint: {e}"
+        )
+        
+
+    if hasattr(policy, "eval") and callable(policy.eval):
+        policy.eval()

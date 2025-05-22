@@ -618,16 +618,13 @@ class LunarBaseEnv(DirectRLEnv):
         # Example: if gripper joints are indices 6 through 11 (for a 6-DOF gripper)
         gripper_joint_indices_start = num_arm_joints
         # num_gripper_joints = self._robot.num_joints - num_arm_joints # if all remaining are gripper
-        # For your 'gripper' actuator group which has 5 joint_names_expr patterns:
-        # "finger_joint", ".*outer_finger_joint", ".*inner_finger_joint", ".*inner_finger_knuckle_joint", "right_outer_knuckle_joint"
-        # You'll need to find the actual indices these correspond to in self._robot.data.joint_pos
-        # Let's assume for now you have a way to get these indices.
-        # E.g., gripper_joint_indices = self._robot.get_joint_indices(self.cfg.robot.actuators["gripper"].joint_names_expr)
+        # For your 'gripper' actuator group which has 8 joint_names_expr patterns:
+        # "finger_joint", ".*outer_finger_joint"(2), ".*inner_finger_joint"(2), ".*inner_finger_knuckle_joint"(2), "right_outer_knuckle_joint"
+        # The proactive joint id is finger_joint (idx:6), remained are passive joints
         # For simplicity, let's hardcode an example. This needs to be correct for your robot.
-        # If finger_joint is index 6, outer_finger 7, inner_finger 8, inner_knuckle 9, right_outer 10
         gripper_joint_indices = torch.tensor(
-            [6, 7, 8, 9, 10], device=self.device
-        )  # EXAMPLE! Update this!
+            [6], device=self.device
+        )  # proactive gripper joint idx is 6
         if self._robot.num_joints > gripper_joint_indices.max():  # Basic check
             gripper_qpos = all_joint_pos[:, gripper_joint_indices]
             gripper_qvel = all_joint_vel[:, gripper_joint_indices]
@@ -635,7 +632,7 @@ class LunarBaseEnv(DirectRLEnv):
             print(
                 "WARNING: Gripper joint indices seem out of bounds. Using zeros for gripper obs."
             )
-            num_gripper_dof_example = 5  # Based on your actuator config
+            num_gripper_dof_example = 1  
             gripper_qpos = torch.zeros(
                 (self.num_envs, num_gripper_dof_example), device=self.device
             )
@@ -693,19 +690,23 @@ class LunarBaseEnv(DirectRLEnv):
         # Example: End-effector pose (if used in training)
         # self.dik_action.target_ee_pose_w is (N, 13) [pos, quat, vel, ang_vel]
         # You might need to get the current EE pose, not target.
-        # current_ee_pose_w = self._robot.data.body_state_w[:, self.dik_action._body_idx, :7] # pos, quat (w,x,y,z)
-        # policy_obs_dict["robot0_eef_pos"] = current_ee_pose_w[:, :3]
-        # policy_obs_dict["robot0_eef_quat"] = current_ee_pose_w[:, 3:7]
+        gripper_body_idx = 6 # TODO
+        eef_body_idx = self.dik_action._body_idx # TODO
+        current_ee_pose_w = self._robot.data.body_state_w[:, eef_body_idx, :7] # pos, quat (w,x,y,z)
+        policy_obs_dict["robot0_eef_pos"] = current_ee_pose_w[:, :3]
+        policy_obs_dict["robot0_eef_quat"] = current_ee_pose_w[:, 3:7]
+        current_gripper_pos = self._robot.data.body_pos_w[:, gripper_body_idx,:]
+        policy_obs_dict["robot0_gripper_pos"] = current_gripper_pos
 
         # Example: Object poses (if used in training)
-        # if hasattr(self, "_object_to_assemble"): # Assuming you have objects
-        #    object_pose = self._object_to_assemble.data.root_state_w[:, :7]
-        #    policy_obs_dict["object_pose"] = object_pose
+        if hasattr(self, "_object_to_assemble"): # Assuming you have objects
+           object_pose = self._object_to_assemble.data.root_state_w[:, :7]
+           policy_obs_dict["object_pose"] = object_pose
 
         # Example: Image observations (if used in training AND configured in Robomimic)
         # The keys here MUST match Robomimic config (e.g., config.observation.modalities.rgb.obs_keys)
-        # policy_obs_dict["agentview_image"] = front_camera_rgb # if "agentview_image" was a key
-        # policy_obs_dict["robot0_eye_in_hand_image"] = gripper_camera_rgb # if "robot0_eye_in_hand_image" was a key
+        policy_obs_dict["agentview_image"] = front_camera_rgb # if "agentview_image" was a key
+        policy_obs_dict["robot0_eye_in_hand_image"] = gripper_camera_rgb # if "robot0_eye_in_hand_image" was a key
 
         # Clamp observations if necessary (often done by policy wrapper or normalization)
         for k_obs, v_obs in policy_obs_dict.items():
