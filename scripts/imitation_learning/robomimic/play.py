@@ -8,18 +8,38 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-
+import os
 from isaaclab.app import AppLauncher
 
+os.environ["DISPLAY"] = ":0"  # Set the DISPLAY environment variable
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Evaluate robomimic policy for Isaac Lab environment.")
-parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
+parser = argparse.ArgumentParser(
+    description="Evaluate robomimic policy for Isaac Lab environment."
 )
-parser.add_argument("--task", type=str, default=None, help="Name of the task.")
-parser.add_argument("--checkpoint", type=str, default=None, help="Pytorch model checkpoint to load.")
-parser.add_argument("--horizon", type=int, default=800, help="Step horizon of each rollout.")
-parser.add_argument("--num_rollouts", type=int, default=1, help="Number of rollouts.")
+parser.add_argument(
+    "--disable_fabric",
+    action="store_true",
+    default=False,
+    help="Disable fabric and use USD I/O operations.",
+)
+parser.add_argument(
+    "--task",
+    type=str,
+    default="Isaac-Move-Box-UR5-IK-Rel",
+    help="Name of the task.",
+)
+parser.add_argument(
+    "--checkpoint",
+    type=str,
+    default="/home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/assets/model_epoch_4000.pth",
+    help="Pytorch model checkpoint to load.",
+)
+parser.add_argument(
+    "--horizon", type=int, default=800, help="Step horizon of each rollout."
+)
+parser.add_argument(
+    "--num_rollouts", type=int, default=10, help="Number of rollouts."
+)
 parser.add_argument("--seed", type=int, default=101, help="Random seed.")
 
 # append AppLauncher cli args
@@ -56,7 +76,11 @@ def rollout(policy, env, horizon, device):
 
         # Compute actions
         actions = policy(obs)
-        actions = torch.from_numpy(actions).to(device=device).view(1, env.action_space.shape[1])
+        actions = (
+            torch.from_numpy(actions)
+            .to(device=device)
+            .view(1, env.action_space.shape[1])
+        )
 
         # Apply actions
         obs_dict, _, terminated, truncated, _ = env.step(actions)
@@ -77,7 +101,12 @@ def rollout(policy, env, horizon, device):
 def main():
     """Run a trained policy from robomimic with Isaac Lab environment."""
     # parse configuration
-    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=1, use_fabric=not args_cli.disable_fabric)
+    env_cfg = parse_env_cfg(
+        args_cli.task,
+        device=args_cli.device,
+        num_envs=1,
+        use_fabric=not args_cli.disable_fabric,
+    )
 
     # Set observations to dictionary mode for Robomimic
     env_cfg.observations.policy.concatenate_terms = False
@@ -99,7 +128,9 @@ def main():
     device = TorchUtils.get_torch_device(try_to_use_cuda=True)
 
     # Load policy
-    policy, _ = FileUtils.policy_from_checkpoint(ckpt_path=args_cli.checkpoint, device=device, verbose=True)
+    policy, _ = FileUtils.policy_from_checkpoint(
+        ckpt_path=args_cli.checkpoint, device=device, verbose=True
+    )
 
     # Run policy
     results = []
@@ -109,7 +140,9 @@ def main():
         results.append(terminated)
         print(f"[INFO] Trial {trial}: {terminated}\n")
 
-    print(f"\nSuccessful trials: {results.count(True)}, out of {len(results)} trials")
+    print(
+        f"\nSuccessful trials: {results.count(True)}, out of {len(results)} trials"
+    )
     print(f"Success rate: {results.count(True) / len(results)}")
     print(f"Trial Results: {results}\n")
 
