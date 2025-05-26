@@ -363,7 +363,7 @@ class IsaacSimulator:
 
             # Import remaining modules after AppLauncher
             from isaaclab_tasks.utils import parse_env_cfg
-            from isaaclab.envs.direct_rl_env import DirectRLEnv
+            from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
             from isaaclab.sim.simulation_context import SimulationContext
             from argparse import Namespace
             import yaml
@@ -387,7 +387,7 @@ class IsaacSimulator:
                     dynamic_set_attr(env_cfg, env_new_cfg, path=["env_cfg"])
 
             env = gym.make(cli_args.task, cfg=env_cfg)
-            _env: DirectRLEnv = env.unwrapped
+            _env: DirectRLEnv|ManagerBasedRLEnv = env.unwrapped
             _sim = _env.sim
             _sim.set_camera_view(
                 (-2.08, -1.12, 3.95),
@@ -436,6 +436,14 @@ class IsaacSimulator:
 
             # Main loop
             active = True
+            
+            def _get_observation():
+                if isinstance(_env, ManagerBasedRLEnv):
+                    return _env.observation_manager.compute
+                elif isinstance(_env, DirectRLEnv):
+                    return _env._get_observations
+                else:
+                    raise TypeError(f"Unsupport unwrapped enviroment type: {type(_env)}")
             while active:
                 try:
                     # Handle commands from parent process
@@ -493,10 +501,10 @@ class IsaacSimulator:
                             # A common pattern is that step() returns it. We might need to store it.
                             # For now, we'll simulate getting it via a direct call if possible
                             # This needs careful implementation based on Isaac Lab Env specifics
-                            current_obs_dict = _env._get_observations()
+                            current_obs_dict = _get_observation()
                             # Better: store obs from last step/reset call
                             obs_payload = {
-                                "data": np.zeros([2, 3]),
+                                "data": current_obs_dict, # TODO test
                                 "metadata": "None",
                                 "timestamp": time.time(),
                             }
@@ -521,7 +529,7 @@ class IsaacSimulator:
                                 env.step(action_tensor)
                             )
 
-                            obs_payload = {}  # TODO
+                            obs_payload = obs_dict # TODO
                             child_conn.send(
                                 {
                                     "success": True,
@@ -536,7 +544,7 @@ class IsaacSimulator:
                             )
                         elif cmd == "reset_env":
                             obs_dict, info = env.reset()
-                            obs_payload = {}  # TODO
+                            obs_payload = obs_dict  # TODO
                             child_conn.send(
                                 {
                                     "success": True,
