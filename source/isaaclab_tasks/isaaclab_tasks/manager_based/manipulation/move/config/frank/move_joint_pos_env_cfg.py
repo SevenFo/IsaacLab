@@ -16,7 +16,6 @@ from isaaclab.utils.math import quat_from_euler_xyz
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_tasks.manager_based.manipulation.move import mdp
-from isaaclab_tasks.manager_based.manipulation.move.mdp import events
 from isaaclab_tasks.manager_based.manipulation.move.move_env_cfg import (
     MoveEnvCfg,
 )
@@ -35,7 +34,7 @@ class EventCfg:
 
     # Franka机械臂的初始位置
     init_franka_arm_pose = EventTerm(
-        func=events.set_default_joint_pose,
+        func=mdp.set_default_joint_pose,
         mode="startup",
         params={
             "default_pose": [
@@ -54,7 +53,7 @@ class EventCfg:
 
     # 随机化Franka机械臂的关节状态
     randomize_franka_joint_state = EventTerm(
-        func=events.randomize_joint_by_gaussian_offset,
+        func=mdp.randomize_joint_by_gaussian_offset,
         mode="reset",
         params={
             "mean": 0.0,
@@ -66,7 +65,7 @@ class EventCfg:
     # 随机化assemble_inner的位姿
     # 固定assemble_inner的位姿
     randomize_assemble_inner_pose = EventTerm(
-        func=events.randomize_object_pose,
+        func=mdp.randomize_object_pose,
         mode="reset",
         params={
             # "pose_range": {"x": (0.489, 0.754), "y": (-2.000, -2.047), "z": (2.818, 2.818), "yaw": (-0.5, 0.5)},
@@ -83,7 +82,7 @@ class EventCfg:
     # 随机化assemble_outer的位姿
     # 减小assemble_outer的位姿的随机化程度
     randomize_assemble_outer_pose = EventTerm(
-        func=events.randomize_object_pose,
+        func=mdp.randomize_object_pose,
         mode="reset",
         params={
             # "pose_range": {
@@ -114,7 +113,7 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
         self.events = EventCfg()
 
         self._robot_prim_path = "{ENV_REGEX_NS}/Robot"
-        
+
         # Set robot
         self.scene.robot = FRANKA_PANDA_CFG.replace(
             prim_path=self._robot_prim_path
@@ -136,7 +135,6 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
             open_command_expr={"panda_finger_.*": 0.04},
             close_command_expr={"panda_finger_.*": 0.0},
         )
-
 
         desk_properties = RigidBodyPropertiesCfg(
             solver_position_iteration_count=16,
@@ -164,7 +162,6 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
             max_depenetration_velocity=5.0,
             disable_gravity=False,
         )
-
 
         self.scene.desk = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Desk",
@@ -208,7 +205,7 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
         marker_cfg = FRAME_MARKER_CFG.copy()
         marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
         marker_cfg.prim_path = "/Visuals/FrameTransformer"
-        
+
         self.scene.ee_frame = FrameTransformerCfg(
             prim_path=f"{self._robot_prim_path}/panda_link0",
             debug_vis=False,
@@ -239,53 +236,78 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
         )
 
         self.scene.front_camera = TiledCameraCfg(
-        prim_path=f"{self._robot_prim_path}/base_link/front_camera",
-        update_period=0.1,
-        height=480,
-        width=640,
-        data_types=["rgb", "distance_to_image_plane"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=0.193,  # 1.93mm
-            focus_distance=400.0,
-            f_stop=0.0,  # disable DOF
-            horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
-            vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
-            clipping_range=(0.1, 1.0e5),
-        ),
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(1.62, 0.0, 2.35),
-            rot=quat_from_euler_xyz(
-                roll=torch.deg2rad(torch.scalar_tensor(30)),
-                pitch=torch.deg2rad(torch.scalar_tensor(0)),
-                yaw=torch.deg2rad(torch.scalar_tensor(90)),
-            )  # w-x-y-z # x-y-z-extrinsic == z-y-x-instrinsic != x-y-z-instrinsic (30,0,90) # orient
-            .squeeze()
-            .numpy(),  # extrinsic
-            convention="opengl",  # forward: -z, up: +y,isaac sim default
+            prim_path=f"{self._robot_prim_path}/panda_link0/front_camera",
+            update_period=0.1,
+            height=480,
+            width=640,
+            data_types=["rgb", "distance_to_image_plane"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=0.193,  # 1.93mm
+                focus_distance=400.0,
+                f_stop=0.0,  # disable DOF
+                horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
+                vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
+                clipping_range=(0.1, 1.0e5),
+            ),
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=(1.62, 0.0, 2.35),
+                rot=quat_from_euler_xyz(
+                    roll=torch.deg2rad(torch.scalar_tensor(30)),
+                    pitch=torch.deg2rad(torch.scalar_tensor(0)),
+                    yaw=torch.deg2rad(torch.scalar_tensor(90)),
+                )  # w-x-y-z # x-y-z-extrinsic == z-y-x-instrinsic != x-y-z-instrinsic (30,0,90) # orient
+                .squeeze()
+                .numpy(),  # extrinsic
+                convention="opengl",  # forward: -z, up: +y,isaac sim default
             ),
         )
         self.scene.wrist_camera = TiledCameraCfg(
-        prim_path=f"{self._robot_prim_path}/panda_hand/wrist_camera",
-        update_period=0.1,
-        height=480,
-        width=640,
-        data_types=["rgb", "distance_to_image_plane"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=0.193,  # 1.93mm
-            focus_distance=400.0,
-            f_stop=0.0,  # disable DOF
-            horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
-            vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
-            clipping_range=(0.1, 1.0e5),
-        ),
-        offset=TiledCameraCfg.OffsetCfg(
-            pos=(-0.05, 0.0, 0.0),
-            rot=(
-                math.sqrt(2) / 2,
-                0,
-                0,
-                math.sqrt(2) / 2,
-            ),  # w-x-y-z # x-y-z-intrinsic (0,0,90) # orient
-            convention="ros",  # +z: forward, -y: up
-        ),
-    )
+            prim_path=f"{self._robot_prim_path}/panda_hand/wrist_camera",
+            update_period=0.1,
+            height=480,
+            width=640,
+            data_types=["rgb", "distance_to_image_plane"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=0.193,  # 1.93mm
+                focus_distance=400.0,
+                f_stop=0.0,  # disable DOF
+                horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
+                vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
+                clipping_range=(0.1, 1.0e5),
+            ),
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=(-0.05, 0.0, 0.0),
+                rot=(
+                    math.sqrt(2) / 2,
+                    0,
+                    0,
+                    math.sqrt(2) / 2,
+                ),  # w-x-y-z # x-y-z-intrinsic (0,0,90) # orient
+                convention="ros",  # +z: forward, -y: up
+            ),
+        )
+        self.scene.inspector_camera = TiledCameraCfg(
+            prim_path=f"{self._robot_prim_path}/inspector_camera",
+            update_period=0.1,
+            height=480,
+            width=640,
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=0.193,  # 1.93mm
+                focus_distance=400.0,
+                f_stop=0.0,  # disable DOF
+                horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
+                vertical_aperture=0.216,  # 基于分辨率720×3μm计算的传感器高度（720×3μm=2.16mm=0.216cm）
+                clipping_range=(0.1, 1.0e5),
+            ),
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=(-2.08, -2.0, 3.95),
+                rot=(
+                    0.56099,
+                    0.43036,
+                    -0.43046,
+                    -0.56099,
+                ),  # w-x-y-z # x-y-z-intrinsic (0,0,90) # orient
+                convention="opengl",  # forward: -z, up: +y,isaac sim default
+            ),
+        )

@@ -40,43 +40,38 @@ if TYPE_CHECKING:
     timeout=300.0,  # 5 minutes, adjust as needed
     requires_env=True,
 )
-def assemble_object(
-    env: Any, params: Dict[str, Any]
-) -> Generator[None, None, bool]:
+def assemble_object(env: Any) -> Generator[None, None, bool]:
     """
     Assemble an object using a pre-trained Robomimic policy.
     This skill runs the policy step-by-step within the Isaac simulator.
 
-    Expected params:
-    - checkpoint_path (str): Path to the Robomimic policy checkpoint.
-    - horizon (int, optional): Max steps per episode. Defaults to 800.
-    - policy_device (str, optional): Device for policy ("cuda" or "cpu"). Defaults to env device.
+    Expected params: None
     """
     if not ROBOMIMIC_AVAILABLE:
         print(
             "[Skill: assemble_object] Robomimic library not available. Cannot execute."
         )
-        yield  # Yield once to satisfy generator type, then return False
+        yield None, None, None, None, None
         return False
 
     print("[Skill: assemble_object] Starting...")
 
-    checkpoint_path = params.get("checkpoint_path")
+    checkpoint_path = "assets/model_epoch_4000.pth"
     if not checkpoint_path:
         print(
             "[Skill: assemble_object] Error: 'checkpoint_path' parameter is missing."
         )
-        yield
+        yield None, None, None, None, None
         return False
 
     if not os.path.exists(checkpoint_path):
         print(
             f"[Skill: assemble_object] Error: Checkpoint path '{checkpoint_path}' does not exist."
         )
-        yield
+        yield None, None, None, None, None
         return False
 
-    horizon = params.get("horizon", 800)
+    horizon = 800
     # Determine policy device: use specified, else try to use env's device, else cpu
     # The env object passed here is the gym.Env wrapper.
     # Accessing unwrapped.device is specific to Isaac Lab's DirectRLEnv or ManagerBasedRLEnv.
@@ -85,9 +80,7 @@ def assemble_object(
     if hasattr(env, "unwrapped") and hasattr(env.unwrapped, "device"):
         default_device_str = str(env.unwrapped.device)
 
-    specified_policy_device_str = params.get(
-        "policy_device", default_device_str
-    )
+    specified_policy_device_str = "cuda"
     policy_device = TorchUtils.get_torch_device(
         try_to_use_cuda=(specified_policy_device_str.startswith("cuda"))
     )
@@ -104,7 +97,7 @@ def assemble_object(
             policy.eval()
     except Exception as e:
         print(f"[Skill: assemble_object] Error: Failed to load policy: {e}")
-        yield
+        yield None, None, None, None, None
         return False
 
     print("[Skill: assemble_object] Policy loaded. Starting rollout...")
@@ -133,7 +126,7 @@ def assemble_object(
     )  # This resets the specific env instance passed.
     # Important: if this skill is part of a longer sequence, this reset might be undesirable.
     # Consider if `env.get_observations()` is a better fit if available and skill is not fully episodic.
-
+    yield obs_dict, None, None, None, info
     policy.start_episode()
     task_successfully_completed = False
 
@@ -150,7 +143,7 @@ def assemble_object(
         print(
             f"[Skill: assemble_object] Error: Key '{policy_obs_key}' not found in initial observations."
         )
-        yield
+        yield None, None, None, None, None
         return False
 
     policy_input_source = obs_dict[policy_obs_key]
@@ -158,7 +151,7 @@ def assemble_object(
         print(
             f"[Skill: assemble_object] Error: obs_dict['{policy_obs_key}'] is not a dict, but {type(policy_input_source)}."
         )
-        yield
+        yield None, None, None, None, None
         return False
 
     for i in range(horizon):
@@ -180,7 +173,7 @@ def assemble_object(
             print(
                 f"[Skill: assemble_object] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
-            yield
+            yield None, None, None, None, None
             return False
 
         # Action needs to be formatted for the environment's action space
@@ -197,12 +190,12 @@ def assemble_object(
             print(
                 f"[Skill: assemble_object] Error: Key '{policy_obs_key}' not found in new observations after step."
             )
-            yield
+            yield None, None, None, None, None
             return False
         policy_input_source = obs_dict[policy_obs_key]
 
         # Yield control back to the executor loop in the subprocess
-        yield
+        yield obs_dict, reward, terminated, truncated, info
 
         # Check for termination conditions
         is_terminated = (

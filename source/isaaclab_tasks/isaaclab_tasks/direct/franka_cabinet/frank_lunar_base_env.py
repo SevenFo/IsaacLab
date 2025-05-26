@@ -36,7 +36,7 @@ from isaaclab_assets.robots.franka import (
     FRANKA_PANDA_CFG,
 )  # isort: skip
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab_tasks.manager_based.manipulation.move.mdp import ur5_move_events
+from isaaclab_tasks.manager_based.manipulation.move import mdp
 from isaaclab.managers import SceneEntityCfg
 
 
@@ -151,7 +151,7 @@ class EventCfg:
 
     # Franka机械臂的初始位置
     init_franka_arm_pose = EventTerm(
-        func=ur5_move_events.set_default_joint_pose,
+        func=mdp.set_default_joint_pose,
         mode="startup",
         params={
             "default_pose": [
@@ -170,7 +170,7 @@ class EventCfg:
 
     # 随机化Franka机械臂的关节状态
     randomize_franka_joint_state = EventTerm(
-        func=ur5_move_events.randomize_joint_by_gaussian_offset,
+        func=mdp.randomize_joint_by_gaussian_offset,
         mode="reset",
         params={
             "mean": 0.0,
@@ -181,7 +181,7 @@ class EventCfg:
 
     # 随机化箱子的位姿
     # randomize_box_positions = EventTerm(
-    #     func=ur5_move_events.randomize_object_pose,
+    #     func=mdp.randomize_object_pose,
     #     mode="reset",
     #     params={
     #         "pose_range": {"x": (0.7, 1.0), "y": (-0.58, -0.47), "z": (2.52892, 2.52892), "yaw": (-0.5, 0.5)},
@@ -192,7 +192,7 @@ class EventCfg:
     # 随机化assemble_inner的位姿
     # 固定assemble_inner的位姿
     randomize_assemble_inner_pose = EventTerm(
-        func=ur5_move_events.randomize_object_pose,
+        func=mdp.randomize_object_pose,
         mode="reset",
         params={
             # "pose_range": {"x": (0.489, 0.754), "y": (-2.000, -2.047), "z": (2.818, 2.818), "yaw": (-0.5, 0.5)},
@@ -209,7 +209,7 @@ class EventCfg:
     # 随机化assemble_outer的位姿
     # 减小assemble_outer的位姿的随机化程度
     randomize_assemble_outer_pose = EventTerm(
-        func=ur5_move_events.randomize_object_pose,
+        func=mdp.randomize_object_pose,
         mode="reset",
         params={
             # "pose_range": {

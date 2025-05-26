@@ -3,6 +3,7 @@ Main robot brain system that orchestrates all components.
 """
 
 import time
+import os
 import threading
 from typing import (
     Optional,
@@ -12,6 +13,7 @@ from typing import (
 )  # Generator might not be needed at this level anymore
 from dataclasses import dataclass, field
 import traceback  # For debugging
+from PIL import Image
 
 from .types import SystemStatus, Action, Observation, Task, SkillPlan
 from .isaac_simulator import IsaacSimulator
@@ -47,6 +49,8 @@ class RobotBrainSystem:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self.visualize = True
+        self.log_path = config.get("log_path", "logs")
         self.state = SystemState()
 
         # Core components
@@ -74,10 +78,7 @@ class RobotBrainSystem:
             # Initialize Isaac simulator
             sim_config_from_main = self.config.get("simulator", {})
             # scene_cfg_path could be part of sim_config_from_main or None
-            scene_cfg_path = sim_config_from_main.get("scene_cfg_path")
-            self.simulator = IsaacSimulator(
-                scene_cfg_path=scene_cfg_path, sim_config=sim_config_from_main
-            )
+            self.simulator = IsaacSimulator(sim_config=sim_config_from_main)
 
             if (
                 not self.simulator.initialize()
@@ -110,6 +111,14 @@ class RobotBrainSystem:
 
             self.state.status = SystemStatus.IDLE
             print("[RobotBrainSystem] Initialization complete")
+
+            import os
+
+            self.log_path = os.path.join(
+                self.log_path, time.strftime("%Y%m%d_%H%M%S")
+            )
+            os.makedirs(self.log_path, exist_ok=True)
+
             return True
 
         except Exception as e:
@@ -190,9 +199,7 @@ class RobotBrainSystem:
         self.state.status = SystemStatus.SHUTDOWN
         print("[RobotBrainSystem] Shutdown complete")
 
-    def execute_task(
-        self, instruction: str, image_data: Optional[str] = None
-    ) -> bool:
+    def execute_task(self, instruction: str) -> bool:
         """
         Execute a high-level task instruction.
         The brain will parse, plan, and then the system will start the first skill.
@@ -229,6 +236,19 @@ class RobotBrainSystem:
         print(f"[RobotBrainSystem] Received task instruction: {instruction}")
         try:
             self.state.status = SystemStatus.THINKING
+            obs = self.simulator.get_observation()
+            inspector_rgb = (
+                obs.data["rgb_camera"]["inspector"][0].cpu().numpy()
+            )
+            if self.visualize:
+                import matplotlib.pyplot as plt
+
+                plt.imshow(inspector_rgb)
+                plt.axis("off")
+                plt.savefig(
+                    os.path.join(self.log_path, "execute_task_input.png")
+                )
+            image_data = Image.fromarray(inspector_rgb)
             self.state.current_task = self.brain.parse_task(
                 instruction, image_data
             )
@@ -659,3 +679,24 @@ class RobotBrainSystem:
             self.state.error_message = reason
         # For "continue" action, do nothing - keep executing current sim skill (if any)
         # or proceed to next skill in plan if current sim skill finished.
+
+
+if __name__ == "__main__":
+    import os
+
+    os.environ["DISPLAY"] = ":0"  # Ensure DISPLAY is set for GUI apps
+    print("TEST ROBOT BRAIN SYSTEM")
+    from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
+
+    system = RobotBrainSystem(DEVELOPMENT_CONFIG)
+    result = system.initialize()
+    system.start()
+    system.execute_task("assemble the object in the desk")
+    while system.state.is_running:
+        time.sleep(1)
+        status = system.get_status()
+        print(f"Current System Status: {status['system']['status']}")
+        if status["system"]["status"] == "idle":
+            break
+    system.shutdown()
+    print("Robot Brain System test completed.")

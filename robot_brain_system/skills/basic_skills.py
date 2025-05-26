@@ -16,14 +16,14 @@ from ..core.types import (
 from ..core.skill_manager import skill_register
 
 
-@skill_register(
-    name="reset_to_home",
-    skill_type=SkillType.FUNCTION,
-    execution_mode=ExecutionMode.GENERATOR,
-    description="Reset robot to home position",
-    timeout=10.0,
-    requires_env=True,  # This skill now needs the environment
-)
+# @skill_register(
+#     name="reset_to_home",
+#     skill_type=SkillType.FUNCTION,
+#     execution_mode=ExecutionMode.GENERATOR,
+#     description="Reset robot to home position",
+#     timeout=10.0,
+#     requires_env=True,  # This skill now needs the environment
+# )
 def reset_to_home(
     env: Any, params: Dict[str, Any]
 ) -> Generator[None, None, bool]:
@@ -63,14 +63,14 @@ def reset_to_home(
         return False
 
 
-@skill_register(
-    name="wait",
-    skill_type=SkillType.FUNCTION,
-    execution_mode=ExecutionMode.GENERATOR,
-    description="Wait for specified duration",
-    timeout=None,  # No timeout for wait skill
-    requires_env=True,  # Needs env to potentially send no-op actions or just for consistency
-)
+# @skill_register(
+#     name="wait",
+#     skill_type=SkillType.FUNCTION,
+#     execution_mode=ExecutionMode.GENERATOR,
+#     description="Wait for specified duration",
+#     timeout=None,  # No timeout for wait skill
+#     requires_env=True,  # Needs env to potentially send no-op actions or just for consistency
+# )
 def wait_skill(
     env: Any, params: Dict[str, Any]
 ) -> Generator[None, None, bool]:
@@ -112,14 +112,14 @@ def wait_skill(
     return True
 
 
-@skill_register(
-    name="emergency_stop",
-    skill_type=SkillType.FUNCTION,
-    execution_mode=ExecutionMode.DIRECT,  # This can remain direct if it doesn't need env stepping
-    description="Emergency stop - immediate halt (conceptual)",
-    timeout=1.0,
-    requires_env=False,  # Assuming this can be handled at a higher level or via direct sim commands
-)
+# @skill_register(
+#     name="emergency_stop",
+#     skill_type=SkillType.FUNCTION,
+#     execution_mode=ExecutionMode.DIRECT,  # This can remain direct if it doesn't need env stepping
+#     description="Emergency stop - immediate halt (conceptual)",
+#     timeout=1.0,
+#     requires_env=False,  # Assuming this can be handled at a higher level or via direct sim commands
+# )
 def emergency_stop(
     params: Dict[str, Any],
 ) -> bool:  # Env not needed if requires_env=False
@@ -139,14 +139,14 @@ def emergency_stop(
     return True
 
 
-@skill_register(
-    name="get_current_state",
-    skill_type=SkillType.FUNCTION,
-    execution_mode=ExecutionMode.GENERATOR,  # Or DIRECT if env has a direct get_obs method
-    description="Get current robot state and observations",
-    timeout=5.0,
-    requires_env=True,
-)
+# @skill_register(
+#     name="get_current_state",
+#     skill_type=SkillType.FUNCTION,
+#     execution_mode=ExecutionMode.GENERATOR,  # Or DIRECT if env has a direct get_obs method
+#     description="Get current robot state and observations",
+#     timeout=5.0,
+#     requires_env=True,
+# )
 def get_current_state(
     env: Any, params: Dict[str, Any]
 ) -> Generator[None, None, Dict[str, Any]]:

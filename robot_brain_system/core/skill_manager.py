@@ -89,6 +89,25 @@ class SkillRegistry:
             "function_name": skill.function.__name__,  # function object itself is not easily serializable
         }
 
+    def get_skill_descriptions(self) -> str:
+        """
+        Get a dictionary mapping skill names to their function docstrings.
+        This is useful for providing detailed information about what each skill does,
+        often used for generating prompts or help texts.
+        The docstring is retrieved from the skill's underlying function.
+        """
+        descriptions: Dict[str, str] = {}
+        for name, skill_def in self.skills.items():
+            # inspect.getdoc() is preferred as it cleans indentation and handles inheritance
+            docstring = inspect.getdoc(skill_def.function)
+            descriptions[name] = docstring if docstring else ""
+        formated_descriptions = [
+            f"skill name: {name}: \n skill desc:\n{desc}\n\n"
+            for name, desc in descriptions.items()
+        ]
+
+        return "".join(formated_descriptions)
+
     def discover_skills(self, skills_directory: str = "../skills"):
         """Automatically discover and register skills from a directory."""
         try:
@@ -338,14 +357,14 @@ class SkillExecutor:
         )
 
         try:
-            args_for_skill = []
+            args_for_skill = dict()  # Use a dict to collect args
             if skill_def.requires_env:
-                args_for_skill.append(env)
-            args_for_skill.append(parameters)
+                args_for_skill["env"] = env  # Add environment if required
+            args_for_skill.update(parameters)  # Add parameters
 
             if skill_def.execution_mode == ExecutionMode.GENERATOR:
                 self.current_skill_generator = skill_def.function(
-                    *args_for_skill
+                    **args_for_skill
                 )
                 self.current_skill_name = skill_name
                 self.current_skill_params = parameters
@@ -391,8 +410,7 @@ class SkillExecutor:
             return None
 
         try:
-            next(self.current_skill_generator)
-            return True  # Still running
+            return next(self.current_skill_generator)
         except StopIteration as e:
             result = getattr(e, "value", True)
             print(
@@ -468,6 +486,5 @@ class SkillExecutor:
         print("[SkillExecutor] Executor reset.")
 
 
-if __name__ ==  "__main__":
+if __name__ == "__main__":
     print("Skill Exector Test")
-    

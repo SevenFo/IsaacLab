@@ -148,7 +148,7 @@ class QwenVLAdapter(BaseModelAdapter):
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0]
-
+        print(f"-------- Generated response --------\n{response}\n")
         return response, None  # Qwen-VL不支持音频输出
 
 

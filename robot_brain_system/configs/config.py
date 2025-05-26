@@ -6,7 +6,7 @@ Default configuration for the robot brain system.
 SYSTEM_CONFIG = {
     # Simulator configuration
     "simulator": {
-        "env_name": "Isaac-Move-Box-UR5-IK-Rel",
+        "env_name": "Isaac-Move-Box-Frank-IK-Rel",
         "device": "cuda:0",
         "num_envs": 1,
         "headless": True,

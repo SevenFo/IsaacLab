@@ -30,7 +30,6 @@ class IsaacSimulator:
         self,
         sim_config: Optional[Dict[str, Any]] = None,
     ):
-
         self.sim_config = sim_config or {}  # General sim configuration
         self.process: Optional[mp.Process] = None
         self.parent_conn: Optional[Connection] = None
@@ -288,7 +287,7 @@ class IsaacSimulator:
 
             app_launcher_params = {
                 "task": sim_config.get(
-                    "task", "Isaac-Frank-LunarBase-Direct-v0"
+                    "env_name", "Isaac-Move-Box-Frank-IK-Rel"
                 ),
                 "device": sim_config.get(
                     "device", "cuda:0"
@@ -351,13 +350,20 @@ class IsaacSimulator:
                     dynamic_set_attr(env_cfg, env_new_cfg, path=["env_cfg"])
 
             env = gym.make(cli_args.task, cfg=env_cfg)
-            _env: DirectRLEnv|ManagerBasedRLEnv = env.unwrapped
+            _env: DirectRLEnv | ManagerBasedRLEnv = env.unwrapped
             _sim = _env.sim
             _sim.set_camera_view(
                 (-2.08, -1.12, 3.95),
                 (0.6, -2.0, 2.818),
             )
             obs, info = env.reset()
+            obs_payload = {
+                "data": obs,  # Assuming obs is already in a dict-like format
+                "metadata": "None",
+                "timestamp": time.time(),
+            }  # Add metadata and timestamp
+            print(f"[IsaacSubprocess] Environment reset complete, obs {obs}")
+            latest_obs = obs_payload  # Store latest obs
             print(
                 f"[Isaac Process] Environment '{cli_args.task}' created. Device: {_env.device}"
             )
@@ -400,14 +406,17 @@ class IsaacSimulator:
 
             # Main loop
             active = True
-            
+
             def _get_observation():
                 if isinstance(_env, ManagerBasedRLEnv):
                     return _env.observation_manager.compute
                 elif isinstance(_env, DirectRLEnv):
                     return _env._get_observations
                 else:
-                    raise TypeError(f"Unsupport unwrapped enviroment type: {type(_env)}")
+                    raise TypeError(
+                        f"Unsupport unwrapped enviroment type: {type(_env)}"
+                    )
+
             while active:
                 try:
                     # Handle commands from parent process
@@ -465,17 +474,10 @@ class IsaacSimulator:
                             # A common pattern is that step() returns it. We might need to store it.
                             # For now, we'll simulate getting it via a direct call if possible
                             # This needs careful implementation based on Isaac Lab Env specifics
-                            current_obs_dict = _get_observation()
-                            # Better: store obs from last step/reset call
-                            obs_payload = {
-                                "data": current_obs_dict, # TODO test
-                                "metadata": "None",
-                                "timestamp": time.time(),
-                            }
                             child_conn.send(
                                 {
                                     "success": True,
-                                    "observation_data": obs_payload,
+                                    "observation_data": latest_obs,
                                 }
                             )
 
@@ -493,7 +495,14 @@ class IsaacSimulator:
                                 env.step(action_tensor)
                             )
 
-                            obs_payload = obs_dict # TODO
+                            obs_payload = {
+                                "data": obs_dict,  # TODO test
+                                "metadata": "None",
+                                "timestamp": time.time(),
+                            }
+
+                            latest_obs = obs_payload  # Store latest obs
+
                             child_conn.send(
                                 {
                                     "success": True,
@@ -508,7 +517,12 @@ class IsaacSimulator:
                             )
                         elif cmd == "reset_env":
                             obs_dict, info = env.reset()
-                            obs_payload = obs_dict  # TODO
+                            obs_payload = {
+                                "data": obs_dict,  # TODO test
+                                "metadata": "None",
+                                "timestamp": time.time(),
+                            }
+                            latest_obs = obs_payload  # Store latest obs
                             child_conn.send(
                                 {
                                     "success": True,
@@ -526,17 +540,21 @@ class IsaacSimulator:
 
                     # Step non-blocking skill if one is running
                     if skill_executor.is_running():
-                        skill_executor.step()  # env is passed during start_skill
-
-                    # Step the simulation app itself to keep it responsive
-                    # Only if not paused by a skill that needs fine-grained control
-                    # if (
-                    #     not skill_executor.is_running()
-                    # ):  # Or if skill yields control for sim step
-                    #     if simulation_app.is_running():
-                    #         simulation_app.update()  # Essential for Isaac Sim
-                    #     else:
-                    #         active = False  # Sim app stopped externally
+                        skill_exec_result = (
+                            skill_executor.step()
+                        )  # env is passed during start_skill
+                        if isinstance(skill_exec_result, tuple) and (
+                            len(skill_exec_result) == 5
+                        ):  # skill that call env.step should yield 5 values
+                            obs_dict, reward, terminated, truncated, info = (
+                                skill_exec_result
+                            )
+                            obs_payload = {
+                                "data": obs_dict,
+                                "metadata": "None",
+                                "timestamp": time.time(),
+                            }
+                            latest_obs = obs_payload  # Store latest obs
 
                     # Small delay to prevent tight loop if no commands and no active skill
                     if (
@@ -598,9 +616,82 @@ class IsaacSimulator:
 
 
 if __name__ == "__main__":
+    import os
+
+    os.environ["DISPLAY"] = ":0"  # Set DISPLAY for GUI apps
+
     from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
-    print('Isaac Simulator Tets')
-    isim = IsaacSimulator(
-        sim_config=DEVELOPMENT_CONFIG
+
+    print("Isaac Simulator Tets")
+    isim = IsaacSimulator(sim_config=DEVELOPMENT_CONFIG)
+    result = isim.initialize()
+    assert result, "Failed to initialize Isaac Simulator"
+    print("Isaac Simulator initialized successfully.")
+
+    # reset test
+    obs = isim.reset_env()
+    assert obs is not None, "Failed to reset Isaac Simulator environment"
+    print("Isaac Simulator environment reset successfully.")
+
+    # Get observation test
+    obs = isim.get_observation()
+    assert obs is not None, "Failed to get observation from Isaac Simulator"
+    print("Observation retrieved successfully:", obs)
+
+    skill_status = isim.get_skill_executor_status()
+    assert skill_status.get("status") == "idle", (
+        f"Skill executor status should be 'idle', but got {skill_status.get('status')}"
     )
-    isim.initialize()
+
+    result = isim.start_skill_non_blocking(
+        "assemble_object",
+        {
+            "checkpoint_path": "assets/model_epoch_4000.pth",
+            "horizon": 1000,
+        },
+    )
+    assert result, "Failed to start skill in Isaac Simulator"
+    print("Skill started successfully.")
+
+    while isim.get_skill_executor_status().get("status") == "running":
+        time.sleep(1)
+        print("Waiting for skill to complete...")
+    skill_finish_status = isim.get_skill_executor_status()
+    print(
+        f"Skill finished with status: {skill_finish_status.get('status', 'unknown')}"
+    )
+
+    # Terminate skill test
+    isim.start_skill_non_blocking(
+        "assemble_object",
+        {
+            "checkpoint_path": "assets/model_epoch_4000.pth",
+            "horizon": 1000,
+        },
+    )
+    time.sleep(5)  # Give it some time to start
+    print("Attempting to terminate current skill...")
+    result = isim.terminate_current_skill()
+    assert result, "Failed to terminate skill in Isaac Simulator"
+    skill_status = isim.get_skill_executor_status()
+    assert skill_status.get("status") == "interrupted", (
+        f"Skill executor status should be 'interrupted' after termination, but got {skill_status.get('status')}"
+    )
+    print(
+        "Skill terminated successfully, current skill status:",
+        isim.get_skill_executor_status().get("status"),
+    )
+
+    isim.shutdown()
+
+    # # Step environment test
+    # for i in range(5):
+    #     action = Action(data=np.random.rand(), metadata={})
+    #     step_result = isim.step_env(action)
+    #     assert step_result is not None, (
+    #         "Failed to step Isaac Simulator environment"
+    #     )
+    #     obs, reward, terminated, truncated, info = step_result
+    #     print(
+    #         f"Step {i + 1}: Obs: {obs}, Reward: {reward}, Terminated: {terminated}, Truncated: {truncated}, Info: {info}"
+    #     )

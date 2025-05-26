@@ -171,7 +171,9 @@ class QwenVLBrain:
             available_skills = self.skill_registry.list_skills()
 
             # Use Qwen VL to analyze task and create plan
-            plan = self._query_qwen_for_plan(task, available_skills)
+            plan = self._query_qwen_for_plan(
+                task, self.skill_registry.get_skill_descriptions()
+            )
 
             print(
                 f"[QwenVLBrain] Created plan for task {task.id}: {len(plan.skill_sequence)} skills"
@@ -326,7 +328,7 @@ class QwenVLBrain:
         }
 
     def _query_qwen_for_plan(
-        self, task: Task, available_skills: List[str]
+        self, task: Task, skill_descriptions: str
     ) -> SkillPlan:
         """
         Query Qwen VL to create a skill execution plan.
@@ -336,11 +338,11 @@ class QwenVLBrain:
         """
         if self.model_adapter is None:
             # Fallback to mock implementation
-            return self._mock_plan_task(task, available_skills)
+            return self._mock_plan_task(task, skill_descriptions)
 
         try:
             # Format prompt for planning
-            prompt = self._format_prompt_for_planning(task, available_skills)
+            prompt = self._format_prompt_for_planning(task, skill_descriptions)
 
             # Prepare input for the model adapter
             input_data = self.model_adapter.prepare_input(
@@ -369,7 +371,7 @@ class QwenVLBrain:
             return self._mock_plan_task(task, available_skills)
 
     def _mock_plan_task(
-        self, task: Task, available_skills: List[str]
+        self, task: Task, skill_descriptions: str
     ) -> SkillPlan:
         """Mock implementation for planning when model adapter is not available."""
         # Simple heuristic planning based on task description
@@ -583,7 +585,7 @@ class QwenVLBrain:
             }
 
     def _format_prompt_for_planning(
-        self, task: Task, available_skills: List[str]
+        self, task: Task, skill_descriptions: str
     ) -> str:
         """Format a prompt for Qwen VL planning."""
         prompt = f"""
@@ -592,7 +594,7 @@ You are a robot task planner. Given a task description and available skills, cre
 Task: {task.description}
 
 Available Skills:
-{chr(10).join(f"- {skill}" for skill in available_skills)}
+{skill_descriptions}
 
 Please respond with a JSON object containing:
 - skill_sequence: List of skill names to execute in order
@@ -606,6 +608,7 @@ Example response:
     "monitoring_interval": 1.0
 }}
 """
+
         return prompt
 
     def _format_prompt_for_monitoring(
@@ -621,7 +624,7 @@ You are monitoring robot task execution. Analyze the current situation and decid
 Original Task: {task.description}
 Current Skill: {current_skill["name"]}
 Skill Parameters: {current_skill["parameters"]}
-Available Skills: {"\n".join(f"- {skill}" for skill in self.skill_registry.list_skills())}
+Available Skills: {chr(10).join(f"- {skill}" for skill in self.skill_registry.list_skills())}
 
 Current Observation: {str(observation) if observation else "No observation"}
 
