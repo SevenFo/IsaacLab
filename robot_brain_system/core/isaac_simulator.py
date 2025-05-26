@@ -20,38 +20,7 @@ from .types import (
     Action,
     Observation,
 )  # Assuming these are used for IPC if needed
-
-
-def dynamic_set_attr(obj: object, kwargs: dict, path: list):
-    """Dynamically set attributes on an object from a nested dictionary."""
-    if kwargs is None:
-        return
-
-    for k, v in kwargs.items():
-        if hasattr(obj, k):
-            attr = getattr(obj, k)
-            if isinstance(v, dict) and hasattr(attr, "__dict__"):
-                next_path = path.copy()
-                next_path.append(k)
-                dynamic_set_attr(attr, v, next_path)
-            else:
-                try:
-                    current_val = getattr(obj, k)
-                    if isinstance(
-                        current_val, (int, float, bool, str)
-                    ) and not isinstance(v, type(current_val)):
-                        # Type conversion if needed
-                        v = type(current_val)(v)
-                    setattr(obj, k, v)
-                    print(
-                        f"Set {'.'.join(path + [k])} from {getattr(obj, k)} to {v}"
-                    )
-                except Exception as e:
-                    print(
-                        f"Error setting attribute {'.'.join(path + [k])}: {e}"
-                    )
-        else:
-            print(f"Warning: Attribute {k} not found in {'.'.join(path)}")
+from robot_brain_system.utils import dynamic_set_attr
 
 
 class IsaacSimulator:
@@ -59,12 +28,9 @@ class IsaacSimulator:
 
     def __init__(
         self,
-        scene_cfg_path: Optional[str] = None,
         sim_config: Optional[Dict[str, Any]] = None,
     ):
-        self.scene_cfg_path = (
-            scene_cfg_path  # Example: path to a scene config file
-        )
+
         self.sim_config = sim_config or {}  # General sim configuration
         self.process: Optional[mp.Process] = None
         self.parent_conn: Optional[Connection] = None
@@ -97,7 +63,6 @@ class IsaacSimulator:
                 target=self._isaac_simulation_entry,
                 args=(
                     child_conn,
-                    self.scene_cfg_path,
                     self.sim_config,
                 ),  # Pass sim_config
             )
@@ -309,7 +274,6 @@ class IsaacSimulator:
     @staticmethod
     def _isaac_simulation_entry(
         child_conn: Connection,
-        scene_cfg_path: Optional[str],
         sim_config: Dict[str, Any],
     ):
         """Entry point for Isaac simulation subprocess with direct environment access."""
@@ -631,3 +595,12 @@ class IsaacSimulator:
             if child_conn:
                 child_conn.close()
             print("[IsaacSubprocess] Terminated.")
+
+
+if __name__ == "__main__":
+    from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
+    print('Isaac Simulator Tets')
+    isim = IsaacSimulator(
+        sim_config=DEVELOPMENT_CONFIG
+    )
+    isim.initialize()

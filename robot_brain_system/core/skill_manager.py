@@ -466,3 +466,8 @@ class SkillExecutor:
         self.terminate_current_skill()
         self.status = SkillStatus.IDLE
         print("[SkillExecutor] Executor reset.")
+
+
+if __name__ ==  "__main__":
+    print("Skill Exector Test")
+    
