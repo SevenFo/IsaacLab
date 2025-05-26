@@ -5,14 +5,17 @@
 
 from dataclasses import MISSING
 
+import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+import isaaclab.envs.mdp as mdp_funcs
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
+from isaaclab.sensors import TiledCameraCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import  UsdFileCfg
 from isaaclab.utils import configclass
 
@@ -30,8 +33,11 @@ class RoomSetSceneCfg(InteractiveSceneCfg):
     # end-effector sensor: will be populated by agent env cfg
     ee_frame: FrameTransformerCfg = MISSING
 
+    front_camera: TiledCameraCfg = MISSING
+    wrist_camera: TiledCameraCfg = MISSING
+    
     # Room_set
-    ROOM_set = AssetBaseCfg(
+    lunar_base = AssetBaseCfg(
         prim_path="/World/ROOM_set",
         init_state=AssetBaseCfg.InitialStateCfg(pos=[0, 0, 0], rot=[0, 0, 0, 0]),
         spawn=UsdFileCfg(usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0403/Collected_ROOM_set/ROOM_set.no.ur5.box.desk_clean_version.usd"),
@@ -78,11 +84,31 @@ class ObservationsCfg:
     @configclass
     class RGBCameraPolicyCfg(ObsGroup):                                                                  
         """Observations for policy group with RGB images."""
-
+        front = ObsTerm(func=mdp_funcs.image,params={
+           "sensor_cfg": SceneEntityCfg('front_camera'),
+           "data_type": "rgb",
+        })
+        wrist = ObsTerm(func=mdp_funcs.image,params={
+           "sensor_cfg": SceneEntityCfg('wrist_camera'),
+           "data_type": "rgb",
+        })
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = False
-
+    @configclass
+    class DepthCameraPolicyCfg(ObsGroup):                                                                  
+        """Observations for policy group with RGB images."""
+        front = ObsTerm(func=mdp_funcs.image,params={
+           "sensor_cfg": SceneEntityCfg('front_camera'),
+           "data_type": "depth",
+        })
+        wrist = ObsTerm(func=mdp_funcs.image,params={
+           "sensor_cfg": SceneEntityCfg('wrist_camera'),
+           "data_type": "depth",
+        })
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = False
     @configclass
     class SubtaskCfg(ObsGroup):
         """Observations for subtask group."""
@@ -95,15 +121,7 @@ class ObservationsCfg:
                 "object_cfg": SceneEntityCfg("assemble_outer"),
             },
         )
-        # stack = ObsTerm(
-        #     func=mdp.object_stacked,
-        #     params={
-        #         "robot_cfg": SceneEntityCfg("robot"),
-        #         "inner_object_cfg": SceneEntityCfg("assemble_inner"),
-        #         "outer_object_cfg": SceneEntityCfg("assemble_outer"),
-        #         "desk_cfg": SceneEntityCfg("desk"),
-        #     },
-        # )
+
       
         def __post_init__(self):
             self.enable_corruption = False
@@ -112,6 +130,7 @@ class ObservationsCfg:
     # observation groups
     policy: PolicyCfg = PolicyCfg()
     rgb_camera: RGBCameraPolicyCfg = RGBCameraPolicyCfg()
+    depth_camera: DepthCameraPolicyCfg=  DepthCameraPolicyCfg()
     subtask_terms: SubtaskCfg = SubtaskCfg()
 
 
@@ -120,11 +139,6 @@ class TerminationsCfg:
     """Termination terms for the MDP."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-
-    # box_dropping = DoneTerm(
-    #     func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("box")}
-    # )
-
     success = DoneTerm(func=mdp.outer_stacked)
 
 
