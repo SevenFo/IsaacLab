@@ -181,7 +181,7 @@ class TerminationsCfg:
     """Termination terms for the MDP."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    success = DoneTerm(func=mdp.outer_stacked)
+    # success = DoneTerm(func=mdp.outer_stacked)
 
 
 @configclass

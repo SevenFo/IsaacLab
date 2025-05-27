@@ -4,6 +4,8 @@ Brain component that uses Qwen VL for task planning and monitoring.
 
 import time
 import json
+import os
+from PIL import Image
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
@@ -65,6 +67,9 @@ class QwenVLBrain:
             "monitoring_interval", 1.0
         )  # seconds
         self.max_retries = config.get("max_retries", 3)
+        self.visualize = config.get("visualize", False)
+        self.log_path = config.get("log_path", "./logs")
+        self.monitor_waiting_times = 5
 
     def initialize(self):
         """Initialize the brain component."""
@@ -203,6 +208,8 @@ class QwenVLBrain:
             self.state.current_skill_index = 0
             self.state.status = SystemStatus.EXECUTING
 
+            self.current_monitor_time = 0
+
             print(f"[QwenVLBrain] Started executing task: {task.description}")
             return plan
 
@@ -242,7 +249,7 @@ class QwenVLBrain:
         """Advance to the next skill in the plan."""
         if self.state.current_plan:
             self.state.current_skill_index += 1
-
+            self.current_monitor_time = 0
             if self.state.current_skill_index >= len(
                 self.state.current_plan.skill_sequence
             ):
@@ -284,6 +291,13 @@ class QwenVLBrain:
 
             if not self.state.current_plan or not self.state.current_task:
                 return {"action": "continue", "reason": "No active task"}
+
+            if self.current_monitor_time < self.monitor_waiting_times:
+                self.current_monitor_time += 1
+                return {
+                    "action": "continue",
+                    "reason": f"current_monitor_time: {self.current_monitor_time}",
+                }
 
             # Get current skill info
             current_skill = self.get_next_skill()
@@ -440,16 +454,29 @@ class QwenVLBrain:
         try:
             # Format prompt for monitoring
             prompt = self._format_prompt_for_monitoring(
-                task, current_skill, observation
+                task, current_skill, ""
             )
+            inspector_rgb = (
+                observation.data["rgb_camera"]["inspector"][0].cpu().numpy()
+            )
+            if self.visualize:
+                import matplotlib.pyplot as plt
 
-            # Prepare input for the model adapter
+                plt.imshow(inspector_rgb)
+                plt.axis("off")
+                plt.savefig(
+                    os.path.join(
+                        self.log_path,
+                        f"monitor_{current_skill['name']}_input.png",
+                    )
+                )
+            image_data = Image.fromarray(
+                inspector_rgb
+            )  # Prepare input for the model adapter
             input_data = self.model_adapter.prepare_input(
-                text=prompt,
-                image_url=task.image
-                if task.image
-                else None,  # Pass None if no image
+                text=prompt, image_url=image_data
             )
+            task.image = image_data  # Update task with image
 
             # Generate response
             response_text, _ = self.model_adapter.generate_response(
@@ -467,7 +494,12 @@ class QwenVLBrain:
             return decision
 
         except Exception as e:
-            print(f"[QwenVLBrain] Error in monitoring: {e}")
+            print(
+                f"[QwenVLBrain] Error in monitoring: {e.__class__.__name__}: {e}"
+            )
+            import traceback
+
+            traceback.print_exc()
             print("[QwenVLBrain] Falling back to mock monitoring")
             return self._mock_monitoring_decision(
                 task, current_skill, observation

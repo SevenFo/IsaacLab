@@ -14,6 +14,10 @@ from typing import (
 from dataclasses import dataclass, field
 import traceback  # For debugging
 from PIL import Image
+import matplotlib
+
+matplotlib.use("Agg")  # <-- Add this line BEFORE importing pyplot
+
 
 from .types import SystemStatus, Action, Observation, Task, SkillPlan
 from .isaac_simulator import IsaacSimulator
@@ -118,6 +122,8 @@ class RobotBrainSystem:
                 self.log_path, time.strftime("%Y%m%d_%H%M%S")
             )
             os.makedirs(self.log_path, exist_ok=True)
+            self.brain.log_path = self.log_path  # Set log path for brain
+            self.brain.visualize = self.visualize  # Set visualization flag
 
             return True
 
@@ -465,6 +471,7 @@ class RobotBrainSystem:
                         print(
                             "[RobotBrainSystem] Brain monitoring execution..."
                         )
+
                         decision = self.brain.monitor_execution(
                             self.state.last_observation
                         )
@@ -486,7 +493,9 @@ class RobotBrainSystem:
                         else {}
                     )
                     self.state.sub_skill_status = sim_skill_exec_status
-
+                    print(
+                        f"[RobotBrainSystem] Current skill execution status: {sim_skill_exec_status}"
+                    )
                     if not sim_skill_exec_status.get("is_running"):
                         # Current skill in sim finished or no skill started yet for current brain step.
                         # Check if the last skill in sim was successful (if one was running)
@@ -691,12 +700,18 @@ if __name__ == "__main__":
     system = RobotBrainSystem(DEVELOPMENT_CONFIG)
     result = system.initialize()
     system.start()
-    system.execute_task("assemble the object in the desk")
-    while system.state.is_running:
-        time.sleep(1)
-        status = system.get_status()
-        print(f"Current System Status: {status['system']['status']}")
-        if status["system"]["status"] == "idle":
-            break
+    system.execute_task(
+        "assemble the red object into the black object on the desk, which means Put the red cover on the black pillar."
+    )
+    try:
+        while system.state.is_running:
+            time.sleep(1)
+            status = system.get_status()
+            print(f"Current System Status: {status['system']['status']}")
+            if status["system"]["status"] == "idle":
+                break
+    except KeyboardInterrupt:
+        print("Keyboard interrupt received. Shutting down system...")
+    system.interrupt_task("User requested shutdown")
     system.shutdown()
     print("Robot Brain System test completed.")

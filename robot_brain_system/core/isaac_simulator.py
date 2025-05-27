@@ -5,6 +5,7 @@ and in-process skill execution.
 """
 
 import multiprocessing as mp
+import threading
 import time
 import functools
 import torch  # Keep for type hinting if skills use it, though actions are numpy
@@ -154,6 +155,7 @@ class IsaacSimulator:
         self.num_envs = self.sim_config.get(
             "num_envs", 1
         )  # Get num_envs from config
+        self._command_lock = threading.Lock()
 
     def initialize(
         self,
@@ -291,36 +293,48 @@ class IsaacSimulator:
     def _send_command_and_recv(
         self, command: Dict[str, Any], timeout: float = 10.0
     ) -> Optional[Dict[str, Any]]:
-        if not self.is_initialized or not self.parent_conn:
-            print(
-                "[IsaacSimulator] Simulator not initialized or connection lost."
-            )
-            return {"success": False, "error": "Simulator not initialized"}
-        try:
-            self.parent_conn.send(command)
-            if self.parent_conn.poll(timeout):
-                response = self.parent_conn.recv()
-                if "error" in response:
-                    print(
-                        f"[IsaacSimulator] Error from subprocess for command {command.get('command')}: {response['error']}"
-                    )
-                return response
-            else:
+        acquired = self._command_lock.acquire(timeout=0.5)
+        if acquired:
+            if not self.is_initialized or not self.parent_conn:
                 print(
-                    f"[IsaacSimulator] Timeout waiting for response to command: {command.get('command')}"
+                    "[IsaacSimulator] Simulator not initialized or connection lost."
                 )
-                return {"success": False, "error": "Timeout"}
-        except (EOFError, BrokenPipeError) as e:
+                return {"success": False, "error": "Simulator not initialized"}
+            try:
+                self.parent_conn.send(command)
+                if self.parent_conn.poll(timeout):
+                    response = self.parent_conn.recv()
+                    if "error" in response:
+                        print(
+                            f"[IsaacSimulator] Error from subprocess for command {command.get('command')}: {response['error']}"
+                        )
+                    return response
+                else:
+                    print(
+                        f"[IsaacSimulator] Timeout waiting for response to command: {command.get('command')}"
+                    )
+                    return {"success": False, "error": "Timeout"}
+            except (EOFError, BrokenPipeError) as e:
+                print(
+                    f"[IsaacSimulator] Communication pipe broken: {e}. Shutting down simulator."
+                )
+                self.shutdown()
+                return {"success": False, "error": f"Pipe broken: {e}"}
+            except Exception as e:
+                print(
+                    f"[IsaacSimulator] Error sending/receiving command {command.get('command')}: {e}"
+                )
+                return {"success": False, "error": str(e)}
+            finally:
+                self._command_lock.release()
+        else:
             print(
-                f"[IsaacSimulator] Communication pipe broken: {e}. Shutting down simulator."
+                "[IsaacSimulator] Failed to acquire command lock within timeout."
             )
-            self.shutdown()
-            return {"success": False, "error": f"Pipe broken: {e}"}
-        except Exception as e:
-            print(
-                f"[IsaacSimulator] Error sending/receiving command {command.get('command')}: {e}"
-            )
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": "Command lock acquisition failed",
+            }
 
     def execute_skill_blocking(
         self, skill_name: str, parameters: Dict[str, Any]

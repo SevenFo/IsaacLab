@@ -287,7 +287,7 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
             ),
         )
         self.scene.inspector_camera = TiledCameraCfg(
-            prim_path=f"{self._robot_prim_path}/inspector_camera",
+            prim_path="{ENV_REGEX_NS}/inspector_camera",
             update_period=0.1,
             height=480,
             width=640,
