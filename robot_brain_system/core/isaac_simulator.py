@@ -380,10 +380,13 @@ class IsaacSimulator:
     def get_observation(self) -> Optional[Observation]:
         """Requests and retrieves the current observation from the simulator subprocess."""
         response = self._send_command_and_recv({"command": "get_observation"})
+        obss = []
         if response and response.get("success"):
             obs_data = response.get("observation_data")
-            # Assuming obs_data is a dict that can initialize Observation
-            return Observation(**obs_data) if obs_data else None
+            for obs in obs_data:
+                obss.append(Observation(**obs))
+                # Assuming obs_data is a dict that can initialize Observation
+            return obss
         return None
 
     def step_env(
@@ -508,12 +511,16 @@ class IsaacSimulator:
                 (-2.08, -1.12, 3.95),
                 (0.6, -2.0, 2.818),
             )
+            import queue
+
+            obs_queue = queue.Queue()
             obs, info = env.reset()
             obs_payload = {
                 "data": obs,  # Assuming obs is already in a dict-like format
                 "metadata": "None",
                 "timestamp": time.time(),
             }  # Add metadata and timestamp
+            obs_queue.put(obs_payload)
             print(f"[IsaacSubprocess] Environment reset complete, obs {obs}")
             latest_obs = obs_payload  # Store latest obs
             print(
@@ -626,10 +633,17 @@ class IsaacSimulator:
                             # A common pattern is that step() returns it. We might need to store it.
                             # For now, we'll simulate getting it via a direct call if possible
                             # This needs careful implementation based on Isaac Lab Env specifics
+                            obss = []
+                            try:
+                                while True:
+                                    obss.append(obs_queue.get_nowait())
+                                    obs_queue.task_done()
+                            except queue.Empty:
+                                print("Queue is empty")
                             child_conn.send(
                                 {
                                     "success": True,
-                                    "observation_data": latest_obs,
+                                    "observation_data": obss,
                                 }
                             )
 
@@ -652,7 +666,7 @@ class IsaacSimulator:
                                 "metadata": "None",
                                 "timestamp": time.time(),
                             }
-
+                            obs_queue.put(obs_payload)
                             latest_obs = obs_payload  # Store latest obs
 
                             child_conn.send(
@@ -668,12 +682,14 @@ class IsaacSimulator:
                                 }
                             )
                         elif cmd == "reset_env":
+                            obs_queue = queue.Queue()  # Reset obs queue
                             obs_dict, info = env.reset()
                             obs_payload = {
                                 "data": obs_dict,  # TODO test
                                 "metadata": "None",
                                 "timestamp": time.time(),
                             }
+                            obs_queue.put(obs_payload)
                             latest_obs = obs_payload  # Store latest obs
                             child_conn.send(
                                 {
@@ -706,6 +722,7 @@ class IsaacSimulator:
                                 "metadata": "None",
                                 "timestamp": time.time(),
                             }
+                            obs_queue.put(obs_payload)
                             latest_obs = obs_payload  # Store latest obs
 
                     # Small delay to prevent tight loop if no commands and no active skill

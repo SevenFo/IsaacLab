@@ -36,8 +36,12 @@ if TYPE_CHECKING:
     name="assemble_object",
     skill_type=SkillType.FUNCTION,  # Could be SkillType.POLICY if you have a separate handler
     execution_mode=ExecutionMode.GENERATOR,
-    description="Assemble an object using a pre-trained Robomimic policy.",
     timeout=300.0,  # 5 minutes, adjust as needed
+    criterion={
+        "successed": "The red object is completely wrapped around the black pillar.",
+        "failed": "The red object is fallen off from the gripper after be grasped, or the gripper posisiton is far away from the black or red object, any other gripper state that is not reasonable to execute the skill.",
+        "progress": "The gripper is on a reasonable state to execute the skill, e.g. moving towards the red object, or grasping the red object, etc.",
+    },
     requires_env=True,
 )
 def assemble_object(env: Any) -> Generator[None, None, bool]:
@@ -45,7 +49,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
     Assemble an object using a pre-trained Robomimic policy.
     This skill runs the policy step-by-step within the Isaac simulator.
 
-    Expected params: None
+    Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
     """
     if not ROBOMIMIC_AVAILABLE:
         print(

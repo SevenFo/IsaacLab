@@ -4,7 +4,7 @@ Core types and enums for the robot brain system.
 
 from enum import Enum
 from typing import Any, Dict, Optional, List, Union, Generator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 
 
@@ -122,6 +122,16 @@ class SkillDefinition:
     description: str = ""
     timeout: Optional[float] = None
     requires_env: bool = False
+    criterion: Dict[str, str] | None = (
+        None  # 新增字段，用于描述技能状态判定条件
+    )
+
+    def __post_init__(self):
+        if self.criterion is None:
+            self.criterion = {
+                "successed": "Skill completed successfully",
+                "failed": "Skill failed to complete",
+            }
 
 
 @dataclass

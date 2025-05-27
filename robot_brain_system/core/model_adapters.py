@@ -123,7 +123,9 @@ class QwenVLAdapter(BaseModelAdapter):
             image_inputs, video_inputs, _ = vision_outputs
         else:
             image_inputs, video_inputs = vision_outputs[:2]
-
+        print(
+            f"-------- Processed vision inputs --------\n{image_inputs}\n{video_inputs}\n"
+        )
         # 准备模型输入
         inputs = self.processor(
             text=[text],

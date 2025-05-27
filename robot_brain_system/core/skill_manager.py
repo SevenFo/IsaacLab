@@ -28,15 +28,18 @@ class SkillRegistry:
 
     def register_skill(
         self,
-        name: str,
+        function: Callable,
         skill_type: SkillType,
         execution_mode: ExecutionMode,
-        function: Callable,
+        name: str | None = None,
         description: str = "",
         timeout: Optional[float] = None,
         requires_env: bool = False,
+        criterion: Dict[str, str] | None = None,  # 新增参数
     ):
         """Register a skill in the registry."""
+        name = name or function.__name__
+        description = description or function.__doc__ or ""
         if name in self.skills:
             print(
                 f"[SkillRegistry] Warning: Skill '{name}' already registered. Overwriting."
@@ -50,6 +53,7 @@ class SkillRegistry:
             description=description,
             timeout=timeout,
             requires_env=requires_env,
+            criterion=criterion,
         )
 
         self.skills[name] = skill_def
@@ -86,6 +90,7 @@ class SkillRegistry:
             "description": skill.description,
             "timeout": skill.timeout,
             "requires_env": skill.requires_env,
+            "criterion": skill.criterion,
             "function_name": skill.function.__name__,  # function object itself is not easily serializable
         }
 
@@ -96,14 +101,10 @@ class SkillRegistry:
         often used for generating prompts or help texts.
         The docstring is retrieved from the skill's underlying function.
         """
-        descriptions: Dict[str, str] = {}
-        for name, skill_def in self.skills.items():
-            # inspect.getdoc() is preferred as it cleans indentation and handles inheritance
-            docstring = inspect.getdoc(skill_def.function)
-            descriptions[name] = docstring if docstring else ""
+
         formated_descriptions = [
-            f"skill name: {name}: \n skill desc:\n{desc}\n\n"
-            for name, desc in descriptions.items()
+            f"skill name: {name}: \n skill desc:\n{item.description}\n\n"
+            for name, item in self.skills.items()
         ]
 
         return "".join(formated_descriptions)
@@ -184,36 +185,28 @@ def reset_skill_registry():
 
 # Skill registration decorator
 def skill_register(
-    name: str,
     skill_type: SkillType,
     execution_mode: ExecutionMode,
+    name: str | None = None,
     description: str = "",
     timeout: Optional[float] = None,
     requires_env: bool = False,
+    criterion: Dict[str, str] | None = None,  # 新增参数
 ):
     """Decorator to register a function as a skill."""
 
     def decorator(func):
-        # Store info for potential introspection, though direct registration is primary
-        func._skill_info = {
-            "name": name,
-            "skill_type": skill_type,
-            "execution_mode": execution_mode,
-            "description": description,
-            "timeout": timeout,
-            "requires_env": requires_env,
-        }
-
         # Automatically register the skill with the global registry
         registry = get_skill_registry()
         registry.register_skill(
-            name=name,
             skill_type=skill_type,
             execution_mode=execution_mode,
+            name=name,
             function=func,
             description=description,
             timeout=timeout,
             requires_env=requires_env,
+            criterion=criterion,
         )
         return func
 

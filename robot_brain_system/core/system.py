@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 import traceback  # For debugging
 from PIL import Image
 import matplotlib
+import copy
 
 matplotlib.use("Agg")  # <-- Add this line BEFORE importing pyplot
 
@@ -44,6 +45,7 @@ class SystemState:
     error_message: Optional[str] = None
     # New state for tracking skill execution in subprocess
     sub_skill_status: Dict[str, Any] = field(default_factory=dict)
+    obs_history: list[Observation] = field(default_factory=list)
 
 
 class RobotBrainSystem:
@@ -242,7 +244,15 @@ class RobotBrainSystem:
         print(f"[RobotBrainSystem] Received task instruction: {instruction}")
         try:
             self.state.status = SystemStatus.THINKING
-            obs = self.simulator.get_observation()
+            obss = self.simulator.get_observation()
+            if (not self.state.obs_history) and (not obss):
+                print(
+                    "[RobotBrainSystem] No observations available from simulator. Cannot execute task."
+                )
+                self.state.status = SystemStatus.ERROR
+                self.state.error_message = "No observations available"
+                return False
+            obs = obss[-1] if obss else self.state.obs_history[-1]
             inspector_rgb = (
                 obs.data["rgb_camera"]["inspector"][0].cpu().numpy()
             )
@@ -439,7 +449,7 @@ class RobotBrainSystem:
     def _main_loop(self):
         """Main system loop that runs in a separate thread."""
         print("[RobotBrainSystem] Main loop started.")
-        loop_interval = 1  # seconds, adjust as needed
+        loop_interval = 0.5  # seconds, adjust as needed
 
         while not self.is_shutdown_requested:
             loop_start_time = time.time()
@@ -450,15 +460,27 @@ class RobotBrainSystem:
 
                 # 1. Get current observation from simulator if available
                 if self.simulator and self.simulator.is_initialized:
-                    obs = self.simulator.get_observation()
-                    if obs:
-                        self.state.last_observation = obs
-                    else:
-                        # This could happen if pipe is broken or sim is resetting
+                    obss = self.simulator.get_observation()
+                    if obss:
+                        self.state.last_observation = obss[-1]
+                        self.state.obs_history.extend(obss)
+                        if len(self.state.obs_history) > 100:
+                            self.state.obs_history.pop(0)
                         print(
-                            "[RobotBrainSystem] Warning: Failed to get observation from simulator."
+                            f"obs history length: {len(self.state.obs_history)}"
                         )
-                        # Potentially handle simulator comms error here
+                    else:
+                        if obss == []:
+                            # No observations available, might be a sim issue
+                            print(
+                                "[RobotBrainSystem] Warning: No observations received from simulator."
+                            )
+                        else:
+                            # This could happen if pipe is broken or sim is resetting
+                            print(
+                                "[RobotBrainSystem] Warning: Failed to get observation from simulator."
+                            )
+                            # Potentially handle simulator comms error here
 
                 # 2. Handle brain monitoring if a task/plan is active in the brain
                 if (
@@ -473,7 +495,7 @@ class RobotBrainSystem:
                         )
 
                         decision = self.brain.monitor_execution(
-                            self.state.last_observation
+                            self.state.obs_history
                         )
                         self._handle_monitoring_decision(decision)
                         if (

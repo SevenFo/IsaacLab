@@ -293,7 +293,7 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
             width=640,
             data_types=["rgb"],
             spawn=sim_utils.PinholeCameraCfg(
-                focal_length=0.193,  # 1.93mm
+                focal_length=0.293,  # 1.93mm
                 focus_distance=400.0,
                 f_stop=0.0,  # disable DOF
                 horizontal_aperture=0.384,  # 基于分辨率1280×3μm计算的传感器宽度（1280×3μm=3.84mm=0.384cm）
@@ -301,7 +301,7 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
                 clipping_range=(0.1, 1.0e5),
             ),
             offset=TiledCameraCfg.OffsetCfg(
-                pos=(-2.08, -2.0, 3.95),
+                pos=(-1.08, -2.0, 3.25),
                 rot=(
                     0.56099,
                     0.43036,

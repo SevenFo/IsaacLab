@@ -7,7 +7,7 @@ import json
 import os
 from PIL import Image
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from robot_brain_system.core.types import Task, SkillPlan, SystemStatus
 from robot_brain_system.core.skill_manager import SkillRegistry
@@ -33,6 +33,67 @@ class BrainState:
     current_skill_index: int = 0
     last_monitoring_time: float = 0.0
     error_message: Optional[str] = None
+
+
+@dataclass
+class BrainMemory:
+    """Memory of the brain for storing past experiences and knowledge."""
+
+    history: List[Dict[str, Any]] = field(default_factory=list)
+
+    def add_system_prompt(self, prompt: str = "You are a helpful assistant."):
+        """Add a system prompt to the memory."""
+
+        self.history.append(
+            {"role": "system", "content": [{"type": "text", "text": prompt}]}
+        )
+
+    def add_user_input(
+        self, contents: List[str | Image.Image | list[Image.Image]]
+    ):
+        """Add user input to the memory."""
+        item = {
+            "role": "user",
+            "content": [],
+        }
+        for content in contents:
+            if isinstance(content, str):
+                item["content"].append({"type": type, "text": content})
+            elif isinstance(content, Image.Image):
+                item["content"].append({"type": type, "image": content})
+            elif isinstance(content, list) and all(
+                isinstance(img, Image.Image) for img in content
+            ):
+                item["content"].append(
+                    {"type": type, "video": content, "fps": 5}
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported content type: {type(content)}. Must be str, Image.Image, or list of Image.Image."
+                )
+        self.history.append(item)
+
+    def add_assistant_output(self, output: str):
+        """Add assistant output to the memory."""
+        self.history.append(
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": output}],
+            }
+        )
+
+    def fetch_history(self, last_n: int = 5) -> List[Dict[str, Any]]:
+        """Fetch the last N entries from the memory."""
+        return self.history[0:1] + (
+            self.history[-last_n:]
+            if len(self.history) - 1 >= last_n
+            else self.history
+        )
+
+    def clear(self):
+        """Clear the memory."""
+        self.history = []
+        print("[BrainMemory] Memory cleared.")
 
 
 class QwenVLBrain:
@@ -69,7 +130,8 @@ class QwenVLBrain:
         self.max_retries = config.get("max_retries", 3)
         self.visualize = config.get("visualize", False)
         self.log_path = config.get("log_path", "./logs")
-        self.monitor_waiting_times = 5
+        self.monitor_waiting_times = 3
+        self.monitor_memory = BrainMemory()
 
     def initialize(self):
         """Initialize the brain component."""
@@ -85,7 +147,6 @@ class QwenVLBrain:
                 self.adapter_type = "mock"
         else:
             self.adapter_type = "mock"
-
         print(f"[QwenVLBrain] Initialized with adapter: {self.adapter_type}")
 
     def _initialize_model_adapter(self):
@@ -208,6 +269,26 @@ class QwenVLBrain:
             self.state.current_skill_index = 0
             self.state.status = SystemStatus.EXECUTING
 
+            skill_info = self.skill_registry.get_skill_info(
+                plan.skill_sequence[0]
+            )
+
+            assert skill_info is not None, (
+                f"Skill {plan.skill_sequence[0]} not found in registry"
+            )
+
+            current_skill = {
+                "name": plan.skill_sequence[0],
+                "parameters": plan.skill_params[0],
+                "criterion": skill_info["criterion"],
+            }
+
+            self.monitor_memory.add_system_prompt(
+                self._format_system_prompt_for_monitoring(
+                    self.state.current_task, current_skill, None
+                )
+            )
+
             self.current_monitor_time = 0
 
             print(f"[QwenVLBrain] Started executing task: {task.description}")
@@ -286,7 +367,6 @@ class QwenVLBrain:
             Dict with monitoring decision (continue, interrupt, retry, etc.)
         """
         try:
-            self.state.status = SystemStatus.MONITORING
             self.state.last_monitoring_time = time.time()
 
             if not self.state.current_plan or not self.state.current_task:
@@ -303,6 +383,8 @@ class QwenVLBrain:
             current_skill = self.get_next_skill()
             if not current_skill:
                 return {"action": "complete", "reason": "All skills completed"}
+
+            self.state.status = SystemStatus.MONITORING
 
             # Use Qwen VL to analyze current situation
             decision = self._query_qwen_for_monitoring(
@@ -452,14 +534,13 @@ class QwenVLBrain:
             )
 
         try:
-            # Format prompt for monitoring
-            prompt = self._format_prompt_for_monitoring(
-                task, current_skill, ""
-            )
-            inspector_rgb = (
-                observation.data["rgb_camera"]["inspector"][0].cpu().numpy()
-            )
             if self.visualize:
+                inspector_rgb = (
+                    observation[-1]
+                    .data["rgb_camera"]["inspector"][0]
+                    .cpu()
+                    .numpy()
+                )
                 import matplotlib.pyplot as plt
 
                 plt.imshow(inspector_rgb)
@@ -467,24 +548,100 @@ class QwenVLBrain:
                 plt.savefig(
                     os.path.join(
                         self.log_path,
-                        f"monitor_{current_skill['name']}_input.png",
+                        f"monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.png",
                     )
+                )
+            video_frames = []
+
+            # 计算可用的观察帧数
+            available_frames = len(observation)
+            jump = 6
+            total = 5
+            if available_frames >= total * jump:
+                # 如果有足够的帧，按间隔3取10帧
+                for i in range(10):
+                    frame_index = -(
+                        total * jump - i * jump
+                    )  # -30, -27, -24, ..., -3
+                    video_frames.append(
+                        Image.fromarray(
+                            observation[frame_index]
+                            .data["rgb_camera"]["inspector"][0]
+                            .cpu()
+                            .numpy()
+                        )
+                    )
+            else:
+                # 如果帧数不足30，从最新帧开始往前按间隔3取
+                # 但确保至少取到最后几帧
+                indices = []
+
+                # 先按间隔3从后往前取
+                for i in range(total):
+                    frame_index = -(1 + i * jump)  # -1, -4, -7, -10, ...
+                    if abs(frame_index) <= available_frames:
+                        indices.append(frame_index)
+                    else:
+                        break
+
+                # 如果还没取够10帧，补充最前面的连续帧
+                current_count = len(indices)
+                if current_count < total:
+                    # 找到已取帧的最小索引
+                    min_taken_index = min(indices) if indices else -1
+
+                    # 从最小索引继续往前取连续帧
+                    for i in range(current_count, total):
+                        next_index = min_taken_index - (i - current_count + 1)
+                        if abs(next_index) <= available_frames:
+                            indices.append(next_index)
+                        else:
+                            break
+
+                # 按索引顺序排序（从旧到新）
+                indices.sort()
+
+                # 提取帧
+                for frame_index in indices:
+                    video_frames.append(
+                        Image.fromarray(
+                            observation[frame_index]
+                            .data["rgb_camera"]["inspector"][0]
+                            .cpu()
+                            .numpy()
+                        )
+                    )
+            if self.visualize:
+                gif_path = os.path.join(
+                    self.log_path,
+                    f"monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.gif",
+                )
+                video_frames[0].save(
+                    gif_path,
+                    save_all=True,
+                    append_images=video_frames[1:],
+                    duration=500,
+                    loop=0,
+                    optimize=True,  # 优化文件大小
+                    quality=85,  # 质量参数（0-100）
                 )
             image_data = Image.fromarray(
                 inspector_rgb
             )  # Prepare input for the model adapter
-            input_data = self.model_adapter.prepare_input(
-                text=prompt, image_url=image_data
+            self.monitor_memory.add_user_input(
+                contents=[
+                    "belowing is current scene video observation",
+                    video_frames,
+                ]
             )
             task.image = image_data  # Update task with image
-
             # Generate response
             response_text, _ = self.model_adapter.generate_response(
-                input_data,
+                self.monitor_memory.fetch_history(last_n=5),
                 max_tokens=self.max_tokens
                 // 2,  # Use fewer tokens for monitoring
             )
-
+            self.monitor_memory.add_assistant_output(response_text)
             # Parse the response to extract monitoring decision
             decision = self._parse_monitoring_response(response_text)
 
@@ -643,7 +800,7 @@ Example response:
 
         return prompt
 
-    def _format_prompt_for_monitoring(
+    def _format_system_prompt_for_monitoring(
         self,
         task: Task,
         current_skill: Dict[str, Any],
@@ -656,21 +813,24 @@ You are monitoring robot task execution. Analyze the current situation and decid
 Original Task: {task.description}
 Current Skill: {current_skill["name"]}
 Skill Parameters: {current_skill["parameters"]}
+Skill Criterion: {current_skill["criterion"]}
 Available Skills: {chr(10).join(f"- {skill}" for skill in self.skill_registry.list_skills())}
 
-Current Observation: {str(observation) if observation else "No observation"}
-
-Please respond with a JSON object containing:
-- action: One of "continue", "interrupt", "retry", "modify", "complete"
-- reason: Explanation for the decision
+For each round of conversation, you will receive the current observation in Image format, You should analyze the image and response with a JSON object containing:
+- action: One of the key in Skill Criterion
+- reason: Explanation for the decision, based on the rule described in Skill Criterion
+- current_scene_state: Description what happened in the scene, based on the observation
 - confidence: Float between 0 and 1
 
 Example response:
 {{
-    "action": "continue",
-    "reason": "Skill is progressing normally",
+    "action": "failed",
+    "reason": "The object was not grasped correctly",
+    "current_scene_state", "The robot attempted to grasp the object but it slipped",
     "confidence": 0.9
 }}
+
+Next, Let's start first monitoring round.
 """
         return prompt
 
