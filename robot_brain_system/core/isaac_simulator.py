@@ -438,8 +438,6 @@ class IsaacSimulator:
             import gymnasium as gym
             import os
 
-            os.environ["DISPLAY"] = ":0"
-
             app_launcher_params = {
                 "task": sim_config.get(
                     "env_name", "Isaac-Move-Box-Frank-IK-Rel"
@@ -786,9 +784,6 @@ class IsaacSimulator:
 
 if __name__ == "__main__":
     import os
-
-    os.environ["DISPLAY"] = ":0"  # Set DISPLAY for GUI apps
-
     from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
 
     print("Isaac Simulator Tets")

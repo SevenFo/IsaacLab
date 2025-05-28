@@ -74,6 +74,7 @@ DEVELOPMENT_CONFIG = {
         "headless": False,  # Show GUI for development
         "num_envs": 1,
         "verbosity": "debug",
+        "env_config_file": "configs/ur5_lunar_base.yaml",
     },
     "brain": {
         **SYSTEM_CONFIG["brain"],

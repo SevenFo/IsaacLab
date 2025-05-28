@@ -4,6 +4,7 @@ Model adapters for different AI models (Qwen VL, OpenAI, etc.)
 
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Tuple, Any
+from PIL import Image
 
 try:
     from transformers.models.auto.processing_auto import AutoProcessor
@@ -82,7 +83,7 @@ class QwenVLAdapter(BaseModelAdapter):
         self,
         text: str,
         audio_path: Optional[str] = None,
-        image_url: Optional[str] = None,
+        image: Optional[list[Image]] = None,
     ) -> List[Dict[str, Any]]:
         """构建Qwen-VL的输入格式"""
         messages = [
@@ -96,13 +97,16 @@ class QwenVLAdapter(BaseModelAdapter):
         ]
 
         # 添加图像输入
-        if image_url:
-            messages[1]["content"].append(
-                {
-                    "type": "image",
-                    "image": image_url,  # 假设image_url是base64编码或本地路径
-                }
-            )
+        if image:
+            if type(image) is not list:
+                image = [image]
+            for img in image:
+                messages[1]["content"].append(
+                    {
+                        "type": "image",
+                        "image": img,  # 假设image_url是base64编码或本地路径
+                    }
+                )
 
         return messages
 

@@ -344,7 +344,7 @@ class QwenVLBrain:
     def should_monitor(self) -> bool:
         """Check if it's time to monitor the current skill execution."""
         if (
-            self.state.status != SystemStatus.EXECUTING
+            self.state.status != SystemStatus.EXECUTING 
             or not self.state.current_plan
         ):
             return False
@@ -443,7 +443,7 @@ class QwenVLBrain:
             # Prepare input for the model adapter
             input_data = self.model_adapter.prepare_input(
                 text=prompt,
-                image_url=task.image
+                image=task.image
                 if task.image
                 else None,  # Pass None if no image
             )
@@ -464,7 +464,7 @@ class QwenVLBrain:
         except Exception as e:
             print(f"[QwenVLBrain] Error in planning: {e}")
             print("[QwenVLBrain] Falling back to mock implementation")
-            return self._mock_plan_task(task, available_skills)
+            return self._mock_plan_task(task, skill_descriptions)
 
     def _mock_plan_task(
         self, task: Task, skill_descriptions: str
@@ -504,7 +504,7 @@ class QwenVLBrain:
             skill_params = [{}]
         else:
             # Default fallback - reset to home
-            skill_sequence = ["reset_to_home"]
+            skill_sequence = ["assemble_object"]
             skill_params = [{}]
 
         return SkillPlan(
@@ -708,10 +708,13 @@ class QwenVLBrain:
                 valid_actions = [
                     "continue",
                     "interrupt",
+                    "successed",
+                    "failed",
                     "retry",
                     "modify",
                     "complete",
                     "error",
+                    "not determinable"
                 ]
                 if action not in valid_actions:
                     print(
@@ -804,7 +807,7 @@ Example response:
         self,
         task: Task,
         current_skill: Dict[str, Any],
-        observation: Optional[Any],
+        observation: Optional[Any] = None,
     ) -> str:
         """Format a prompt for Qwen VL monitoring."""
         prompt = f"""

@@ -398,6 +398,7 @@ class RobotBrainSystem:
 
     def step_simulation(self, action: Action) -> bool:
         """Manually step the simulation (for testing/teleop)."""
+        assert False, "Unavailable now!"
         if not self.simulator or not self.simulator.is_initialized:
             print("[RobotBrainSystem] Simulator not ready for manual step.")
             return False
@@ -430,9 +431,10 @@ class RobotBrainSystem:
             print("[RobotBrainSystem] Simulator not ready for reset.")
             return False
         try:
-            obs = self.simulator.reset_env()
-            if obs:
-                self.state.last_observation = obs
+            obss = self.simulator.reset_env()
+            if obss:
+                self.state.last_observation = obss[-1]
+                self.state.obs_history = []
                 # self.state.last_action = None
                 print("[RobotBrainSystem] Simulation reset successfully.")
                 return True
@@ -659,7 +661,7 @@ class RobotBrainSystem:
             f"[RobotBrainSystem] Brain monitoring decision: {action}, Reason: {reason}"
         )
 
-        if action == "interrupt":
+        if action == "failed":
             self.interrupt_task(f"Brain decision: {reason}")
         elif action == "retry":
             # Retry logic for a skill running in the subprocess is complex.
@@ -688,34 +690,25 @@ class RobotBrainSystem:
                 print(
                     "[RobotBrainSystem] Cannot retry, simulator not available."
                 )
-        elif action == "complete":
+        elif action == "successed":
             print(
-                f"[RobotBrainSystem] Brain decided task is complete: {reason}"
+                f"[RobotBrainSystem] Brain decided task is successed: {reason}"
             )
             if self.brain:
                 self.brain.interrupt_task(
-                    "Brain marked as complete"
+                    "Brain marked as successed"
                 )  # Clears brain's plan
             if self.simulator and self.simulator.is_initialized:
                 self.simulator.terminate_current_skill()  # Stop any sim skill
             self.state.status = SystemStatus.IDLE
             self.state.current_task = None
-        elif action == "error":
-            print(f"[RobotBrainSystem] Brain reported error: {reason}")
-            if self.brain:
-                self.brain.interrupt_task(f"Brain error: {reason}")
-            if self.simulator and self.simulator.is_initialized:
-                self.simulator.terminate_current_skill()
-            self.state.status = SystemStatus.ERROR
-            self.state.error_message = reason
+
         # For "continue" action, do nothing - keep executing current sim skill (if any)
         # or proceed to next skill in plan if current sim skill finished.
 
 
 if __name__ == "__main__":
     import os
-
-    os.environ["DISPLAY"] = ":0"  # Ensure DISPLAY is set for GUI apps
     print("TEST ROBOT BRAIN SYSTEM")
     from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
 
