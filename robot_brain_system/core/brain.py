@@ -65,14 +65,14 @@ class BrainMemory:
         }
         for content in contents:
             if isinstance(content, str):
-                item["content"].append({"type": type, "text": content})
+                item["content"].append({"type": "text", "text": content})
             elif isinstance(content, Image.Image):
-                item["content"].append({"type": type, "image": content})
+                item["content"].append({"type": "image", "image": content})
             elif isinstance(content, list) and all(
                 isinstance(img, Image.Image) for img in content
             ):
                 item["content"].append(
-                    {"type": type, "video": content, "fps": 5}
+                    {"type": 'video', "video": content, "fps": 5}
                 )
             else:
                 raise ValueError(
@@ -304,7 +304,7 @@ class QwenVLBrain:
                         )
                     )
                 # Generate response
-                self.replan_memory.add_user_input(contents=[text_prompt, inspector_rgb])
+                self.replan_memory.add_user_input(contents=[text_prompt, Image.fromarray(inspector_rgb)])
                 response_text, _ = self.model_adapter.generate_response(
                     input_data=self.replan_memory.fetch_history(last_n=3)
                 )
@@ -321,7 +321,9 @@ class QwenVLBrain:
                 return plan
 
             except Exception as e:
+                import traceback
                 print(f"[QwenVLBrain] Error in planning: {e}")
+                traceback.print_exc()
                 raise RuntimeError(f"Failed to create plan: {e}")
 
         except Exception as e:
@@ -400,10 +402,14 @@ class QwenVLBrain:
         skill_params = self.state.current_plan.skill_params[
             self.state.current_skill_index
         ]
+        skill_info = self.skill_registry.get_skill_info(skill_name)
+        assert skill_info is not None
+        skill_criterion = skill_info['criterion']
 
         return {
             "name": skill_name,
             "parameters": skill_params,
+            "criterion": skill_criterion,
             "index": self.state.current_skill_index,
         }
 
@@ -510,8 +516,8 @@ class QwenVLBrain:
         memory.history[0] = BrainMemory.get_default_system_prompt("You are a summarier, please summary our conversation histories, directly output the summaried result")
         for item in memory.history:
             # take only one image from video to reduce GPU memory useage
-            contents = []
             if item['role'] == 'user':
+                contents = []
                 for content in item['content']:
                     if content['type'] == 'video':
                         contents.append({
@@ -711,7 +717,6 @@ class QwenVLBrain:
             self.monitor_memory.add_assistant_output(response_text)
             # Parse the response to extract monitoring decision
             decision = self._parse_monitoring_response(response_text)
-
             print(
                 f"[QwenVLBrain] Monitoring decision using {self.adapter_type}: {decision['action']}"
             )
@@ -924,7 +929,7 @@ Please respond with a JSON object containing:
 Example response:
 {{
     "skill_sequence": ["return_to_home_pose", "grasp"],
-    "skill_params": [{{}}, {{"target": "box"}}],
+    "skill_params": [None, {{"target": "box"}}],
     "monitoring_interval": 1.0
     "analysis": "current available infomation indicating that the gripper has try several times to grasp box, while it failed at last, and lingering above the box finnally, I think it may be helpful to return to home position and grasp the box again, as current position maybe difficult for gripper to grasp target"
 }}
@@ -988,7 +993,9 @@ Next, Let's start first monitoring round.
                 monitoring_interval = plan_data.get(
                     "monitoring_interval", self.monitoring_interval
                 )
-
+                for i in range(len(skill_params)):
+                    if skill_params[i] is None:
+                        skill_params[i] = {}
                 if len(skill_sequence) != len(skill_params):
                     print("[QwenVLBrain] Warning: Mismatch between skill sequence and parameters length")
                     while len(skill_params) < len(skill_sequence):

@@ -522,7 +522,7 @@ class RobotBrainSystem:
                     )
                     self.state.sub_skill_status = sim_skill_exec_status
                     print(
-                        f"[RobotBrainSystem] Current skill execution status: {sim_skill_exec_status}"
+                        f"[RobotBrainSystem] Current skill execution status: {sim_skill_exec_status['status']}"
                     )
                     if not sim_skill_exec_status.get("is_running"):
                         # Current skill in sim finished or no skill started yet for current brain step.

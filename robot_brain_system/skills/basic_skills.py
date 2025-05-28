@@ -25,7 +25,7 @@ from ..core.skill_manager import skill_register
     requires_env=True,  # This skill now needs the environment
 )
 def reset_to_home(
-    env: Any, params: Dict[str, Any]
+    env: Any
 ) -> Generator[None,None,str]:
     """
     Reset robot to home position using generator mode.
@@ -43,7 +43,7 @@ def reset_to_home(
     try:
         # Most Isaac Lab envs return obs_dict, info_dict
         print("[Skill] reset_to_home: Directly reset Frank joint position to default position.")
-        robot = env.unwrapped.scene.robot
+        robot = env.unwrapped.scene.articulations['robot']
         joint_pos, joint_vel = (
             robot.data.default_joint_pos.clone(),
             robot.data.default_joint_vel.clone(),
