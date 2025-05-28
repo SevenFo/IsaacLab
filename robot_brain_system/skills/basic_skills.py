@@ -24,9 +24,7 @@ from ..core.skill_manager import skill_register
     timeout=10.0,
     requires_env=True,  # This skill now needs the environment
 )
-def reset_to_home(
-    env: Any
-) -> Generator[None,None,str]:
+def reset_to_home(env: Any) -> Generator[None, None, str]:
     """
     Reset robot to home position using generator mode.
 
@@ -42,17 +40,19 @@ def reset_to_home(
 
     try:
         # Most Isaac Lab envs return obs_dict, info_dict
-        print("[Skill] reset_to_home: Directly reset Frank joint position to default position.")
-        robot = env.unwrapped.scene.articulations['robot']
+        print(
+            "[Skill] reset_to_home: Directly reset Frank joint position to default position."
+        )
+        robot = env.unwrapped.scene.articulations["robot"]
         joint_pos, joint_vel = (
             robot.data.default_joint_pos.clone(),
             robot.data.default_joint_vel.clone(),
         )
         robot.write_joint_state_to_sim(joint_pos, joint_vel)
         for i in range(30):
-            yield env.step(torch.zeros((1,6)))
+            yield env.step(torch.zeros((1, 7)))
         print("[Skill] reset_to_home: Completed")
-        return "success"  
+        return "success"
     except Exception as e:
         print(f"[Skill] reset_to_home: Error during environment reset: {e}")
         return "error"
@@ -194,4 +194,3 @@ def get_current_state(
 # Helper function for creating movement actions (if needed by skills, less common now)
 # Skills will typically form their own action tensors.
 # def create_movement_action(...)
-
