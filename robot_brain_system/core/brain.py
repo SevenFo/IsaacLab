@@ -532,7 +532,7 @@ class QwenVLBrain:
             return self._mock_monitoring_decision(
                 task, current_skill, observation
             )
-
+        assert type(observation) is list
         try:
             if self.visualize:
                 inspector_rgb = (
@@ -552,65 +552,31 @@ class QwenVLBrain:
                     )
                 )
             video_frames = []
-
+            def calculate_indices(jump, total, available):
+                if available >= total * jump + 1:
+                    return list(range(-total*jump +1, 0,jump))
+                else:
+                    return None
             # 计算可用的观察帧数
             available_frames = len(observation)
             jump = 6
-            total = 5
-            if available_frames >= total * jump:
-                # 如果有足够的帧，按间隔3取10帧
-                for i in range(10):
-                    frame_index = -(
-                        total * jump - i * jump
-                    )  # -30, -27, -24, ..., -3
-                    video_frames.append(
-                        Image.fromarray(
-                            observation[frame_index]
-                            .data["rgb_camera"]["inspector"][0]
-                            .cpu()
-                            .numpy()
-                        )
+            total = 10
+            indices = []
+            if not (indices := calculate_indices(jump,total,available_frames)):
+                return {"action": "not enough", "reason": "not enough availabel frames"}
+
+            # 按索引顺序排序（从旧到新）
+            indices.sort()
+            # 提取帧
+            for frame_index in indices:
+                video_frames.append(
+                    Image.fromarray(
+                        observation[frame_index]
+                        .data["rgb_camera"]["inspector"][0]
+                        .cpu()
+                        .numpy()
                     )
-            else:
-                # 如果帧数不足30，从最新帧开始往前按间隔3取
-                # 但确保至少取到最后几帧
-                indices = []
-
-                # 先按间隔3从后往前取
-                for i in range(total):
-                    frame_index = -(1 + i * jump)  # -1, -4, -7, -10, ...
-                    if abs(frame_index) <= available_frames:
-                        indices.append(frame_index)
-                    else:
-                        break
-
-                # 如果还没取够10帧，补充最前面的连续帧
-                current_count = len(indices)
-                if current_count < total:
-                    # 找到已取帧的最小索引
-                    min_taken_index = min(indices) if indices else -1
-
-                    # 从最小索引继续往前取连续帧
-                    for i in range(current_count, total):
-                        next_index = min_taken_index - (i - current_count + 1)
-                        if abs(next_index) <= available_frames:
-                            indices.append(next_index)
-                        else:
-                            break
-
-                # 按索引顺序排序（从旧到新）
-                indices.sort()
-
-                # 提取帧
-                for frame_index in indices:
-                    video_frames.append(
-                        Image.fromarray(
-                            observation[frame_index]
-                            .data["rgb_camera"]["inspector"][0]
-                            .cpu()
-                            .numpy()
-                        )
-                    )
+                )
             if self.visualize:
                 gif_path = os.path.join(
                     self.log_path,
@@ -637,7 +603,7 @@ class QwenVLBrain:
             task.image = image_data  # Update task with image
             # Generate response
             response_text, _ = self.model_adapter.generate_response(
-                self.monitor_memory.fetch_history(last_n=5),
+                self.monitor_memory.fetch_history(last_n=3),
                 max_tokens=self.max_tokens
                 // 2,  # Use fewer tokens for monitoring
             )

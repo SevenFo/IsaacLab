@@ -39,8 +39,12 @@ if TYPE_CHECKING:
     timeout=300.0,  # 5 minutes, adjust as needed
     criterion={
         "successed": "The red object is completely wrapped around the black pillar.",
-        "failed": "The red object is fallen off from the gripper after be grasped, or the gripper posisiton is far away from the black or red object, any other gripper state that is not reasonable to execute the skill.",
-        "progress": "The gripper is on a reasonable state to execute the skill, e.g. moving towards the red object, or grasping the red object, etc.",
+        "failed": "".join(["The red object is fallen off from the gripper after be grasped, ",
+                   "or the gripper posisiton is far away from the black or red object, ",
+                   "or the gripper is lingering for several monitoring rounds, "
+                   "or the gripper move toward directly to black object with no gripping red object, ",
+                   "or any other gripper state that is not reasonable to execute the skill."]),
+        "progress": "The gripper is on a reasonable state to execute the skill, such as: moving towards the red object, or grasping the red object, etc.",
     },
     requires_env=True,
 )

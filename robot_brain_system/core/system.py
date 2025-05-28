@@ -702,7 +702,11 @@ class RobotBrainSystem:
                 self.simulator.terminate_current_skill()  # Stop any sim skill
             self.state.status = SystemStatus.IDLE
             self.state.current_task = None
-
+            
+        elif "not enough":
+            pass
+        elif "continue":
+            self.state.obs_history = [self.state.obs_history[-1]]
         # For "continue" action, do nothing - keep executing current sim skill (if any)
         # or proceed to next skill in plan if current sim skill finished.
 
