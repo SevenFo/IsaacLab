@@ -16,14 +16,14 @@ from ..core.types import (
 from ..core.skill_manager import skill_register
 
 
-# @skill_register(
-#     name="reset_to_home",
-#     skill_type=SkillType.FUNCTION,
-#     execution_mode=ExecutionMode.GENERATOR,
-#     description="Reset robot to home position",
-#     timeout=10.0,
-#     requires_env=True,  # This skill now needs the environment
-# )
+@skill_register(
+    name="reset_to_home",
+    skill_type=SkillType.FUNCTION,
+    execution_mode=ExecutionMode.GENERATOR,
+    description="Reset robot to home position",
+    timeout=10.0,
+    requires_env=True,  # This skill now needs the environment
+)
 def reset_to_home(
     env: Any, params: Dict[str, Any]
 ) -> Generator[None, None, bool]:
@@ -199,3 +199,4 @@ def get_current_state(
 # Helper function for creating movement actions (if needed by skills, less common now)
 # Skills will typically form their own action tensors.
 # def create_movement_action(...)
+

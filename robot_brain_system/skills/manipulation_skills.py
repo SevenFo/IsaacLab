@@ -41,14 +41,15 @@ if TYPE_CHECKING:
         "successed": "The red object is completely wrapped around the black pillar.",
         "failed": "".join(["The red object is fallen off from the gripper after be grasped, ",
                    "or the gripper posisiton is far away from the black or red object, ",
-                   "or the gripper is lingering for several monitoring rounds, "
+                   "or the gripper is lingering for several monitoring rounds, ",
+                   "or the griiper just touched the red object and then move toward to black object, "
                    "or the gripper move toward directly to black object with no gripping red object, ",
                    "or any other gripper state that is not reasonable to execute the skill."]),
         "progress": "The gripper is on a reasonable state to execute the skill, such as: moving towards the red object, or grasping the red object, etc.",
     },
     requires_env=True,
 )
-def assemble_object(env: Any) -> Generator[None, None, bool]:
+def assemble_object(env: Any) -> Generator[None, None, str]:
     """
     Assemble an object using a pre-trained Robomimic policy.
     This skill runs the policy step-by-step within the Isaac simulator.
@@ -60,7 +61,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
             "[Skill: assemble_object] Robomimic library not available. Cannot execute."
         )
         yield None, None, None, None, None
-        return False
+        return "error"
 
     print("[Skill: assemble_object] Starting...")
 
@@ -70,14 +71,14 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
             "[Skill: assemble_object] Error: 'checkpoint_path' parameter is missing."
         )
         yield None, None, None, None, None
-        return False
+        return "error"
 
     if not os.path.exists(checkpoint_path):
         print(
             f"[Skill: assemble_object] Error: Checkpoint path '{checkpoint_path}' does not exist."
         )
         yield None, None, None, None, None
-        return False
+        return "error"
 
     horizon = 800
     # Determine policy device: use specified, else try to use env's device, else cpu
@@ -106,7 +107,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
     except Exception as e:
         print(f"[Skill: assemble_object] Error: Failed to load policy: {e}")
         yield None, None, None, None, None
-        return False
+        return "error"
 
     print("[Skill: assemble_object] Policy loaded. Starting rollout...")
 
@@ -136,7 +137,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
     # Consider if `env.get_observations()` is a better fit if available and skill is not fully episodic.
     yield obs_dict, None, None, None, info
     policy.start_episode()
-    task_successfully_completed = False
+    finished_state = "timeout"
 
     # Check observation structure (critical for Robomimic)
     # This structure depends on how your Isaac Lab environment is configured.
@@ -152,7 +153,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
             f"[Skill: assemble_object] Error: Key '{policy_obs_key}' not found in initial observations."
         )
         yield None, None, None, None, None
-        return False
+        return "error"
 
     policy_input_source = obs_dict[policy_obs_key]
     if not isinstance(policy_input_source, dict):
@@ -160,7 +161,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
             f"[Skill: assemble_object] Error: obs_dict['{policy_obs_key}'] is not a dict, but {type(policy_input_source)}."
         )
         yield None, None, None, None, None
-        return False
+        return "error"
 
     for i in range(horizon):
         current_policy_obs = OrderedDict()
@@ -182,7 +183,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
                 f"[Skill: assemble_object] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
             yield None, None, None, None, None
-            return False
+            return "error"
 
         # Action needs to be formatted for the environment's action space
         # For Isaac Lab, typically a torch tensor on the env's device, batched.
@@ -199,7 +200,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
                 f"[Skill: assemble_object] Error: Key '{policy_obs_key}' not found in new observations after step."
             )
             yield None, None, None, None, None
-            return False
+            return "error"
         policy_input_source = obs_dict[policy_obs_key]
 
         # Yield control back to the executor loop in the subprocess
@@ -226,7 +227,7 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
             if (
                 is_terminated and not is_truncated
             ):  # Assuming terminated means success for this policy
-                task_successfully_completed = True
+                finished_state = "success"
             break
     else:  # Loop finished without break (horizon reached)
         print(
@@ -234,9 +235,9 @@ def assemble_object(env: Any) -> Generator[None, None, bool]:
         )
 
     print(
-        f"[Skill: assemble_object] Rollout finished. Task success: {task_successfully_completed}"
+        f"[Skill: assemble_object] Rollout finished. Task success: {finished_state}"
     )
-    return task_successfully_completed
+    return finished_state
 
 
 # Ensure os module is imported if not already

@@ -377,7 +377,7 @@ class IsaacSimulator:
         )
         return response.get("success", False) if response else False
 
-    def get_observation(self) -> Optional[Observation]:
+    def get_observation(self) -> Optional[list[Observation]]:
         """Requests and retrieves the current observation from the simulator subprocess."""
         response = self._send_command_and_recv({"command": "get_observation"})
         obss = []

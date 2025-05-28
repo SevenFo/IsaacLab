@@ -395,8 +395,7 @@ class SkillExecutor:
         """
         Step the current non-blocking (generator) skill execution.
         Returns:
-            True if the skill is still running.
-            False if the skill completed or failed in this step.
+            state of each step
             None if no skill was running.
         """
         if not self.is_running() or self.current_skill_generator is None:
@@ -409,9 +408,14 @@ class SkillExecutor:
             print(
                 f"[SkillExecutor] Skill {self.current_skill_name} completed. Result: {result}"
             )
-            self.status = (
-                SkillStatus.COMPLETED if result else SkillStatus.FAILED
-            )
+            if result == 'error':
+                self.status = SkillStatus.FAILED
+            elif result == 'timeout':
+                self.status = SkillStatus.TIMEOUT
+            elif result == 'success':
+                self.status = SkillStatus.COMPLETED
+            else:
+                self.status = SkillStatus.FAILED
             self._reset_current_skill_state()
             return False  # Completed
         except Exception as e:

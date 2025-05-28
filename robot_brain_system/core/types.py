@@ -29,6 +29,7 @@ class SkillStatus(Enum):
     FAILED = "failed"
     INTERRUPTED = "interrupted"
     IDLE = "idle"  # Skill is not currently executing
+    TIMEOUT = "timeout"
 
 
 @dataclass
