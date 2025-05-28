@@ -20,16 +20,16 @@ from ..core.skill_manager import skill_register
     name="reset_to_home",
     skill_type=SkillType.FUNCTION,
     execution_mode=ExecutionMode.GENERATOR,
-    description="Reset robot to home position",
+    description="Reset robot to home position, when robot stucked in some state, this skill may be helpful",
     timeout=10.0,
     requires_env=True,  # This skill now needs the environment
 )
 def reset_to_home(
     env: Any, params: Dict[str, Any]
-) -> Generator[None, None, bool]:
+) -> Generator[None,None,str]:
     """
     Reset robot to home position using generator mode.
-    The skill now directly interacts with the 'env' provided.
+
     """
     print("[Skill] reset_to_home: Starting...")
 
@@ -40,27 +40,22 @@ def reset_to_home(
     # For simplicity, we'll use the environment's reset method.
     # A true "move to home" would be more complex.
 
-    # A more robust reset_to_home would involve a sequence of actions
-    # to move the robot to a predefined joint configuration or EE pose.
-    # For now, we use the environment's own reset mechanism as a proxy.
     try:
         # Most Isaac Lab envs return obs_dict, info_dict
-        obs_dict, info_dict = env.reset()
-        print("[Skill] reset_to_home: Environment reset triggered.")
-
-        # Yield a few times to let the reset settle if it's not instantaneous
-        for _ in range(5):  # Simulate a short settling time
-            yield
-            # If env has a render or update call needed: env.render() or simulation_app.update()
-            # This depends on how the subprocess loop is structured.
-            # The IsaacSimulator subprocess loop will handle sim_app.update().
-
+        print("[Skill] reset_to_home: Directly reset Frank joint position to default position.")
+        robot = env.unwrapped.scene.robot
+        joint_pos, joint_vel = (
+            robot.data.default_joint_pos.clone(),
+            robot.data.default_joint_vel.clone(),
+        )
+        robot.write_joint_state_to_sim(joint_pos, joint_vel)
+        for i in range(30):
+            yield env.step(torch.zeros((1,6)))
         print("[Skill] reset_to_home: Completed")
-        return True  # Assuming env.reset() is successful
-
+        return "success"  
     except Exception as e:
         print(f"[Skill] reset_to_home: Error during environment reset: {e}")
-        return False
+        return "error"
 
 
 # @skill_register(

@@ -589,6 +589,7 @@ class IsaacSimulator:
                             child_conn.send({"status": "shutdown_ack"})
                             break
                         elif cmd == "execute_skill_blocking":
+                            assert False, "Unsupported now!"
                             skill_name = command_data["skill_name"]
                             params = command_data["parameters"]
                             print(

@@ -245,6 +245,7 @@ class SkillExecutor:
         Execute a skill completely (blocking within the context it's called).
         If it's a generator skill, it runs the generator to completion.
         """
+        assert False, "Unsupported now!"
         skill_def = self.registry.get_skill(skill_name)
         if not skill_def:
             print(f"[SkillExecutor] Skill '{skill_name}' not found")
@@ -365,6 +366,7 @@ class SkillExecutor:
                 print(f"[SkillExecutor] Started generator skill: {skill_name}")
                 return True
             elif skill_def.execution_mode == ExecutionMode.DIRECT:
+                assert False, "Unsupported now!"
                 # Direct execution is inherently blocking, so it completes immediately
                 result = skill_def.function(*args_for_skill)
                 print(
