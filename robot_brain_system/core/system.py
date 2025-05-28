@@ -531,23 +531,33 @@ class RobotBrainSystem:
                             "status"
                         )
                         if len(self.state.skill_history) == 0:
-                            print(f"[RobotBrainSystem] No skill be executing now, start to exec first skill.")
+                            print(
+                                f"[RobotBrainSystem] No skill be executing now, start to exec first skill."
+                            )
                         elif (
-                            last_sim_skill_state == "completed" or last_sim_skill_state == 'success'
+                            last_sim_skill_state == "completed"
+                            or last_sim_skill_state == "success"
                         ):  # Successful completion from SkillStatus enum
                             current_skill = self.state.skill_history[-1]
                             print(
                                 f"[RobotBrainSystem] Subprocess skill [{current_skill['name']}] reported COMPLETED."
                             )
-                            self.state.skill_history[-1]['result'] = last_sim_skill_state
+                            self.state.skill_history[-1]["result"] = (
+                                last_sim_skill_state
+                            )
                             self.brain.advance_skill()  # Tell brain to move to next skill
-                        elif last_sim_skill_state == "failed" or last_sim_skill_state == 'timeout':
+                        elif (
+                            last_sim_skill_state == "failed"
+                            or last_sim_skill_state == "timeout"
+                        ):
                             # NEED TO TOGGLE BRAIN TO HANDLE THIS SITUATION
                             current_skill = self.state.skill_history[-1]
                             print(
                                 f"[RobotBrainSystem] Subprocess skill [{current_skill['name']}] reported FAILED."
                             )
-                            self.state.skill_history[-1]['result'] = last_sim_skill_state
+                            self.state.skill_history[-1]["result"] = (
+                                last_sim_skill_state
+                            )
                             # Brain needs to handle this failure (e.g. replan, abort)
                             # For now, we'll tell brain to advance, and monitoring should catch it or brain handles error.
                             # Or, directly set brain to error or make it replan.
@@ -561,16 +571,29 @@ class RobotBrainSystem:
                             # continue to next loop iteration to stop further processing of this plan
                             last_plan_info = self.state.plan_history[-1]
                             last_skill_info = self.state.skill_history[-1]
-                            last_skill_execution_summary = self.brain.summary_skill_execution(last_skill_info)
-                            self.state.skill_history[-1]['execution_summary'] = last_skill_execution_summary
+                            last_skill_execution_summary = (
+                                self.brain.summary_skill_execution(
+                                    last_skill_info
+                                )
+                            )
+                            self.state.skill_history[-1][
+                                "execution_summary"
+                            ] = last_skill_execution_summary
                             obss = self.simulator.get_observation()
                             if obss:
                                 self.state.obs_history.extend(obss)
                             else:
-                                self.state.obs_history = self.state.obs_history[-1:]
+                                self.state.obs_history = (
+                                    self.state.obs_history[-1:]
+                                )
                             obs = self.state.obs_history[-1]
                             assert self.state.current_task
-                            new_plan = self.brain.replan_task(self.state.current_task, last_plan_info, self.state.skill_history,obs)
+                            new_plan = self.brain.replan_task(
+                                self.state.current_task,
+                                last_plan_info,
+                                self.state.skill_history,
+                                obs,
+                            )
                             self.state.plan_history.append(new_plan)
                             self.state.skill_history = []
                         elif last_sim_skill_state == "interrupted":
@@ -608,7 +631,9 @@ class RobotBrainSystem:
                                     self.state.error_message = (
                                         f"Failed to start skill {skill_name}"
                                     )
-                                self.state.skill_history.append(next_skill_to_run)
+                                self.state.skill_history.append(
+                                    next_skill_to_run
+                                )
                         else:
                             # No more skills in brain's plan, and last sim skill (if any) is done.
                             if (
@@ -728,17 +753,20 @@ class RobotBrainSystem:
                 self.simulator.terminate_current_skill()  # Stop any sim skill
             self.state.status = SystemStatus.IDLE
             self.state.current_task = None
-            
-        elif "not enough":
+        elif action == "not enough":
             pass
-        elif "continue":
+        elif action == "continue":
             self.state.obs_history = [self.state.obs_history[-1]]
+            print(
+                f"[RobotBrainSystem] Clear state.obs_history, current len: {len(self.state.obs_history)}, for continue action: {reason}"
+            )
         # For "continue" action, do nothing - keep executing current sim skill (if any)
         # or proceed to next skill in plan if current sim skill finished.
 
 
 if __name__ == "__main__":
     import os
+
     print("TEST ROBOT BRAIN SYSTEM")
     from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
 

@@ -75,7 +75,7 @@ class QwenVLAdapter(BaseModelAdapter):
             raise ImportError("qwen_vl_utils is required for QwenVLAdapter")
 
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="bfloat16", device_map="auto"
+            model_path, torch_dtype="bfloat16", device_map="cuda:2"
         )
         self.processor = AutoProcessor.from_pretrained(model_path)
 

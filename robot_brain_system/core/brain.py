@@ -434,7 +434,6 @@ class QwenVLBrain:
         """Advance to the next skill in the plan."""
         if self.state.current_plan:
             self.state.current_skill_index += 1
-            self.current_monitor_time = 0
             if self.state.current_skill_index >= len(
                 self.state.current_plan.skill_sequence
             ):
@@ -837,7 +836,7 @@ class QwenVLBrain:
 
         # Attempt to parse the new response from LLM using the same robust helper
         print(
-            f"[QwenVLBrain] Received new response from LLM for JSON recovery: '{new_llm_response_text[:200]}...'"
+            f"[QwenVLBrain] Received new response from LLM for JSON recovery: '{new_llm_response_text}'"
         )
         parsed_data_after_recovery = extract_json_from_text(
             new_llm_response_text

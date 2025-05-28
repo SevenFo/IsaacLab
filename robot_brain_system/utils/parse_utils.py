@@ -21,10 +21,22 @@ def extract_json_from_text(text: str) -> Optional[Union[Dict, List]]:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
             print(
-                f"[QwenVLBrain] Malformed JSON in ```json ... ``` block: {e}. Content: {json_str[:100]}..."
+                f"[QwenVLBrain] Malformed JSON in ```json ... ``` block: {e}. Content: {json_str}"
             )
             # Fall through to other methods if this specific extraction fails
-
+    stripped_text = stripped_text.replace(
+        '"{}"', "{}"
+    )  # Fix common formatting issues
+    match = re.search(r"```json\s*([\s\S]*?)\s*```", stripped_text, re.DOTALL)
+    if match:
+        json_str = match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            print(
+                f"[QwenVLBrain] Malformed JSON in ```json ... ``` block: {e}. Content: {json_str}"
+            )
+            # Fall through to other methods if this specific extraction fails
     # Method 2: ``` ... ``` generic markdown block
     match = re.search(r"```\s*([\s\S]*?)\s*```", stripped_text, re.DOTALL)
     if match:
