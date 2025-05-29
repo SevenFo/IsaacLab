@@ -314,7 +314,9 @@ class RobotBrainSystem:
         # brain not track skill status  only record current skill info!
         if self.simulator and self.simulator.is_initialized:
             sim_skill_status = self.simulator.get_skill_executor_status()
-            assert brain_skill_info['name'] == sim_skill_status['current_skill'], f"brain skill info {brain_skill_info['name']} != sim skill status {sim_skill_status['current_skill']}"
+            # TODO
+            # when the skill is finished while dicision havnt been marking, it would occure belowe situation, NEED TO RECORED LAST SKILL IN SKILL EXECUTION
+            # assert brain_skill_info['name'] == sim_skill_status['current_skill'], f"brain skill info {brain_skill_info['name']} != sim skill status {sim_skill_status['current_skill']}"
             if sim_skill_status.get("is_running"):
                 print(
                     "[RobotBrainSystem] Sending terminate signal to skill in simulator..."
@@ -323,7 +325,7 @@ class RobotBrainSystem:
                 
             else:
                 print(
-                    "[RobotBrainSystem] Skill is not in running status, ignore interrpt requirement!"
+                    f"[RobotBrainSystem] Skill is not in running status, directly change the state of executor to {skill_status}"
                 )
                 return True
         else:

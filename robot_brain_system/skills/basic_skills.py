@@ -21,6 +21,9 @@ from ..core.skill_manager import skill_register
     skill_type=SkillType.FUNCTION,
     execution_mode=ExecutionMode.GENERATOR,
     description="Reset robot to home position, when robot stucked in some state, this skill may be helpful",
+    criterion={
+        "progress": "This is a baisc skill, no need to monitor, just return progress, let skill itself handle it."
+    },
     timeout=10.0,
     requires_env=True,  # This skill now needs the environment
 )

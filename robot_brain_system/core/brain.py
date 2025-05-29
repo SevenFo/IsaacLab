@@ -276,8 +276,36 @@ class QwenVLBrain:
         self.monitor_memory.add_user_input(
             contents=[f"skill execution result: {skill_info['result']}"]
         )
-        skill_execution_summary = self.summary_memory(self.monitor_memory)
-        return skill_execution_summary
+        content = self._format_memory_content(memory=self.monitor_memory)
+        content.append((
+            "The robot are try to orchestrate skills to accomplish a task.\n\n"
+            "## Skill Execution Context Info:\n"
+            f"Original Task: {self.state.current_task.description}\n"
+            f"Current Skill: {skill_info['name']}\n"
+            f"Skill Description: {skill_info['discription']}\n"
+            f"Skill Parameters: {skill_info['parameters']}\n"
+            f"Skill Criterion: {skill_info['criterion']}\n\n"
+            "## Summary memory content as follows:\n"
+            "Extract key information as bullet points.\n"
+            "Your focus may include the following points: \n"
+            "0. Did the task finished? Based on the Orignal Task and those scene image.\n"
+            "1. Did the execution of the skill achieve the intended goal? (timeout not means failed, you need juedge by yourself)\n"
+            "2. How does the scene change as the skill is executed?\n"
+            "3. Reflection skills execution process.\n"
+            "4. What does the scene look like now?\n"
+            "5. Any other points you think could be mentioned?\n\n"
+            "## Output template:\n"
+            "[focus 1] Specific summary content 1\n"
+            "[focus 2] Specific summary content 2\n..."
+            ))
+        
+        sum_memory = BrainMemory()
+        sum_memory.add_system_prompt("You are a professional dialogue summarizer.")
+        sum_memory.add_user_input(
+            contents=content
+        )
+        response_text = self.model_adapter.generate_response(sum_memory.history)
+        return response_text
 
     # @retry
     def replan_task(
@@ -311,6 +339,9 @@ class QwenVLBrain:
                 text_prompt = self._format_prompt_for_replanning(
                     task, last_plan_info, skill_history
                 )
+                print("--- Replan Prompt ---")
+                print(text_prompt)
+                print("\n")
                 inspector_rgb = (
                     observation.data["rgb_camera"]["inspector"][0]
                     .cpu()
@@ -535,29 +566,6 @@ class QwenVLBrain:
             "last_monitoring": self.state.last_monitoring_time,
         }
 
-    def summary_memory(self, memory: BrainMemory):
-        sum_memory = BrainMemory()
-        sum_memory.add_system_prompt("You are a professional dialogue summarizer.")
-        content = self._format_memory_content(memory=memory)
-        content.append((
-            "## Summary memory content as follows:\n"
-            "Extract key information as bullet points.\n"
-            "Your focus may include the following points: \n"
-            "0. Did the execution of the skill achieve the intended goal?\n"
-            "1. How does the scene change as the skill is executed?\n"
-            "2. Reflection skills execution process.\n"
-            "3. What does the scene look like now?\n"
-            "4. Any other points you think could be mentioned?\n\n"
-            "## Output template:\n"
-            "[focus 1] Specific summary content 1\n"
-            "[focus 2] Specific summary content 2\n..."
-            ))
-        sum_memory.add_user_input(
-            contents=content
-        )
-        response_text = self.model_adapter.generate_response(memory.history)
-        return response_text
-
     def _format_memory_content(self, memory: BrainMemory) -> List:
         print(
             f"[QwenVLBrain] Formatting memory with {len(memory.history)} entries"
@@ -583,6 +591,9 @@ class QwenVLBrain:
                         chat_content.append(content["image"])
                     else:
                         print(f"[QwenVLBrain] format memory content encounted with unsupported content type: {content}")
+            if text_segment:
+                chat_content.append(text_segment)
+                text_segment = "" # clear
             chat_content.append("\n---\n")
         return chat_content
 
@@ -1046,20 +1057,25 @@ Skill Params: {last_plan_info.skill_params}
 {skills_execution_info}
 
 ## Output
-Based on the above information and the current scene images that will be provided to you next, please analyze the previous task execution and replan the plan
+Based on the above information and the current scene images that will be provided to you next, please do reflection and plan the next plan
 Please respond with a JSON object containing:
 - skill_sequence: List of skill names to execute in order
 - skill_params: List of parameter dictionaries for each skill
 - skill_monitoring_interval: How often to check progress (seconds)
 - analysis: the analysis and reason of your replanning
+If you determine the task is finished just output an empty skill_sequence
 
 Example response:
+Refection: YOUR REFLECTION CONTENT
+Plan: 
+```json
 {{
     "skill_sequence": ["return_to_home_pose", "grasp"],
     "skill_params": [null, {{"target": "box"}}],
     "skill_monitoring_interval": 1.0
     "analysis": "current available infomation indicating that the gripper has try several times to grasp box, while it failed at last, and lingering above the box finnally, I think it may be helpful to return to home position and grasp the box again, as current position maybe difficult for gripper to grasp target"
 }}
+```
 """
         return prompt
 

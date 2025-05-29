@@ -456,6 +456,12 @@ class SkillExecutor:
             self._reset_current_skill_state()
             self.status = skill_status
             return True
+        else:
+            # this skill is already finished
+            print(
+                f"[SkillExecutor] no skill runing, directly setting status to: {skill_status}"
+            )
+            self.status = skill_status
         return False
 
     def _reset_current_skill_state(self):

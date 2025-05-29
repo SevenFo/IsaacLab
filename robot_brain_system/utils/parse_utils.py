@@ -25,7 +25,7 @@ def extract_json_from_text(text: str) -> Optional[Union[Dict, List]]:
             )
             # Fall through to other methods if this specific extraction fails
     stripped_text = stripped_text.replace(
-        '"{}"', "{}"
+        '{"{}"}', "{}"
     )  # Fix common formatting issues
     match = re.search(r"```json\s*([\s\S]*?)\s*```", stripped_text, re.DOTALL)
     if match:
