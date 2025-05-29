@@ -142,8 +142,8 @@ class QwenVLBrain:
         self.max_tokens = self.qwen_config.get("max_tokens", 512)
 
         # Monitoring configuration
-        self.monitoring_interval = config.get(
-            "monitoring_interval", 1.0
+        self.skill_monitoring_interval = config.get(
+            "skill_monitoring_interval", 1.0
         )  # seconds
         self.max_retries = config.get("max_retries", 3)
         self.visualize = config.get("visualize", False)
@@ -404,7 +404,7 @@ class QwenVLBrain:
                 self.state.current_task, skill_info, None
             )
         )
-        self.current_monitor_time = 0
+        self.current_skill_monitor_time = 0
 
     def get_next_skill(self) -> Optional[Dict[str, Any]]:
         """
@@ -434,6 +434,7 @@ class QwenVLBrain:
             "name": skill_name,
             "parameters": skill_params,
             "criterion": skill_criterion,
+            "discription": skill_info['description'],
             "index": self.state.current_skill_index,
         }
 
@@ -464,13 +465,13 @@ class QwenVLBrain:
         current_time = time.time()
         return (
             current_time - self.state.last_monitoring_time
-        ) >= self.state.current_plan.monitoring_interval
+        ) >= self.state.current_plan.skill_monitoring_interval
 
-    def monitor_execution(
+    def monitor_skill_execution(
         self, current_observation: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
-        Monitor current skill execution and make decisions.
+        Monitor current skill execution and make decisions. WE HAVED SUPPORTED MONITORING THE WHOLE TASK EXECUTION
 
         Args:
             current_observation: Current environment observation
@@ -484,11 +485,11 @@ class QwenVLBrain:
             if not self.state.current_plan or not self.state.current_task:
                 return {"action": "continue", "reason": "No active task"}
 
-            if self.current_monitor_time < self.monitor_waiting_times:
-                self.current_monitor_time += 1
+            if self.current_skill_monitor_time < self.monitor_waiting_times:
+                self.current_skill_monitor_time += 1
                 return {
                     "action": "continue",
-                    "reason": f"current_monitor_time: {self.current_monitor_time}",
+                    "reason": f"current_skill_monitor_time: {self.current_skill_monitor_time}",
                 }
 
             # Get current skill info
@@ -536,9 +537,23 @@ class QwenVLBrain:
 
     def summary_memory(self, memory: BrainMemory):
         sum_memory = BrainMemory()
-        sum_memory.add_system_prompt("You are a summarier, please summary our conversation histories, directly output the summaried result")
+        sum_memory.add_system_prompt("You are a professional dialogue summarizer.")
+        content = self._format_memory_content(memory=memory)
+        content.append((
+            "## Summary memory content as follows:\n"
+            "Extract key information as bullet points.\n"
+            "Your focus may include the following points: \n"
+            "0. Did the execution of the skill achieve the intended goal?\n"
+            "1. How does the scene change as the skill is executed?\n"
+            "2. Reflection skills execution process.\n"
+            "3. What does the scene look like now?\n"
+            "4. Any other points you think could be mentioned?\n\n"
+            "## Output template:\n"
+            "[focus 1] Specific summary content 1\n"
+            "[focus 2] Specific summary content 2\n..."
+            ))
         sum_memory.add_user_input(
-            contents=self._format_memory_content(memory=memory)
+            contents=content
         )
         response_text = self.model_adapter.generate_response(memory.history)
         return response_text
@@ -662,7 +677,7 @@ class QwenVLBrain:
             task_id=task.id,
             skill_sequence=skill_sequence,
             skill_params=skill_params,
-            monitoring_interval=self.monitoring_interval,
+            skill_monitoring_interval=self.skill_monitoring_interval,
             expected_duration=len(skill_sequence) * 10.0,  # Rough estimate
         )
 
@@ -987,13 +1002,13 @@ Available Skills:
 Please respond with a JSON object containing:
 - skill_sequence: List of skill names to execute in order
 - skill_params: List of parameter dictionaries for each skill
-- monitoring_interval: How often to check progress (seconds)
+- skill_monitoring_interval: How often to check progress (seconds)
 
 Example response:
 {{
     "skill_sequence": ["pick_and_place", "inspect_object"],
     "skill_params": [{{"target": "object1"}}, {{"target": "result"}}],
-    "monitoring_interval": 1.0
+    "skill_monitoring_interval": 1.0
 }}
 """
         return prompt
@@ -1035,14 +1050,14 @@ Based on the above information and the current scene images that will be provide
 Please respond with a JSON object containing:
 - skill_sequence: List of skill names to execute in order
 - skill_params: List of parameter dictionaries for each skill
-- monitoring_interval: How often to check progress (seconds)
+- skill_monitoring_interval: How often to check progress (seconds)
 - analysis: the analysis and reason of your replanning
 
 Example response:
 {{
     "skill_sequence": ["return_to_home_pose", "grasp"],
     "skill_params": [null, {{"target": "box"}}],
-    "monitoring_interval": 1.0
+    "skill_monitoring_interval": 1.0
     "analysis": "current available infomation indicating that the gripper has try several times to grasp box, while it failed at last, and lingering above the box finnally, I think it may be helpful to return to home position and grasp the box again, as current position maybe difficult for gripper to grasp target"
 }}
 """
@@ -1055,11 +1070,13 @@ Example response:
         observation: Optional[Any] = None,
     ) -> str:
         """Format a prompt for Qwen VL monitoring."""
-        prompt = f"""
-You are monitoring robot task execution. Analyze the current situation and decide the next action.
+        prompt = f"""The robot are try to orchestrate skills to accomplish a task.
+You are monitoring robot's SKILL execution. Analyze the current situation and decide the next action.
+You should first consider the execution of skills rather than the completion of tasks, based on the skill description and criterion.
 
 Original Task: {task.description}
 Current Skill: {current_skill["name"]}
+Skill Description: {current_skill['discription']}
 Skill Parameters: {current_skill["parameters"]}
 Skill Criterion: {current_skill["criterion"]}
 Available Skills: {chr(10).join(f"- {skill}" for skill in self.skill_registry.list_skills())}
@@ -1102,8 +1119,8 @@ Next, Let's start first monitoring round.
             if plan_data is not None:
                 skill_sequence = plan_data.get("skill_sequence", [])
                 skill_params = plan_data.get("skill_params", [])
-                monitoring_interval = plan_data.get(
-                    "monitoring_interval", self.monitoring_interval
+                skill_monitoring_interval = plan_data.get(
+                    "skill_monitoring_interval", self.skill_monitoring_interval
                 )
                 for i in range(len(skill_params)):
                     if skill_params[i] is None:
@@ -1119,7 +1136,7 @@ Next, Let's start first monitoring round.
                     task_id=task.id,
                     skill_sequence=skill_sequence,
                     skill_params=skill_params,
-                    monitoring_interval=monitoring_interval,
+                    skill_monitoring_interval=skill_monitoring_interval,
                     expected_duration=len(skill_sequence) * 10.0,
                 )
             else:
@@ -1172,7 +1189,7 @@ Next, Let's start first monitoring round.
             task_id=task.id,
             skill_sequence=skill_sequence,
             skill_params=skill_params,
-            monitoring_interval=self.monitoring_interval,
+            skill_monitoring_interval=self.skill_monitoring_interval,
             expected_duration=len(skill_sequence) * 10.0,
         )
 
@@ -1196,8 +1213,8 @@ Next, Let's start first monitoring round.
             if plan_data is not None:
                 skill_sequence = plan_data.get("skill_sequence", [])
                 skill_params = plan_data.get("skill_params", [])
-                monitoring_interval = plan_data.get(
-                    "monitoring_interval", self.monitoring_interval
+                skill_monitoring_interval = plan_data.get(
+                    "skill_monitoring_interval", self.skill_monitoring_interval
                 )
 
                 if len(skill_sequence) != len(skill_params):
@@ -1211,7 +1228,7 @@ Next, Let's start first monitoring round.
                     task_id=task.id,
                     skill_sequence=skill_sequence,
                     skill_params=skill_params,
-                    monitoring_interval=monitoring_interval,
+                    skill_monitoring_interval=skill_monitoring_interval,
                     expected_duration=len(skill_sequence) * 10.0,
                 )
             else:

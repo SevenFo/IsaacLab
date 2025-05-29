@@ -32,7 +32,7 @@ SYSTEM_CONFIG = {
             "max_tokens": 512,
             "device": "cuda:1"
         },
-        "monitoring_interval": 1.0,  # seconds
+        "skill_monitoring_interval": 1.0,  # seconds
         "max_retries": 3,
         "task_timeout": 300.0,  # 5 minutes default task timeout
     },
@@ -79,7 +79,7 @@ DEVELOPMENT_CONFIG = {
     },
     "brain": {
         **SYSTEM_CONFIG["brain"],
-        "monitoring_interval": 0.5,  # More frequent monitoring
+        "skill_monitoring_interval": 0.5,  # More frequent monitoring
     },
     "monitoring": {
         **SYSTEM_CONFIG["monitoring"],

@@ -87,7 +87,7 @@ class SkillPlan:
     task_id: str
     skill_sequence: List[str]
     skill_params: List[Dict[str, Any]]
-    monitoring_interval: float = 1.0  # seconds
+    skill_monitoring_interval: float = 1.0  # seconds
     expected_duration: Optional[float] = None
 
 

@@ -438,11 +438,11 @@ class SkillExecutor:
             and self.current_skill_generator is not None
         )
 
-    def terminate_current_skill(self) -> bool:
+    def terminate_current_skill(self,skill_status:SkillStatus = SkillStatus.INTERRUPTED) -> bool:
         """Terminate the current non-blocking skill execution."""
         if self.current_skill_generator is not None:
             print(
-                f"[SkillExecutor] Terminating skill: {self.current_skill_name}"
+                f"[SkillExecutor] Terminating skill: {self.current_skill_name} with status: {skill_status}"
             )
             try:
                 self.current_skill_generator.close()
@@ -454,9 +454,7 @@ class SkillExecutor:
                 )
 
             self._reset_current_skill_state()
-            self.status = (
-                SkillStatus.INTERRUPTED
-            )  # Or IDLE, depending on desired state after termination
+            self.status = skill_status
             return True
         return False
 
