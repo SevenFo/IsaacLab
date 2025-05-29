@@ -28,7 +28,7 @@ from .skill_manager import SkillExecutor, get_skill_registry, SkillRegistry
 from .types import (
     Action,
     Observation,
-    SkillStatus
+    SkillStatus,
 )  # Assuming these are used for IPC if needed
 from robot_brain_system.utils import dynamic_set_attr
 
@@ -294,7 +294,7 @@ class IsaacSimulator:
     def _send_command_and_recv(
         self, command: Dict[str, Any], timeout: float = 10.0
     ) -> Optional[Dict[str, Any]]:
-        acquired = self._command_lock.acquire(timeout=0.5)
+        acquired = self._command_lock.acquire(timeout=10)
         if acquired:
             if not self.is_initialized or not self.parent_conn:
                 print(
@@ -371,12 +371,14 @@ class IsaacSimulator:
         )
         return response or {"status": "error", "error": "No response"}
 
-    def terminate_current_skill(self, skill_status: SkillStatus = SkillStatus.INTERRUPTED) -> bool:
+    def terminate_current_skill(
+        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
+    ) -> bool:
         """Terminate current skill execution in the subprocess."""
         response = self._send_command_and_recv(
             {
                 "command": "terminate_current_skill",
-                "skill_status": skill_status
+                "skill_status": skill_status,
             }
         )
         return response.get("success", False) if response else False
@@ -626,8 +628,10 @@ class IsaacSimulator:
                         elif cmd == "get_skill_executor_status":
                             child_conn.send(skill_executor.get_status_info())
                         elif cmd == "terminate_current_skill":
-                            skill_status = command_data['skill_status']
-                            success = skill_executor.terminate_current_skill(skill_status)
+                            skill_status = command_data["skill_status"]
+                            success = skill_executor.terminate_current_skill(
+                                skill_status
+                            )
                             child_conn.send({"success": success})
                         elif cmd == "get_observation":
                             # This should get the latest observation from the environment

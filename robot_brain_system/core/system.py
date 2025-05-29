@@ -21,7 +21,15 @@ import os
 matplotlib.use("Agg")  # <-- Add this line BEFORE importing pyplot
 
 
-from .types import SystemStatus, Action, Observation, Task, SkillPlan, SystemState, SkillStatus
+from .types import (
+    SystemStatus,
+    Action,
+    Observation,
+    Task,
+    SkillPlan,
+    SystemState,
+    SkillStatus,
+)
 from .isaac_simulator import IsaacSimulator
 from .skill_manager import (
     SkillRegistry,
@@ -29,6 +37,7 @@ from .skill_manager import (
     get_skill_registry,
 )  # Local SkillExecutor might be for non-env skills
 from .brain import QwenVLBrain
+
 
 class RobotBrainSystem:
     """
@@ -299,15 +308,21 @@ class RobotBrainSystem:
         self.state.status = SystemStatus.IDLE
         self.state.current_task = None
         self.state.sub_skill_status = {}
-        
-    def interrupt_skill(self, reason: str = "UNKOWN",  skill_status: SkillStatus = SkillStatus.INTERRUPTED):
+
+    def interrupt_skill(
+        self,
+        reason: str = "UNKOWN",
+        skill_status: SkillStatus = SkillStatus.INTERRUPTED,
+    ):
         brain_skill_info = self.brain.get_next_skill()
         if not brain_skill_info:
             print(
                 "[RobotBrainSystem] No skill in the brain! ignore interrpt requirement!"
             )
             return True
-        print(f"[RobotBrainSystem] Interrupting current skill:\n{brain_skill_info}, with status: {skill_status} and reason: {reason}\n")
+        print(
+            f"[RobotBrainSystem] Interrupting current skill:\n{brain_skill_info}, with status: {skill_status} and reason: {reason}\n"
+        )
         # Terminate any skill running in the simulator subprocess
         # Skill is_running status will be False if interrupt command worked, then, this status will be indicated in _main_loop to handle the skill status
         # Task status well be no changed
@@ -322,7 +337,7 @@ class RobotBrainSystem:
                     "[RobotBrainSystem] Sending terminate signal to skill in simulator..."
                 )
                 return self.simulator.terminate_current_skill(skill_status)
-                
+
             else:
                 print(
                     f"[RobotBrainSystem] Skill is not in running status, directly change the state of executor to {skill_status}"
@@ -512,7 +527,7 @@ class RobotBrainSystem:
                         decision = self.brain.monitor_skill_execution(
                             self.state.obs_history
                         )
-                        
+
                         self._handle_monitoring_decision(decision)
                         # if (
                         #     self.brain.state.status == SystemStatus.IDLE
@@ -605,8 +620,9 @@ class RobotBrainSystem:
                                 self.state.skill_history,
                                 obs,
                             )
-                            self.state.plan_history.append(new_plan)
-                            self.state.skill_history = []
+                            if new_plan:
+                                self.state.plan_history.append(new_plan)
+                                self.state.skill_history = []
                         elif last_sim_skill_state == "interrupted":
                             assert False, "unsupported now"
                             print(
@@ -718,13 +734,13 @@ class RobotBrainSystem:
 
     def _handle_monitoring_decision(self, decision: Dict[str, Any]):
         """Handle brain monitoring decisions.
-        Brain monitor may determine the status of a skill as succcessed, failed, progress , etc., 
+        Brain monitor may determine the status of a skill as succcessed, failed, progress , etc.,
             which are defined in the criterion property when regirstering one skill.
-        It should be noticed that, when one skill function ended normally, 
-            it also return the status of skill termination, maybe success, timeout, etc., 
+        It should be noticed that, when one skill function ended normally,
+            it also return the status of skill termination, maybe success, timeout, etc.,
             which are defined in the skill function inside.
         This function only handle the skill status determined by brain monitor, nor the original status returned by skill function self.
-        While if monitoring dicision is success or failed, system may interrupt one skill directly, instead of waiting for 
+        While if monitoring dicision is success or failed, system may interrupt one skill directly, instead of waiting for
             skill to finish executing itself, this (or other) action may changed the status of one skill that return by
             the skill executor. (The original skill status also return to skill exector, and we only get statue status info from skill exectuor)
         """
@@ -735,7 +751,9 @@ class RobotBrainSystem:
         )
 
         if action == "failed":
-            self.interrupt_skill(f"Brain decision: {reason}", skill_status=SkillStatus.FAILED)
+            self.interrupt_skill(
+                f"Brain decision: {reason}", skill_status=SkillStatus.FAILED
+            )
         elif action == "retry":
             assert False, "Unsuportted now!"
             # Retry logic for a skill running in the subprocess is complex.
@@ -768,7 +786,9 @@ class RobotBrainSystem:
             print(
                 f"[RobotBrainSystem] Brain decided skill is successed: {reason}"
             )
-            self.interrupt_skill(f"Brain decision: {reason}", skill_status=SkillStatus.COMPLETED)
+            self.interrupt_skill(
+                f"Brain decision: {reason}", skill_status=SkillStatus.COMPLETED
+            )
         elif action == "not enough":
             # not enough observation to determine
             pass

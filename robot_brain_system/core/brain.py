@@ -15,7 +15,7 @@ from robot_brain_system.core.types import (
     SkillPlan,
     SystemStatus,
     Observation,
-    SystemState
+    SystemState,
 )
 from robot_brain_system.core.skill_manager import SkillRegistry
 from robot_brain_system.utils import extract_json_from_text
@@ -136,9 +136,7 @@ class QwenVLBrain:
         self.adapter_type = self.qwen_config.get(
             "adapter_type", "mock"
         )  # "qwen_vl", "openai", or "mock"
-        self.adapter_device = self.qwen_config.get(
-            "device", "auto"
-        )
+        self.adapter_device = self.qwen_config.get("device", "auto")
         self.max_tokens = self.qwen_config.get("max_tokens", 512)
 
         # Monitoring configuration
@@ -176,7 +174,9 @@ class QwenVLBrain:
                 raise ValueError("model_path is required for QwenVL adapter")
             from .model_adapters import QwenVLAdapter
 
-            self.model_adapter = QwenVLAdapter(self.model_path,self.adapter_device)
+            self.model_adapter = QwenVLAdapter(
+                self.model_path, self.adapter_device
+            )
             print(
                 f"[QwenVLBrain] Initialized QwenVL adapter with model: {self.model_path}"
             )
@@ -210,7 +210,7 @@ class QwenVLBrain:
         self.skill_registry = skill_registry
         print("[QwenVLBrain] Connected to skill registry")
 
-    def set_system_state(self, state:SystemState):
+    def set_system_state(self, state: SystemState):
         self.system_state = state
 
     def parse_task(
@@ -277,34 +277,39 @@ class QwenVLBrain:
             contents=[f"skill execution result: {skill_info['result']}"]
         )
         content = self._format_memory_content(memory=self.monitor_memory)
-        content.append((
-            "The robot are try to orchestrate skills to accomplish a task.\n\n"
-            "## Skill Execution Context Info:\n"
-            f"Original Task: {self.state.current_task.description}\n"
-            f"Current Skill: {skill_info['name']}\n"
-            f"Skill Description: {skill_info['discription']}\n"
-            f"Skill Parameters: {skill_info['parameters']}\n"
-            f"Skill Criterion: {skill_info['criterion']}\n\n"
-            "## Summary memory content as follows:\n"
-            "Extract key information as bullet points.\n"
-            "Your focus may include the following points: \n"
-            "0. Did the task finished? Based on the Orignal Task and those scene image.\n"
-            "1. Did the execution of the skill achieve the intended goal? (timeout not means failed, you need juedge by yourself)\n"
-            "2. How does the scene change as the skill is executed?\n"
-            "3. Reflection skills execution process.\n"
-            "4. What does the scene look like now?\n"
-            "5. Any other points you think could be mentioned?\n\n"
-            "## Output template:\n"
-            "[focus 1] Specific summary content 1\n"
-            "[focus 2] Specific summary content 2\n..."
-            ))
-        
-        sum_memory = BrainMemory()
-        sum_memory.add_system_prompt("You are a professional dialogue summarizer.")
-        sum_memory.add_user_input(
-            contents=content
+        content.append(
+            (
+                "The robot are try to orchestrate skills to accomplish a task.\n\n"
+                "## Skill Execution Context Info:\n"
+                f"Original Task: {self.state.current_task.description}\n"
+                f"Current Skill: {skill_info['name']}\n"
+                f"Skill Description: {skill_info['discription']}\n"
+                f"Skill Parameters: {skill_info['parameters']}\n"
+                f"Skill Criterion: {skill_info['criterion']}\n\n"
+                "## Summary memory content as follows:\n"
+                "Extract key information as bullet points.\n"
+                "Your focus may include the following points: \n"
+                "(timeout not means failed, timeout only means the skill is finished while whather successed or not is unkown! you need juedge by yourself from those Image, especially last Image)"
+                "0. Did the task finished? Based on the Orignal Task and those scene image.\n"
+                "1. Did the execution of the skill achieve the intended goal?\n"
+                "2. How does the scene change as the skill is executed?\n"
+                "3. Reflection skills execution process.\n"
+                "4. What does the scene look like now?\n"
+                "5. Any other points you think could be mentioned?\n\n"
+                "## Output template:\n"
+                "[focus 1] Specific summary content 1\n"
+                "[focus 2] Specific summary content 2\n..."
+            )
         )
-        response_text = self.model_adapter.generate_response(sum_memory.history)
+
+        sum_memory = BrainMemory()
+        sum_memory.add_system_prompt(
+            "You are a professional dialogue summarizer."
+        )
+        sum_memory.add_user_input(contents=content)
+        response_text, _ = self.model_adapter.generate_response(
+            sum_memory.history
+        )
         return response_text
 
     # @retry
@@ -369,6 +374,12 @@ class QwenVLBrain:
                 self.replan_memory.add_assistant_output(response_text)
                 # Parse the response to extract skill plan
                 plan = self._parse_replan_response(response_text, task)
+                if not plan.skill_sequence:
+                    # no plan was created, mean task finished successed
+                    self.interrupt_task(
+                        "[QwenVLBrain] No plan is created, mean task finished successed!"
+                    )
+                    return plan
                 self.state.current_plan = plan
                 self.state.current_skill_index = 0
                 self.state.status = SystemStatus.EXECUTING
@@ -465,7 +476,7 @@ class QwenVLBrain:
             "name": skill_name,
             "parameters": skill_params,
             "criterion": skill_criterion,
-            "discription": skill_info['description'],
+            "discription": skill_info["description"],
             "index": self.state.current_skill_index,
         }
 
@@ -550,6 +561,7 @@ class QwenVLBrain:
             self.state.current_task = None
             self.state.current_plan = None
             self.state.current_skill_index = 0
+            self.monitor_memory.clear()
 
     def get_status(self) -> Dict[str, Any]:
         """Get current brain status."""
@@ -579,24 +591,25 @@ class QwenVLBrain:
             chat_content.append(f"### {item['role']}:\n")
             text_segment = ""
             for content in item["content"]:
-                if content['type'] == 'text':
-                    text_segment = text_segment + content['text']
+                if content["type"] == "text":
+                    text_segment = text_segment + content["text"]
                 else:
                     if text_segment:
                         chat_content.append(text_segment)
-                        text_segment = "" # clear
+                        text_segment = ""  # clear
                     if content["type"] == "video":
                         chat_content.append(content["video"][-1])
-                    elif content['type'] == "image":
+                    elif content["type"] == "image":
                         chat_content.append(content["image"])
                     else:
-                        print(f"[QwenVLBrain] format memory content encounted with unsupported content type: {content}")
+                        print(
+                            f"[QwenVLBrain] format memory content encounted with unsupported content type: {content}"
+                        )
             if text_segment:
                 chat_content.append(text_segment)
-                text_segment = "" # clear
+                text_segment = ""  # clear
             chat_content.append("\n---\n")
         return chat_content
-
 
     def _query_qwen_for_plan(
         self, task: Task, skill_descriptions: str
@@ -735,8 +748,13 @@ class QwenVLBrain:
                     return list(range(-total * jump + 1, 0, jump))
                 else:
                     return None
+
             def calculate_indicesv2(total, available, mini_available):
-                if available < mini_available or total > available or total < 2:
+                if (
+                    available < mini_available
+                    or total > available
+                    or total < 2
+                ):
                     return None
 
                 step = (available - 1) / (total - 1)
@@ -747,10 +765,12 @@ class QwenVLBrain:
             # 计算可用的观察帧数
             available_frames = len(observation)
             jump = 6
-            total = 10
+            total = 8
             indices = []
             if not (
-                indices := calculate_indicesv2(total, available_frames,jump*total)
+                indices := calculate_indicesv2(
+                    total, available_frames, jump * total
+                )
             ):
                 return {
                     "action": "not enough",
@@ -1065,18 +1085,31 @@ Please respond with a JSON object containing:
 - analysis: the analysis and reason of your replanning
 If you determine the task is finished just output an empty skill_sequence
 
-Example response:
-Refection: YOUR REFLECTION CONTENT
-Plan: 
+### Output Format:
+Refection: YOUR REFECTION CONTENT HERE
+Plan:
 ```json
 {{
-    "skill_sequence": ["return_to_home_pose", "grasp"],
-    "skill_params": [null, {{"target": "box"}}],
-    "skill_monitoring_interval": 1.0
-    "analysis": "current available infomation indicating that the gripper has try several times to grasp box, while it failed at last, and lingering above the box finnally, I think it may be helpful to return to home position and grasp the box again, as current position maybe difficult for gripper to grasp target"
+    "skill_sequence": ["skill_1","skill_2","skill_3"],
+    "skill_params": [{{"param1_of_skill_1":"value","param2_of_skill_1":"value"}},...],
+    "skill_monitoring_interval": 1.0,
+    "analysis": "YOUR ANALYSIS OF MAKEING THIS PLAN"
 }}
 ```
 """
+
+        # Example response:
+        # Refection: The previous assemble_object skill execution result was timeout. However, the execution summary indicates that the task was completed successfully and the red object is completely wrapped around the black pillar. This suggests a discrepancy between the skill's internal timeout mechanism and the actual state of the environment. The skill was successfully executed and the task is finished.
+        # Plan:
+        # ```json
+        # {{
+        #     "skill_sequence": [],
+        #     "skill_params": [],
+        #     "skill_monitoring_interval": 1.0,
+        #     "analysis": "The previous skill 'assemble_object' reported a 'timeout', but the detailed execution summary clearly states that 'The red object is completely wrapped around the black pillar.' and 'The task was completed successfully'. This indicates that despite the timeout, the desired outcome of the task has been achieved. Therefore, no further actions are needed."
+        # }}
+        # ```
+        # """
         return prompt
 
     def _format_system_prompt_for_monitoring(
@@ -1092,7 +1125,7 @@ You should first consider the execution of skills rather than the completion of 
 
 Original Task: {task.description}
 Current Skill: {current_skill["name"]}
-Skill Description: {current_skill['discription']}
+Skill Description: {current_skill["discription"]}
 Skill Parameters: {current_skill["parameters"]}
 Skill Criterion: {current_skill["criterion"]}
 Available Skills: {chr(10).join(f"- {skill}" for skill in self.skill_registry.list_skills())}

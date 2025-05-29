@@ -28,9 +28,8 @@ from ..core.skill_manager import skill_register
     requires_env=True,  # This skill now needs the environment
 )
 def reset_to_home(env: Any) -> Generator[None, None, str]:
-    """
-    Reset robot to home position using generator mode.
-
+    """Reset robot to home position, when robot stucked in some state, this skill may be helpful.
+    Param: NONE, NO NOT PASS PARAMS TO THIS SKILL, IT WOULD COUSE ERROR!
     """
     print("[Skill] reset_to_home: Starting...")
 
