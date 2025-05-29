@@ -15,6 +15,7 @@ from robot_brain_system.core.types import (
     SkillPlan,
     SystemStatus,
     Observation,
+    SystemState
 )
 from robot_brain_system.core.skill_manager import SkillRegistry
 from robot_brain_system.utils import extract_json_from_text
@@ -206,6 +207,9 @@ class QwenVLBrain:
         self.skill_registry = skill_registry
         print("[QwenVLBrain] Connected to skill registry")
 
+    def set_system_state(self, state:SystemState):
+        self.system_state = state
+
     def parse_task(
         self, instruction: str, image_data: Optional[str] = None
     ) -> Task:
@@ -317,7 +321,7 @@ class QwenVLBrain:
                     plt.savefig(
                         os.path.join(
                             self.log_path,
-                            f"replan_{task.description}_input.png",
+                            f"{len(self.system_state.plan_history)}_replan_{task.description}_input.png",
                         )
                     )
                 # Generate response
@@ -529,27 +533,42 @@ class QwenVLBrain:
         }
 
     def summary_memory(self, memory: BrainMemory):
-        memory = copy.deepcopy(memory)
-        memory.history[0] = BrainMemory.get_default_system_prompt(
-            "You are a summarier, please summary our conversation histories, directly output the summaried result"
-        )
-        for item in memory.history:
-            # take only one image from video to reduce GPU memory useage
-            if item["role"] == "user":
-                contents = []
-                for content in item["content"]:
-                    if content["type"] == "video":
-                        contents.append(
-                            {"type": "image", "image": content["video"][-1]}
-                        )
-                    else:
-                        contents.append(content)
-                item["content"] = contents
-        print(
-            f"[QwenVLBrain] Summarizing memory with {len(memory.history)} entries"
+        sum_memory = BrainMemory()
+        sum_memory.add_system_prompt("You are a summarier, please summary our conversation histories, directly output the summaried result")
+        sum_memory.add_user_input(
+            contents=self._format_memory_content(memory=memory)
         )
         response_text = self.model_adapter.generate_response(memory.history)
         return response_text
+
+    def _format_memory_content(self, memory: BrainMemory) -> List:
+        print(
+            f"[QwenVLBrain] Formatting memory with {len(memory.history)} entries"
+        )
+        chat_content = []
+        chat_content.append("## memory content:\n\n")
+        for item in memory.history:
+            # take only one image from video to reduce GPU memory useage
+            if item["role"] == "system":
+                continue
+            chat_content.append(f"### {item['role']}:\n")
+            text_segment = ""
+            for content in item["content"]:
+                if content['type'] == 'text':
+                    text_segment = text_segment + content['text']
+                else:
+                    if text_segment:
+                        content.append(text_segment)
+                        text_segment = "" # clear
+                    if content["type"] == "video":
+                        chat_content.append(content["video"][-1])
+                    elif content['type'] == "image":
+                        chat_content.append(content["image"])
+                    else:
+                        print(f"[QwenVLBrain] format memory content encounted with unsupported content type: {content}")
+            chat_content.append("\n---\n")
+        return chat_content
+
 
     def _query_qwen_for_plan(
         self, task: Task, skill_descriptions: str
@@ -678,7 +697,7 @@ class QwenVLBrain:
                 plt.savefig(
                     os.path.join(
                         self.log_path,
-                        f"monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.png",
+                        f"{len(self.system_state.plan_history)}_{self.state.current_skill_index}_monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.png",
                     )
                 )
             video_frames = []
@@ -717,7 +736,7 @@ class QwenVLBrain:
             if self.visualize:
                 gif_path = os.path.join(
                     self.log_path,
-                    f"monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.gif",
+                    f"{len(self.system_state.plan_history)}_{self.state.current_skill_index}_monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.gif",
                 )
                 video_frames[0].save(
                     gif_path,

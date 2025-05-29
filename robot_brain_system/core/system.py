@@ -16,11 +16,12 @@ import traceback  # For debugging
 from PIL import Image
 import matplotlib
 import copy
+import os
 
 matplotlib.use("Agg")  # <-- Add this line BEFORE importing pyplot
 
 
-from .types import SystemStatus, Action, Observation, Task, SkillPlan
+from .types import SystemStatus, Action, Observation, Task, SkillPlan, SystemState
 from .isaac_simulator import IsaacSimulator
 from .skill_manager import (
     SkillRegistry,
@@ -28,27 +29,6 @@ from .skill_manager import (
     get_skill_registry,
 )  # Local SkillExecutor might be for non-env skills
 from .brain import QwenVLBrain
-
-
-@dataclass
-class SystemState:
-    """Current state of the entire system."""
-
-    status: SystemStatus = SystemStatus.IDLE
-    is_running: bool = False
-    # current_skill_generator: Optional[Generator] = None # Replaced by tracking status from IsaacSim
-    current_task: Optional[Task] = (
-        None  # To store the task being processed by the brain
-    )
-    last_observation: Optional[Observation] = None
-    # last_action: Optional[Action] = None # Actions are now primarily handled in subprocess
-    error_message: Optional[str] = None
-    # New state for tracking skill execution in subprocess
-    sub_skill_status: Dict[str, Any] = field(default_factory=dict)
-    obs_history: list[Observation] = field(default_factory=list)
-    plan_history: list[SkillPlan] = field(default_factory=list)
-    skill_history: list[dict] = field(default_factory=list)
-
 
 class RobotBrainSystem:
     """
@@ -116,11 +96,10 @@ class RobotBrainSystem:
 
             # Connect brain to skill registry (for planning purposes)
             self.brain.set_skill_registry(self.skill_registry)
+            self.brain.set_system_state(state=self.state)
 
             self.state.status = SystemStatus.IDLE
             print("[RobotBrainSystem] Initialization complete")
-
-            import os
 
             self.log_path = os.path.join(
                 self.log_path, time.strftime("%Y%m%d_%H%M%S")

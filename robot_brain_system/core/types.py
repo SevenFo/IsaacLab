@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+
 class SystemStatus(Enum):
     """System status enumeration."""
 
@@ -146,3 +147,23 @@ class SkillExecution:
     last_action: Optional[Action] = None
     last_observation: Optional[Observation] = None
     error_message: Optional[str] = None
+
+
+@dataclass
+class SystemState:
+    """Current state of the entire system."""
+
+    status: SystemStatus = SystemStatus.IDLE
+    is_running: bool = False
+    # current_skill_generator: Optional[Generator] = None # Replaced by tracking status from IsaacSim
+    current_task: Optional[Task] = (
+        None  # To store the task being processed by the brain
+    )
+    last_observation: Optional[Observation] = None
+    # last_action: Optional[Action] = None # Actions are now primarily handled in subprocess
+    error_message: Optional[str] = None
+    # New state for tracking skill execution in subprocess
+    sub_skill_status: Dict[str, Any] = field(default_factory=dict)
+    obs_history: list[Observation] = field(default_factory=list)
+    plan_history: list[SkillPlan] = field(default_factory=list)
+    skill_history: list[dict] = field(default_factory=list)
