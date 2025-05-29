@@ -136,6 +136,9 @@ class QwenVLBrain:
         self.adapter_type = self.qwen_config.get(
             "adapter_type", "mock"
         )  # "qwen_vl", "openai", or "mock"
+        self.adapter_device = self.qwen_config.get(
+            "device", "auto"
+        )
         self.max_tokens = self.qwen_config.get("max_tokens", 512)
 
         # Monitoring configuration
@@ -145,7 +148,7 @@ class QwenVLBrain:
         self.max_retries = config.get("max_retries", 3)
         self.visualize = config.get("visualize", False)
         self.log_path = config.get("log_path", "./logs")
-        self.monitor_waiting_times = 3
+        self.monitor_waiting_times = 0
         self.monitor_memory = BrainMemory()
         self.replan_memory = BrainMemory()
         self.replan_memory.add_system_prompt()
@@ -173,7 +176,7 @@ class QwenVLBrain:
                 raise ValueError("model_path is required for QwenVL adapter")
             from .model_adapters import QwenVLAdapter
 
-            self.model_adapter = QwenVLAdapter(self.model_path)
+            self.model_adapter = QwenVLAdapter(self.model_path,self.adapter_device)
             print(
                 f"[QwenVLBrain] Initialized QwenVL adapter with model: {self.model_path}"
             )
@@ -499,7 +502,6 @@ class QwenVLBrain:
             decision = self._query_qwen_for_monitoring(
                 self.state.current_task, current_skill, current_observation
             )
-
             self.state.status = SystemStatus.EXECUTING
             return decision
 
@@ -558,7 +560,7 @@ class QwenVLBrain:
                     text_segment = text_segment + content['text']
                 else:
                     if text_segment:
-                        content.append(text_segment)
+                        chat_content.append(text_segment)
                         text_segment = "" # clear
                     if content["type"] == "video":
                         chat_content.append(content["video"][-1])
@@ -707,6 +709,14 @@ class QwenVLBrain:
                     return list(range(-total * jump + 1, 0, jump))
                 else:
                     return None
+            def calculate_indicesv2(total, available, mini_available):
+                if available < mini_available or total > available or total < 2:
+                    return None
+
+                step = (available - 1) / (total - 1)
+                indices = [round(i * step) for i in range(total)]
+                indices[-1] = available - 1  # Ensure the last index is correct
+                return indices
 
             # 计算可用的观察帧数
             available_frames = len(observation)
@@ -714,7 +724,7 @@ class QwenVLBrain:
             total = 10
             indices = []
             if not (
-                indices := calculate_indices(jump, total, available_frames)
+                indices := calculate_indicesv2(total, available_frames,jump*total)
             ):
                 return {
                     "action": "not enough",

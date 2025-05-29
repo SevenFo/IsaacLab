@@ -30,6 +30,7 @@ SYSTEM_CONFIG = {
             "model_path": "/home/ps/models/model_qwen2.5_vl_7b_instruct",  # Set your local model path for Qwen VL adapter
             "adapter_type": "qwen_vl",  # "qwen_vl", "openai", or "mock"
             "max_tokens": 512,
+            "device": "cuda:1"
         },
         "monitoring_interval": 1.0,  # seconds
         "max_retries": 3,

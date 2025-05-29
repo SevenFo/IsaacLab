@@ -66,7 +66,7 @@ class BaseModelAdapter(ABC):
 class QwenVLAdapter(BaseModelAdapter):
     """Adapter for Qwen VL model."""
 
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, device_map: str):
         if not TRANSFORMERS_AVAILABLE:
             raise ImportError(
                 "transformers library is required for QwenVLAdapter"
@@ -75,7 +75,7 @@ class QwenVLAdapter(BaseModelAdapter):
             raise ImportError("qwen_vl_utils is required for QwenVLAdapter")
 
         self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_path, torch_dtype="bfloat16", device_map="cuda:2"
+            model_path, torch_dtype="bfloat16", device_map=device_map
         )
         self.processor = AutoProcessor.from_pretrained(model_path)
 

@@ -481,6 +481,7 @@ class RobotBrainSystem:
                         decision = self.brain.monitor_execution(
                             self.state.obs_history
                         )
+                        
                         self._handle_monitoring_decision(decision)
                         if (
                             self.brain.state.status == SystemStatus.IDLE
@@ -735,10 +736,13 @@ class RobotBrainSystem:
         elif action == "not enough":
             pass
         elif action == "continue":
+            pass
             self.state.obs_history = [self.state.obs_history[-1]]
             print(
-                f"[RobotBrainSystem] Clear state.obs_history, current len: {len(self.state.obs_history)}, for continue action: {reason}"
+                f"[RobotBrainSystem] Clear system.state.obs_history after monitoring, current len: {len(self.state.obs_history)}"
             )
+
+
         # For "continue" action, do nothing - keep executing current sim skill (if any)
         # or proceed to next skill in plan if current sim skill finished.
 
