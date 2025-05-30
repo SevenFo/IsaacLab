@@ -19,12 +19,10 @@ from typing import (
 )
 from multiprocessing.connection import Pipe, Connection
 import traceback
-import os
 import numpy as np
-import sys  # For path manipulation if necessary for skill discovery
 
 # robot_brain_system imports
-from .skill_manager import SkillExecutor, get_skill_registry, SkillRegistry
+from .skill_manager import SkillExecutor, get_skill_registry
 from .types import (
     Action,
     Observation,
@@ -127,9 +125,7 @@ def retry(
                                 f"[Retry] All {max_attempts} attempts of '{func.__name__}' failed "
                                 f"due to return value condition. Returning last result."
                             )
-                            return (
-                                last_result  # Return the last failing result
-                            )
+                            return last_result  # Return the last failing result
             return last_result  # Should ideally be covered by above, but as a fallback
 
         return wrapper
@@ -150,12 +146,8 @@ class IsaacSimulator:
         # child_conn is only used in the subprocess context
         self.is_running = False
         self.is_initialized = False  # Added initialization status
-        self.device = self.sim_config.get(
-            "device", "cpu"
-        )  # Get device from config
-        self.num_envs = self.sim_config.get(
-            "num_envs", 1
-        )  # Get num_envs from config
+        self.device = self.sim_config.get("device", "cpu")  # Get device from config
+        self.num_envs = self.sim_config.get("num_envs", 1)  # Get num_envs from config
         self._command_lock = threading.Lock()
 
     def initialize(
@@ -163,9 +155,7 @@ class IsaacSimulator:
     ) -> bool:  # Changed from start() to initialize() for consistency
         """Start the Isaac simulation subprocess and initialize it."""
         if self.is_initialized:
-            print(
-                "[IsaacSimulator] Simulator already initialized and running."
-            )
+            print("[IsaacSimulator] Simulator already initialized and running.")
             return True
 
         try:
@@ -193,33 +183,25 @@ class IsaacSimulator:
                     self.is_initialized = True
                     # Store env info if sent back
                     self.action_space_info = response.get("action_space")
-                    self.observation_space_info = response.get(
-                        "observation_space"
-                    )
+                    self.observation_space_info = response.get("observation_space")
                     print(
                         "[IsaacSimulator] Simulation subprocess started and environment ready."
                     )
                     return True
                 else:
-                    error_msg = response.get(
-                        "error", "Unknown initialization error"
-                    )
+                    error_msg = response.get("error", "Unknown initialization error")
                     print(
                         f"[IsaacSimulator] Subprocess initialization failed: {error_msg}"
                     )
                     self._cleanup_process()
                     return False
             else:
-                print(
-                    "[IsaacSimulator] Simulation subprocess initialization timeout."
-                )
+                print("[IsaacSimulator] Simulation subprocess initialization timeout.")
                 self._cleanup_process()
                 return False
 
         except Exception as e:
-            print(
-                f"[IsaacSimulator] Failed to start simulation subprocess: {e}"
-            )
+            print(f"[IsaacSimulator] Failed to start simulation subprocess: {e}")
             traceback.print_exc()
             self._cleanup_process()
             return False
@@ -297,9 +279,7 @@ class IsaacSimulator:
         acquired = self._command_lock.acquire(timeout=10)
         if acquired:
             if not self.is_initialized or not self.parent_conn:
-                print(
-                    "[IsaacSimulator] Simulator not initialized or connection lost."
-                )
+                print("[IsaacSimulator] Simulator not initialized or connection lost.")
                 return {"success": False, "error": "Simulator not initialized"}
             try:
                 self.parent_conn.send(command)
@@ -329,9 +309,7 @@ class IsaacSimulator:
             finally:
                 self._command_lock.release()
         else:
-            print(
-                "[IsaacSimulator] Failed to acquire command lock within timeout."
-            )
+            print("[IsaacSimulator] Failed to acquire command lock within timeout.")
             return {
                 "success": False,
                 "error": "Command lock acquisition failed",
@@ -366,9 +344,7 @@ class IsaacSimulator:
 
     def get_skill_executor_status(self) -> Dict[str, Any]:
         """Get current skill executor status from the subprocess."""
-        response = self._send_command_and_recv(
-            {"command": "get_skill_executor_status"}
-        )
+        response = self._send_command_and_recv({"command": "get_skill_executor_status"})
         return response or {"status": "error", "error": "No response"}
 
     def terminate_current_skill(
@@ -442,12 +418,9 @@ class IsaacSimulator:
         try:
             from isaaclab.app import AppLauncher
             import gymnasium as gym
-            import os
 
             app_launcher_params = {
-                "task": sim_config.get(
-                    "env_name", "Isaac-Move-Box-Frank-IK-Rel"
-                ),
+                "task": sim_config.get("env_name", "Isaac-Move-Box-Frank-IK-Rel"),
                 "device": sim_config.get(
                     "device", "cuda:0"
                 ),  # AppLauncher might use this for 'sim_device' default
@@ -486,7 +459,6 @@ class IsaacSimulator:
             # Import remaining modules after AppLauncher
             from isaaclab_tasks.utils import parse_env_cfg
             from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
-            from isaaclab.sim.simulation_context import SimulationContext
             from argparse import Namespace
             import yaml
 
@@ -534,8 +506,6 @@ class IsaacSimulator:
             # Ensure skills are discoverable from the subprocess
             # This might require setting sys.path or using absolute package imports for skills
             # For simplicity, assuming skills are in a package accessible via robot_brain_system.skills
-
-            import robot_brain_system.skills  # This should trigger skill registration
 
             skill_registry = (
                 get_skill_registry()
@@ -588,9 +558,7 @@ class IsaacSimulator:
                         cmd = command_data.get("command")
 
                         if cmd == "shutdown":
-                            print(
-                                "[IsaacSubprocess] Received shutdown command."
-                            )
+                            print("[IsaacSubprocess] Received shutdown command.")
                             active = False
                             child_conn.send({"status": "shutdown_ack"})
                             break
@@ -656,17 +624,15 @@ class IsaacSimulator:
                             )
 
                         elif cmd == "step_env":
-                            action_data_np = np.array(
-                                command_data["action_data"]
-                            )
+                            action_data_np = np.array(command_data["action_data"])
                             action_tensor = (
                                 torch.from_numpy(action_data_np)
                                 .to(env.device)
                                 .unsqueeze(0)
                             )  # Batch for single env
 
-                            obs_dict, reward, terminated, truncated, info = (
-                                env.step(action_tensor)
+                            obs_dict, reward, terminated, truncated, info = env.step(
+                                action_tensor
                             )
 
                             obs_payload = {
@@ -734,10 +700,7 @@ class IsaacSimulator:
                             latest_obs = obs_payload  # Store latest obs
 
                     # Small delay to prevent tight loop if no commands and no active skill
-                    if (
-                        not child_conn.poll(0)
-                        and not skill_executor.is_running()
-                    ):
+                    if not child_conn.poll(0) and not skill_executor.is_running():
                         time.sleep(0.001)
 
                 except EOFError:  # Pipe closed by parent
@@ -750,9 +713,7 @@ class IsaacSimulator:
                     print(f"[IsaacSubprocess] Error in main loop: {loop_e}")
                     traceback.print_exc()
                     try:
-                        child_conn.send(
-                            {"error": str(loop_e), "success": False}
-                        )
+                        child_conn.send({"error": str(loop_e), "success": False})
                     except:
                         pass  # Can't send if pipe is broken
                     # Decide if to continue or break based on error severity
@@ -760,9 +721,7 @@ class IsaacSimulator:
                     time.sleep(0.1)  # Avoid fast error loop
 
         except Exception as e:
-            print(
-                f"[IsaacSubprocess] Subprocess initialization or critical error: {e}"
-            )
+            print(f"[IsaacSubprocess] Subprocess initialization or critical error: {e}")
             traceback.print_exc()
             try:
                 child_conn.send({"status": "error", "error": str(e)})
@@ -776,9 +735,7 @@ class IsaacSimulator:
                     env.close()
                     print("[IsaacSubprocess] Environment closed.")
                 except Exception as e_close:
-                    print(
-                        f"[IsaacSubprocess] Error closing environment: {e_close}"
-                    )
+                    print(f"[IsaacSubprocess] Error closing environment: {e_close}")
             if "simulation_app" in locals() and simulation_app.is_running():
                 try:
                     simulation_app.close()  # Close the Isaac Sim application
@@ -793,7 +750,6 @@ class IsaacSimulator:
 
 
 if __name__ == "__main__":
-    import os
     from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
 
     print("Isaac Simulator Tets")
@@ -831,9 +787,7 @@ if __name__ == "__main__":
         time.sleep(1)
         print("Waiting for skill to complete...")
     skill_finish_status = isim.get_skill_executor_status()
-    print(
-        f"Skill finished with status: {skill_finish_status.get('status', 'unknown')}"
-    )
+    print(f"Skill finished with status: {skill_finish_status.get('status', 'unknown')}")
 
     # Terminate skill test
     isim.start_skill_non_blocking(
