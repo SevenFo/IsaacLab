@@ -165,6 +165,7 @@ class QwenVLBrain:
                 self.adapter_type = "mock"
         else:
             self.adapter_type = "mock"
+        self.current_skill_monitor_time = 0
         print(f"[QwenVLBrain] Initialized with adapter: {self.adapter_type}")
 
     def _initialize_model_adapter(self):

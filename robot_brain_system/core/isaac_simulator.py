@@ -510,7 +510,7 @@ class IsaacSimulator:
             skill_registry = (
                 get_skill_registry()
             )  # Gets the global one, populated by decorators
-            # skill_registry.discover_skills() # Not needed if decorators auto-register and skills are imported
+            skill_registry.discover_skills() # Not needed if decorators auto-register and skills are imported
             print(
                 f"[IsaacSubprocess] Found {len(skill_registry.list_skills())} skills."
             )
