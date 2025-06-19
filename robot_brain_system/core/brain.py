@@ -8,7 +8,6 @@ import os
 from PIL import Image
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
-import copy
 
 from robot_brain_system.core.types import (
     Task,
@@ -63,9 +62,7 @@ class BrainMemory:
 
         self.history.append(self.get_default_system_prompt(prompt=prompt))
 
-    def add_user_input(
-        self, contents: List[str | Image.Image | list[Image.Image]]
-    ):
+    def add_user_input(self, contents: List[str | Image.Image | list[Image.Image]]):
         """Add user input to the memory."""
         item = {
             "role": "user",
@@ -79,9 +76,7 @@ class BrainMemory:
             elif isinstance(content, list) and all(
                 isinstance(img, Image.Image) for img in content
             ):
-                item["content"].append(
-                    {"type": "video", "video": content, "fps": 5}
-                )
+                item["content"].append({"type": "video", "video": content, "fps": 5})
             else:
                 raise ValueError(
                     f"Unsupported content type: {type(content)}. Must be str, Image.Image, or list of Image.Image."
@@ -160,7 +155,12 @@ class QwenVLBrain:
             try:
                 self._initialize_model_adapter()
             except Exception as e:
-                print(f"[QwenVLBrain] Failed to initialize model adapter: {e}")
+                print(
+                    f"[QwenVLBrain] Failed to initialize model adapter: {type(e).__name__}: {e}"
+                )
+                import traceback
+
+                traceback.print_exc()
                 print("[QwenVLBrain] Falling back to mock implementation")
                 self.adapter_type = "mock"
         else:
@@ -175,9 +175,7 @@ class QwenVLBrain:
                 raise ValueError("model_path is required for QwenVL adapter")
             from .model_adapters import QwenVLAdapter
 
-            self.model_adapter = QwenVLAdapter(
-                self.model_path, self.adapter_device
-            )
+            self.model_adapter = QwenVLAdapter(self.model_path, self.adapter_device)
             print(
                 f"[QwenVLBrain] Initialized QwenVL adapter with model: {self.model_path}"
             )
@@ -187,9 +185,7 @@ class QwenVLBrain:
                 raise ValueError("api_key is required for OpenAI adapter")
             from .model_adapters import OpenAIAdapter
 
-            model_name = (
-                self.model_name if self.model_name != "qwen-vl" else None
-            )
+            model_name = self.model_name if self.model_name != "qwen-vl" else None
             self.model_adapter = OpenAIAdapter(
                 api_key=str(self.api_key),
                 base_url=str(self.base_url) if self.base_url else None,
@@ -197,6 +193,17 @@ class QwenVLBrain:
             )
             print(
                 f"[QwenVLBrain] Initialized OpenAI adapter with model: {model_name or 'default'}"
+            )
+        elif self.adapter_type == "lmd":
+            if not self.model_path:
+                raise ValueError("model_path is required for LMD adapter")
+            from .model_adapters import LMDAdapter
+
+            self.model_adapter = LMDAdapter(
+                model_path=self.model_path,
+            )
+            print(
+                f"[QwenVLBrain] Initialized LMD adapter with model: {self.model_path}"
             )
 
         elif self.adapter_type == "mock":
@@ -214,9 +221,7 @@ class QwenVLBrain:
     def set_system_state(self, state: SystemState):
         self.system_state = state
 
-    def parse_task(
-        self, instruction: str, image_data: Optional[str] = None
-    ) -> Task:
+    def parse_task(self, instruction: str, image_data: Optional[str] = None) -> Task:
         """
         Parse natural language instruction into a structured task.
 
@@ -274,6 +279,7 @@ class QwenVLBrain:
             raise RuntimeError(f"Failed to create plan: {e}")
 
     def summary_skill_execution(self, skill_info: dict):
+        # TODO 只提供image不提供text试试！
         self.monitor_memory.add_user_input(
             contents=[f"skill execution result: {skill_info['result']}"]
         )
@@ -304,13 +310,9 @@ class QwenVLBrain:
         )
 
         sum_memory = BrainMemory()
-        sum_memory.add_system_prompt(
-            "You are a professional dialogue summarizer."
-        )
+        sum_memory.add_system_prompt("You are a professional dialogue summarizer.")
         sum_memory.add_user_input(contents=content)
-        response_text, _ = self.model_adapter.generate_response(
-            sum_memory.history
-        )
+        response_text, _ = self.model_adapter.generate_response(sum_memory.history)
         return response_text
 
     # @retry
@@ -349,9 +351,7 @@ class QwenVLBrain:
                 print(text_prompt)
                 print("\n")
                 inspector_rgb = (
-                    observation.data["rgb_camera"]["inspector"][0]
-                    .cpu()
-                    .numpy()
+                    observation.data["rgb_camera"]["inspector"][0].cpu().numpy()
                 )
                 if self.visualize:
                     import matplotlib.pyplot as plt
@@ -374,7 +374,7 @@ class QwenVLBrain:
                 )
                 self.replan_memory.add_assistant_output(response_text)
                 # Parse the response to extract skill plan
-                plan = self._parse_replan_response(response_text, task)
+                plan = self._parse_plan_response(response_text, task)
                 if not plan.skill_sequence:
                     # no plan was created, mean task finished successed
                     self.interrupt_task(
@@ -439,9 +439,7 @@ class QwenVLBrain:
 
         self.monitor_memory.clear()
 
-        print(
-            f"[QwenVLBrain] Monitor initialized with skill: {skill_info['name']}"
-        )
+        print(f"[QwenVLBrain] Monitor initialized with skill: {skill_info['name']}")
         self.monitor_memory.add_system_prompt(
             self._format_system_prompt_for_monitoring(
                 self.state.current_task, skill_info, None
@@ -456,10 +454,8 @@ class QwenVLBrain:
         Returns:
             Dict with skill name and parameters, or None if plan complete
         """
-        if (
-            not self.state.current_plan
-            or self.state.current_skill_index
-            >= len(self.state.current_plan.skill_sequence)
+        if not self.state.current_plan or self.state.current_skill_index >= len(
+            self.state.current_plan.skill_sequence
         ):
             return None
 
@@ -499,19 +495,15 @@ class QwenVLBrain:
 
     def should_monitor(self) -> bool:
         """Check if it's time to monitor the current skill execution."""
-        if (
-            self.state.status != SystemStatus.EXECUTING
-            or not self.state.current_plan
-        ):
+        if self.state.status != SystemStatus.EXECUTING or not self.state.current_plan:
             return False
-
         current_time = time.time()
         return (
             current_time - self.state.last_monitoring_time
         ) >= self.state.current_plan.skill_monitoring_interval
 
     def monitor_skill_execution(
-        self, current_observation: Optional[Any] = None
+        self, current_observation: list[Any] = []
     ) -> Dict[str, Any]:
         """
         Monitor current skill execution and make decisions. WE HAVED SUPPORTED MONITORING THE WHOLE TASK EXECUTION
@@ -534,6 +526,10 @@ class QwenVLBrain:
                     "action": "continue",
                     "reason": f"current_skill_monitor_time: {self.current_skill_monitor_time}",
                 }
+
+            if len(current_observation) == 0:
+                print("[QwenVLBrain] No observation data available for monitoring")
+                return {"action": "continue", "reason": "No observation data"}
 
             # Get current skill info
             current_skill = self.get_next_skill()
@@ -580,9 +576,7 @@ class QwenVLBrain:
         }
 
     def _format_memory_content(self, memory: BrainMemory) -> List:
-        print(
-            f"[QwenVLBrain] Formatting memory with {len(memory.history)} entries"
-        )
+        print(f"[QwenVLBrain] Formatting memory with {len(memory.history)} entries")
         chat_content = []
         chat_content.append("## memory content:\n\n")
         for item in memory.history:
@@ -612,9 +606,7 @@ class QwenVLBrain:
             chat_content.append("\n---\n")
         return chat_content
 
-    def _query_qwen_for_plan(
-        self, task: Task, skill_descriptions: str
-    ) -> SkillPlan:
+    def _query_qwen_for_plan(self, task: Task, skill_descriptions: str) -> SkillPlan:
         """
         Query Qwen VL to create a skill execution plan.
 
@@ -632,9 +624,7 @@ class QwenVLBrain:
             # Prepare input for the model adapter
             input_data = self.model_adapter.prepare_input(
                 text=prompt,
-                image=task.image
-                if task.image
-                else None,  # Pass None if no image
+                image=task.image if task.image else None,  # Pass None if no image
             )
             # Generate response
             print(
@@ -657,9 +647,7 @@ class QwenVLBrain:
             print("[QwenVLBrain] Falling back to mock implementation")
             return self._mock_plan_task(task, skill_descriptions)
 
-    def _mock_plan_task(
-        self, task: Task, skill_descriptions: str
-    ) -> SkillPlan:
+    def _mock_plan_task(self, task: Task, skill_descriptions: str) -> SkillPlan:
         """Mock implementation for planning when model adapter is not available."""
         # Simple heuristic planning based on task description
         skill_sequence = []
@@ -678,9 +666,7 @@ class QwenVLBrain:
             ]
         elif "reach" in instruction_lower:
             skill_sequence = ["reach_position"]
-            skill_params = [
-                {"target_position": [0.4, 0.0, 0.4], "tolerance": 0.01}
-            ]
+            skill_params = [{"target_position": [0.4, 0.0, 0.4], "tolerance": 0.01}]
         elif "grasp" in instruction_lower:
             skill_sequence = ["grasp_object"]
             skill_params = [{"grasp_force": 0.5}]
@@ -720,17 +706,12 @@ class QwenVLBrain:
         """
         if self.model_adapter is None:
             # Fallback to mock implementation
-            return self._mock_monitoring_decision(
-                task, current_skill, observation
-            )
+            return self._mock_monitoring_decision(task, current_skill, observation)
         assert type(observation) is list
         try:
             if self.visualize:
                 inspector_rgb = (
-                    observation[-1]
-                    .data["rgb_camera"]["inspector"][0]
-                    .cpu()
-                    .numpy()
+                    observation[-1].data["rgb_camera"]["inspector"][0].cpu().numpy()
                 )
                 import matplotlib.pyplot as plt
 
@@ -751,11 +732,7 @@ class QwenVLBrain:
                     return None
 
             def calculate_indicesv2(total, available, mini_available):
-                if (
-                    available < mini_available
-                    or total > available
-                    or total < 2
-                ):
+                if available < mini_available or total > available or total < 2:
                     return None
 
                 step = (available - 1) / (total - 1)
@@ -769,9 +746,7 @@ class QwenVLBrain:
             total = 8
             indices = []
             if not (
-                indices := calculate_indicesv2(
-                    total, available_frames, jump * total
-                )
+                indices := calculate_indicesv2(total, available_frames, jump * total)
             ):
                 return {
                     "action": "not enough",
@@ -820,8 +795,7 @@ class QwenVLBrain:
             )
             response_text, _ = self.model_adapter.generate_response(
                 self.monitor_memory.fetch_history(last_n=3),
-                max_tokens=self.max_tokens
-                // 2,  # Use fewer tokens for monitoring
+                max_tokens=self.max_tokens // 2,  # Use fewer tokens for monitoring
             )
             self.monitor_memory.add_assistant_output(response_text)
             # Parse the response to extract monitoring decision
@@ -832,16 +806,12 @@ class QwenVLBrain:
             return decision
 
         except Exception as e:
-            print(
-                f"[QwenVLBrain] Error in monitoring: {e.__class__.__name__}: {e}"
-            )
+            print(f"[QwenVLBrain] Error in monitoring: {e.__class__.__name__}: {e}")
             import traceback
 
             traceback.print_exc()
             print("[QwenVLBrain] Falling back to mock monitoring")
-            return self._mock_monitoring_decision(
-                task, current_skill, observation
-            )
+            return self._mock_monitoring_decision(task, current_skill, observation)
 
     def _mock_monitoring_decision(
         self,
@@ -900,9 +870,7 @@ class QwenVLBrain:
             new_llm_response_text, _ = self.model_adapter.generate_response(
                 input_data=input_data, max_tokens=self.max_tokens
             )
-        except (
-            Exception
-        ) as e_generate:  # Catch potential errors during LLM call itself
+        except Exception as e_generate:  # Catch potential errors during LLM call itself
             print(
                 f"[QwenVLBrain] Error during LLM call for JSON recovery: {e_generate}"
             )
@@ -914,9 +882,7 @@ class QwenVLBrain:
         print(
             f"[QwenVLBrain] Received new response from LLM for JSON recovery: '{new_llm_response_text}'"
         )
-        parsed_data_after_recovery = extract_json_from_text(
-            new_llm_response_text
-        )
+        parsed_data_after_recovery = extract_json_from_text(new_llm_response_text)
 
         if parsed_data_after_recovery is not None:
             print("[QwenVLBrain] Successfully parsed JSON after LLM recovery.")
@@ -991,27 +957,20 @@ class QwenVLBrain:
 
         # Simple keyword-based parsing
         if any(
-            word in response_lower
-            for word in ["stop", "interrupt", "halt", "abort"]
+            word in response_lower for word in ["stop", "interrupt", "halt", "abort"]
         ):
             return {
                 "action": "interrupt",
                 "reason": "Model suggested interruption",
             }
-        elif any(
-            word in response_lower for word in ["retry", "again", "restart"]
-        ):
+        elif any(word in response_lower for word in ["retry", "again", "restart"]):
             return {"action": "retry", "reason": "Model suggested retry"}
-        elif any(
-            word in response_lower for word in ["complete", "done", "finished"]
-        ):
+        elif any(word in response_lower for word in ["complete", "done", "finished"]):
             return {
                 "action": "complete",
                 "reason": "Model indicated completion",
             }
-        elif any(
-            word in response_lower for word in ["error", "fail", "problem"]
-        ):
+        elif any(word in response_lower for word in ["error", "fail", "problem"]):
             return {"action": "error", "reason": "Model detected error"}
         else:
             return {
@@ -1019,9 +978,7 @@ class QwenVLBrain:
                 "reason": "Model suggested continuation",
             }
 
-    def _format_prompt_for_planning(
-        self, task: Task, skill_descriptions: str
-    ) -> str:
+    def _format_prompt_for_planning(self, task: Task, skill_descriptions: str) -> str:
         """Format a prompt for Qwen VL planning."""
         prompt = f"""
 You are a robot task planner. Given a task description and available skills, create an execution plan.
@@ -1031,17 +988,26 @@ Task: {task.description}
 Available Skills:
 {skill_descriptions}
 
-Please respond with a JSON object containing:
-- skill_sequence: List of skill names to execute in order
-- skill_params: List of parameter dictionaries for each skill
-- skill_monitoring_interval: How often to check progress (seconds)
+Please respond with a JSON array representing a sequence of skills to execute.
+Each element in the array should be a JSON object with the following keys:
+- "method": A string representing the name of the skill to be called.
+- "params": A JSON object containing the parameters for that skill. If a skill has no parameters, provide an empty object {{}}.
 
 Example response:
-{{
-    "skill_sequence": ["pick_and_place", "inspect_object"],
-    "skill_params": [{{"target": "object1"}}, {{"target": "result"}}],
-    "skill_monitoring_interval": 1.0
-}}
+```json
+[
+    {{
+        "method": "skill1",
+        "params": {{
+            "param1_of_skill1": "value",
+            "param2_of_skill1": "value"
+        }}
+    }},
+    {{
+        "method": "skill2",
+        "params": {{}}
+    }}
+]
 """
         return prompt
 
@@ -1055,7 +1021,7 @@ Example response:
 Skill Name: {skill_info["name"]}
 Skill Parameters: {skill_info["parameters"]}
 Skill Criterion: {skill_info["criterion"]}
-Skill Execution Result: {skill_info["result"]}
+Skill Execution Result: {skill_info["result"] if skill_info["result"] != "timeout" else "unkown"}
 Execution Summary: {skill_info.get("execution_summary", "No summary as it compelete success")}
 """
                 for skill_info in skill_history
@@ -1079,23 +1045,29 @@ Skill Params: {last_plan_info.skill_params}
 
 ## Output
 Based on the above information and the current scene images that will be provided to you next, please do reflection and plan the next plan
-Please respond with a JSON object containing:
-- skill_sequence: List of skill names to execute in order
-- skill_params: List of parameter dictionaries for each skill
-- skill_monitoring_interval: How often to check progress (seconds)
-- analysis: the analysis and reason of your replanning
-If you determine the task is finished just output an empty skill_sequence
+Please respond with a JSON array representing a sequence of skills to execute.
+- "method": A string representing the name of the skill to be called.
+- "params": A JSON object containing the parameters for that skill. If a skill has no parameters, provide an empty object {{}}.
+If you determine the task is finished just output an empty sequence [].
 
 ### Output Format:
 Refection: YOUR REFECTION CONTENT HERE
+Analysis: YOUR ANALYSIS OF MAKEING THIS PLAN
 Plan:
 ```json
-{{
-    "skill_sequence": ["skill_1","skill_2","skill_3"],
-    "skill_params": [{{"param1_of_skill_1":"value","param2_of_skill_1":"value"}},...],
-    "skill_monitoring_interval": 1.0,
-    "analysis": "YOUR ANALYSIS OF MAKEING THIS PLAN"
-}}
+[
+    {{
+        "method": "skill1",
+        "params": {{
+            "param1_of_skill1": "value",
+            "param2_of_skill1": "value"
+        }}
+    }},
+    {{
+        "method": "skill2",
+        "params": {{}} 
+    }}
+]
 ```
 """
 
@@ -1138,158 +1110,78 @@ For each round of conversation, you will receive the current observation in Imag
 - confidence: Float between 0 and 1
 
 Example response:
+```json
 {{
     "action": "failed",
     "reason": "The object was not grasped correctly",
     "current_scene_state", "The robot attempted to grasp the object but it slipped",
     "confidence": 0.9
 }}
+```
 
 Next, Let's start first monitoring round.
 """
         return prompt
 
-    def _parse_plan_response(
-        self, response_text: str, task: Task
-    ) -> SkillPlan:
+    def _parse_plan_response(self, response_text: str, task: Task) -> SkillPlan:
         """
         Parse the response from the model adapter to extract a skill plan.
-
-        Args:
-            response_text: The raw text response from the model
-            task: The original task
-
-        Returns:
-            SkillPlan object
+        Assumes the response is a JSON array of skill objects.
         """
         try:
-            # Try to parse JSON response
             plan_data = self._parse_json_response(response_text)
 
-            if plan_data is not None:
-                skill_sequence = plan_data.get("skill_sequence", [])
-                skill_params = plan_data.get("skill_params", [])
-                skill_monitoring_interval = plan_data.get(
-                    "skill_monitoring_interval", self.skill_monitoring_interval
-                )
-                for i in range(len(skill_params)):
-                    if skill_params[i] is None:
-                        skill_params[i] = {}
-                if len(skill_sequence) != len(skill_params):
-                    print(
-                        "[QwenVLBrain] Warning: Mismatch between skill sequence and parameters length"
-                    )
-                    while len(skill_params) < len(skill_sequence):
-                        skill_params.append({})
-
-                return SkillPlan(
-                    task_id=task.id,
-                    skill_sequence=skill_sequence,
-                    skill_params=skill_params,
-                    skill_monitoring_interval=skill_monitoring_interval,
-                    expected_duration=len(skill_sequence) * 10.0,
-                )
-            else:
+            if plan_data is None or not isinstance(plan_data, list):
+                # 如果解析失败，或者解析结果不是一个列表，则回退
                 print(
-                    "[QwenVLBrain] No JSON found in response, trying text parsing"
+                    "[QwenVLBrain] No valid JSON array found in response, return empty plan."
                 )
-                return self._parse_text_response(response_text, task)
-
-        except json.JSONDecodeError as e:
-            print(f"[QwenVLBrain] Failed to parse JSON response: {e}")
-            print(f"[QwenVLBrain] Response was: {response_text}")
-            # Fallback to mock implementation
-            return self._mock_plan_task(task, [])
-        except Exception as e:
-            print(f"[QwenVLBrain] Error parsing response: {e}")
-            return self._mock_plan_task(task, [])
-
-    def _parse_text_response(
-        self, response_text: str, task: Task
-    ) -> SkillPlan:
-        """
-        Parse a text response that doesn't contain JSON.
-
-        This is a fallback method for when the model doesn't return structured JSON.
-        """
-        # Simple keyword-based parsing
-        skill_sequence = []
-        skill_params = []
-
-        response_lower = response_text.lower()
-
-        # Look for skill names in the response
-        available_skills = (
-            self.skill_registry.list_skills() if self.skill_registry else []
-        )
-
-        for skill_name in available_skills:
-            if skill_name.lower() in response_lower:
-                skill_sequence.append(skill_name)
-                skill_params.append({})  # Default empty parameters
-
-        # If no skills found, fallback to mock planning
-        if not skill_sequence:
-            print(
-                "[QwenVLBrain] No skills found in text response, using mock planning"
-            )
-            return self._mock_plan_task(task, available_skills)
-
-        return SkillPlan(
-            task_id=task.id,
-            skill_sequence=skill_sequence,
-            skill_params=skill_params,
-            skill_monitoring_interval=self.skill_monitoring_interval,
-            expected_duration=len(skill_sequence) * 10.0,
-        )
-
-    def _parse_replan_response(
-        self, response_text: str, task: Task
-    ) -> SkillPlan:
-        """
-        Parse the response from the model adapter to extract a skill plan.
-
-        Args:
-            response_text: The raw text response from the model
-            task: The original task
-
-        Returns:
-            SkillPlan object
-        """
-        try:
-            # Try to parse JSON response
-            plan_data = self._parse_json_response(response_text)
-
-            if plan_data is not None:
-                skill_sequence = plan_data.get("skill_sequence", [])
-                skill_params = plan_data.get("skill_params", [])
-                skill_monitoring_interval = plan_data.get(
-                    "skill_monitoring_interval", self.skill_monitoring_interval
-                )
-
-                if len(skill_sequence) != len(skill_params):
-                    print(
-                        "[QwenVLBrain] Warning: Mismatch between skill sequence and parameters length"
-                    )
-                    while len(skill_params) < len(skill_sequence):
-                        skill_params.append({})
-
                 return SkillPlan(
                     task_id=task.id,
-                    skill_sequence=skill_sequence,
-                    skill_params=skill_params,
-                    skill_monitoring_interval=skill_monitoring_interval,
-                    expected_duration=len(skill_sequence) * 10.0,
+                    skill_sequence=[],
+                    skill_params=[],
+                    skill_monitoring_interval=self.skill_monitoring_interval,
+                    expected_duration=0.0,
                 )
-            else:
-                print("[QwenVLBrain] No JSON found in response")
-                raise ValueError("No JSON found in response")
 
-        except json.JSONDecodeError as e:
-            print(f"[QwenVLBrain] Failed to parse JSON response: {e}")
-            print(f"[QwenVLBrain] Response was: {response_text}")
-            # Fallback to mock implementation
-            raise ValueError("Failed to parse JSON response")
+            # 从对象列表中构建 skill_sequence 和 skill_params
+            skill_sequence = []
+            skill_params = []
+            for skill_object in plan_data:
+                if isinstance(skill_object, dict):
+                    # 提取技能名称，如果找不到 'method' 键，可以给个默认值或跳过
+                    skill_name = skill_object.get("method")
+                    if skill_name:
+                        skill_sequence.append(skill_name)
+                        # 提取参数，如果找不到 'params' 键或为 None，则提供一个空字典
+                        params = skill_object.get("params", {})
+                        if params is None:  # 额外处理模型可能返回 null 的情况
+                            params = {}
+                        skill_params.append(params)
+                else:
+                    print(
+                        f"[QwenVLBrain] Warning: Found a non-dictionary item in the plan data: {skill_object}"
+                    )
+
+            skill_monitoring_interval = self.skill_monitoring_interval
+
+            return SkillPlan(
+                task_id=task.id,
+                skill_sequence=skill_sequence,
+                skill_params=skill_params,
+                skill_monitoring_interval=skill_monitoring_interval,
+                expected_duration=len(skill_sequence) * 10.0,
+            )
+
         except Exception as e:
-            print(f"[QwenVLBrain] Error parsing response: {e}")
-            raise ValueError("Error parsing response")
+            # 保持强大的异常处理
+            print(f"[QwenVLBrain] Error parsing plan response: {e}")
+            print(f"[QwenVLBrain] Original response was: {response_text[:500]}...")
+            print("[QwenVLBrain] Falling back to empty plan")
+            return SkillPlan(
+                task_id=task.id,
+                skill_sequence=[],
+                skill_params=[],
+                skill_monitoring_interval=self.skill_monitoring_interval,
+                expected_duration=0.0,
+            )

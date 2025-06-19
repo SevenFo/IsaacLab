@@ -3,7 +3,6 @@ Skill registry and management system based on intelligent_robot_system design.
 Skills execute directly in the Isaac subprocess with direct environment access.
 """
 
-import inspect
 import importlib
 import importlib.util
 import os
@@ -119,9 +118,7 @@ class SkillRegistry:
             skills_path = os.path.join(current_dir, skills_directory)
 
             if not os.path.exists(skills_path):
-                print(
-                    f"[SkillRegistry] Skills directory not found: {skills_path}"
-                )
+                print(f"[SkillRegistry] Skills directory not found: {skills_path}")
                 return
 
             # Import all Python files in the skills directory
@@ -143,9 +140,7 @@ class SkillRegistry:
                             # self._register_skills_from_module(module) # No longer needed if decorator handles it
 
                     except Exception as e:
-                        print(
-                            f"[SkillRegistry] Failed to import {file_path}: {e}"
-                        )
+                        print(f"[SkillRegistry] Failed to import {file_path}: {e}")
                         import traceback
 
                         traceback.print_exc()
@@ -274,22 +269,20 @@ class SkillExecutor:
 
             if skill_def.execution_mode == ExecutionMode.GENERATOR:
                 generator = skill_def.function(*args_for_skill)
-                skill_result = True  # Default to true unless StopIteration provides otherwise
+                skill_result = (
+                    True  # Default to true unless StopIteration provides otherwise
+                )
                 while True:
                     try:
                         next(generator)
                     except StopIteration as e:
-                        skill_result = getattr(
-                            e, "value", True
-                        )  # Capture return value
+                        skill_result = getattr(e, "value", True)  # Capture return value
                         break
                 print(
                     f"[SkillExecutor] Generator skill {skill_name} completed. Result: {skill_result}"
                 )
                 self.status = (
-                    SkillStatus.COMPLETED
-                    if skill_result
-                    else SkillStatus.FAILED
+                    SkillStatus.COMPLETED if skill_result else SkillStatus.FAILED
                 )
                 return bool(skill_result)
 
@@ -298,14 +291,10 @@ class SkillExecutor:
                 print(
                     f"[SkillExecutor] Direct skill {skill_name} completed. Result: {result}"
                 )
-                self.status = (
-                    SkillStatus.COMPLETED if result else SkillStatus.FAILED
-                )
+                self.status = SkillStatus.COMPLETED if result else SkillStatus.FAILED
                 return bool(result)
             else:
-                print(
-                    f"[SkillExecutor] Unknown execution mode for skill {skill_name}"
-                )
+                print(f"[SkillExecutor] Unknown execution mode for skill {skill_name}")
                 self.status = SkillStatus.FAILED
                 return False
         except Exception as e:
@@ -335,7 +324,9 @@ class SkillExecutor:
 
         skill_def = self.registry.get_skill(skill_name)
         if not skill_def:
-            print(f"[SkillExecutor] Skill '{skill_name}' not found")
+            print(
+                f"[SkillExecutor] Skill '{skill_name}' not found, available skills: {self.registry.list_skills()}"
+            )
             self.status = SkillStatus.FAILED
             return False
 
@@ -357,9 +348,7 @@ class SkillExecutor:
             args_for_skill.update(parameters)  # Add parameters
 
             if skill_def.execution_mode == ExecutionMode.GENERATOR:
-                self.current_skill_generator = skill_def.function(
-                    **args_for_skill
-                )
+                self.current_skill_generator = skill_def.function(**args_for_skill)
                 self.current_skill_name = skill_name
                 self.current_skill_params = parameters
                 self.status = SkillStatus.RUNNING
@@ -372,17 +361,13 @@ class SkillExecutor:
                 print(
                     f"[SkillExecutor] Direct skill {skill_name} executed. Result: {result}"
                 )
-                self.status = (
-                    SkillStatus.COMPLETED if result else SkillStatus.FAILED
-                )
+                self.status = SkillStatus.COMPLETED if result else SkillStatus.FAILED
                 # No ongoing generator for direct skills
                 self.current_skill_name = None
                 self.current_skill_params = None
                 return bool(result)
             else:
-                print(
-                    f"[SkillExecutor] Unknown execution mode for skill {skill_name}"
-                )
+                print(f"[SkillExecutor] Unknown execution mode for skill {skill_name}")
                 self.status = SkillStatus.FAILED
                 return False
         except Exception as e:
@@ -410,11 +395,11 @@ class SkillExecutor:
             print(
                 f"[SkillExecutor] Skill {self.current_skill_name} completed. Result: {result}"
             )
-            if result == 'error':
+            if result == "error":
                 self.status = SkillStatus.FAILED
-            elif result == 'timeout':
+            elif result == "timeout":
                 self.status = SkillStatus.TIMEOUT
-            elif result == 'success':
+            elif result == "success":
                 self.status = SkillStatus.COMPLETED
             else:
                 self.status = SkillStatus.FAILED
@@ -438,7 +423,9 @@ class SkillExecutor:
             and self.current_skill_generator is not None
         )
 
-    def terminate_current_skill(self,skill_status:SkillStatus = SkillStatus.INTERRUPTED) -> bool:
+    def terminate_current_skill(
+        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
+    ) -> bool:
         """Terminate the current non-blocking skill execution."""
         if self.current_skill_generator is not None:
             print(
@@ -471,9 +458,7 @@ class SkillExecutor:
 
     def get_status_info(
         self,
-    ) -> Dict[
-        str, Any
-    ]:  # Renamed from get_status to avoid conflict if used elsewhere
+    ) -> Dict[str, Any]:  # Renamed from get_status to avoid conflict if used elsewhere
         """Get current execution status information."""
         return {
             "status": self.status.value,

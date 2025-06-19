@@ -7,13 +7,13 @@ SYSTEM_CONFIG = {
     # Simulator configuration
     "simulator": {
         "env_name": "Isaac-Move-Box-Frank-IK-Rel",
-        "device": "cuda:0",
+        "device": "cuda:2",
         "num_envs": 1,
         "headless": True,
         "enable_cameras": True,
         "disable_fabric": False,
         "livestream": False,
-        "sim_device": "cuda:0",
+        "sim_device": "cuda:1",
         "cpu": False,
         "physics_gpu": -1,
         "graphics_gpu": -1,
@@ -24,13 +24,13 @@ SYSTEM_CONFIG = {
     # Brain (Qwen VL) configuration
     "brain": {
         "qwen": {
-            "model": "qwen-vl",
+            "model": "InternVL3-8B",  # qwen-vl
             "api_key": "",  # Set your API key here for OpenAI adapter
             "base_url": "",  # Set your API base URL here for OpenAI adapter
-            "model_path": "/home/ps/models/model_qwen2.5_vl_7b_instruct",  # Set your local model path for Qwen VL adapter
-            "adapter_type": "qwen_vl",  # "qwen_vl", "openai", or "mock"
+            "model_path": "/quick_data/model--OpenGVLab-InternVL3-8B",  # "/quick_data/model_qwen2.5_vl_32b_instruct",  # Set your local model path for Qwen VL adapter
+            "adapter_type": "lmd",  # "qwen_vl", "openai", or "mock"
             "max_tokens": 512,
-            "device": "cuda:1"
+            "device": "auto",
         },
         "skill_monitoring_interval": 1.0,  # seconds
         "max_retries": 3,

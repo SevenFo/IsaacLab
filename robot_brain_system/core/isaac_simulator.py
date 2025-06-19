@@ -32,6 +32,8 @@ from robot_brain_system.utils import dynamic_set_attr
 
 import pickle  # For pickle.UnpicklingError
 
+mp.set_start_method("spawn", force=True)  # Ensure spawn method for subprocesses
+
 
 # --- Retry Decorator Definition ---
 def retry(
@@ -175,7 +177,7 @@ class IsaacSimulator:
 
             # Wait for initialization signal from subprocess
             if self.parent_conn.poll(
-                timeout=60
+                timeout=120
             ):  # Increased timeout for Isaac Lab init
                 response = self.parent_conn.recv()
                 if response.get("status") == "ready":
@@ -510,7 +512,7 @@ class IsaacSimulator:
             skill_registry = (
                 get_skill_registry()
             )  # Gets the global one, populated by decorators
-            skill_registry.discover_skills() # Not needed if decorators auto-register and skills are imported
+            skill_registry.discover_skills()  # Not needed if decorators auto-register and skills are imported
             print(
                 f"[IsaacSubprocess] Found {len(skill_registry.list_skills())} skills."
             )

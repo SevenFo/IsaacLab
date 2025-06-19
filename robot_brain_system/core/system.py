@@ -9,24 +9,18 @@ from typing import (
     Optional,
     Dict,
     Any,
-    Generator,
 )  # Generator might not be needed at this level anymore
-from dataclasses import dataclass, field
 import traceback  # For debugging
 from PIL import Image
 import matplotlib
-import copy
-import os
+import multiprocessing
 
-matplotlib.use("Agg")  # <-- Add this line BEFORE importing pyplot
-
+matplotlib.use("Agg")
+multiprocessing.set_start_method("spawn", force=True)  # Ensure compatibility
 
 from .types import (
     SystemStatus,
     Action,
-    Observation,
-    Task,
-    SkillPlan,
     SystemState,
     SkillStatus,
 )
@@ -52,18 +46,16 @@ class RobotBrainSystem:
 
         # Core components
         self.simulator: Optional[IsaacSimulator] = None
-        self.skill_registry: SkillRegistry = (
-            get_skill_registry()
-        )  # Global registry
+        self.skill_registry: SkillRegistry = get_skill_registry()  # Global registry
         # This SkillExecutor might be for skills not requiring the env, or removed if all skills go to subprocess
-        self.local_skill_executor: SkillExecutor = SkillExecutor(
-            self.skill_registry
-        )
+        self.local_skill_executor: SkillExecutor = SkillExecutor(self.skill_registry)
         self.brain: QwenVLBrain = QwenVLBrain(config.get("brain", {}))
 
         # Threading
         self.main_thread: Optional[threading.Thread] = None
-        self.is_shutdown_requested = False  # Changed from self.is_shutdown to avoid conflict with method
+        self.is_shutdown_requested = (
+            False  # Changed from self.is_shutdown to avoid conflict with method
+        )
 
         print("[RobotBrainSystem] Initialized")
 
@@ -94,9 +86,7 @@ class RobotBrainSystem:
 
                 print("[RobotBrainSystem] Skills imported successfully")
             except Exception as e:
-                print(
-                    f"[RobotBrainSystem] Warning: Failed to import skills: {e}"
-                )
+                print(f"[RobotBrainSystem] Warning: Failed to import skills: {e}")
                 traceback.print_exc()
 
             print(
@@ -110,9 +100,7 @@ class RobotBrainSystem:
             self.state.status = SystemStatus.IDLE
             print("[RobotBrainSystem] Initialization complete")
 
-            self.log_path = os.path.join(
-                self.log_path, time.strftime("%Y%m%d_%H%M%S")
-            )
+            self.log_path = os.path.join(self.log_path, time.strftime("%Y%m%d_%H%M%S"))
             os.makedirs(self.log_path, exist_ok=True)
             self.brain.log_path = self.log_path  # Set log path for brain
             self.brain.visualize = self.visualize  # Set visualization flag
@@ -140,9 +128,7 @@ class RobotBrainSystem:
             self.state.is_running = True
 
             # Start main loop in separate thread
-            self.main_thread = threading.Thread(
-                target=self._main_loop, daemon=True
-            )
+            self.main_thread = threading.Thread(target=self._main_loop, daemon=True)
             self.main_thread.start()
 
             print("[RobotBrainSystem] System started")
@@ -158,9 +144,7 @@ class RobotBrainSystem:
         """Shutdown the system."""
         print("[RobotBrainSystem] Shutting down...")
         if self.is_shutdown_requested and not self.state.is_running:
-            print(
-                "[RobotBrainSystem] Already shutdown or shutdown in progress."
-            )
+            print("[RobotBrainSystem] Already shutdown or shutdown in progress.")
             return
 
         self.is_shutdown_requested = True  # Signal main loop to stop
@@ -177,9 +161,7 @@ class RobotBrainSystem:
         if self.simulator and self.simulator.is_initialized:
             skill_status = self.simulator.get_skill_executor_status()
             if skill_status.get("is_running"):
-                print(
-                    "[RobotBrainSystem] Terminating skill in simulator subprocess..."
-                )
+                print("[RobotBrainSystem] Terminating skill in simulator subprocess...")
                 self.simulator.terminate_current_skill()
 
             # Shutdown simulator (this will also stop its process)
@@ -203,9 +185,7 @@ class RobotBrainSystem:
         The brain will parse, plan, and then the system will start the first skill.
         """
         if not self.state.is_running:
-            print(
-                "[RobotBrainSystem] System is not running. Cannot execute task."
-            )
+            print("[RobotBrainSystem] System is not running. Cannot execute task.")
             return False
 
         # Check if another high-level task (via brain) is already in progress
@@ -221,9 +201,7 @@ class RobotBrainSystem:
 
         # Check if a skill is running in the simulator from a previous plan
         sim_skill_status = (
-            self.simulator.get_skill_executor_status()
-            if self.simulator
-            else {}
+            self.simulator.get_skill_executor_status() if self.simulator else {}
         )
         if sim_skill_status.get("is_running"):
             print(
@@ -243,30 +221,22 @@ class RobotBrainSystem:
                 self.state.error_message = "No observations available"
                 return False
             obs = obss[-1] if obss else self.state.obs_history[-1]
-            inspector_rgb = (
-                obs.data["rgb_camera"]["inspector"][0].cpu().numpy()
-            )
+            inspector_rgb = obs.data["rgb_camera"]["inspector"][0].cpu().numpy()
             if self.visualize:
                 import matplotlib.pyplot as plt
 
                 plt.imshow(inspector_rgb)
                 plt.axis("off")
-                plt.savefig(
-                    os.path.join(self.log_path, "execute_task_input.png")
-                )
+                plt.savefig(os.path.join(self.log_path, "execute_task_input.png"))
             image_data = Image.fromarray(inspector_rgb)
-            self.state.current_task = self.brain.parse_task(
-                instruction, image_data
-            )
+            self.state.current_task = self.brain.parse_task(instruction, image_data)
 
             # Brain plans the task. execute_task in brain sets its internal state.
             plan = self.brain.execute_task(self.state.current_task)
             if not plan or not plan.skill_sequence:
                 print("[RobotBrainSystem] Brain did not produce a valid plan.")
                 self.state.status = SystemStatus.IDLE
-                self.brain.interrupt_task(
-                    "No plan generated"
-                )  # Reset brain state
+                self.brain.interrupt_task("No plan generated")  # Reset brain state
                 return False
             self.state.plan_history.append(plan)
 
@@ -379,9 +349,7 @@ class RobotBrainSystem:
                 if next_skill_info:
                     current_system_op = f"executing_plan (waiting_to_start_skill: {next_skill_info.get('name')})"
                 else:  # Plan might be finishing or brain is advancing
-                    current_system_op = (
-                        f"executing_plan (brain_advancing_or_plan_done)"
-                    )
+                    current_system_op = "executing_plan (brain_advancing_or_plan_done)"
             else:  # Skill is running in sim
                 current_system_op = f"executing_plan (skill_running_in_sim: {sim_status.get('skill_executor', {}).get('current_skill')})"
         elif self.state.status == SystemStatus.THINKING:
@@ -403,13 +371,9 @@ class RobotBrainSystem:
             "brain": brain_s,
             "skills_global_registry": {
                 "registered_count": len(self.skill_registry.list_skills()),
-                "available_list": self.skill_registry.list_skills()[
-                    :10
-                ],  # Show a few
+                "available_list": self.skill_registry.list_skills()[:10],  # Show a few
             },
-            "last_observation_snippet": str(self.state.last_observation.data)[
-                :100
-            ]
+            "last_observation_snippet": str(self.state.last_observation.data)[:100]
             if self.state.last_observation
             and hasattr(self.state.last_observation, "data")
             else None,
@@ -432,9 +396,7 @@ class RobotBrainSystem:
             return False
 
         try:
-            result = self.simulator.step_env(
-                action
-            )  # step_env now returns a tuple
+            result = self.simulator.step_env(action)  # step_env now returns a tuple
             if result:
                 obs, reward, terminated, truncated, info = result
                 self.state.last_observation = obs
@@ -496,9 +458,7 @@ class RobotBrainSystem:
                         self.state.obs_history.extend(obss)
                         if len(self.state.obs_history) > 100:
                             self.state.obs_history.pop(0)
-                        print(
-                            f"obs history length: {len(self.state.obs_history)}"
-                        )
+                        print(f"obs history length: {len(self.state.obs_history)}")
                     else:
                         if obss == []:
                             # No observations available, might be a sim issue
@@ -517,12 +477,8 @@ class RobotBrainSystem:
                     self.brain.state.status == SystemStatus.EXECUTING
                     or self.brain.state.status == SystemStatus.MONITORING
                 ):
-                    if (
-                        self.brain.should_monitor()
-                    ):  # Brain decides if it's time
-                        print(
-                            "[RobotBrainSystem] Brain monitoring execution..."
-                        )
+                    if self.brain.should_monitor():  # Brain decides if it's time
+                        print("[RobotBrainSystem] Brain monitoring execution...")
 
                         decision = self.brain.monitor_skill_execution(
                             self.state.obs_history
@@ -553,12 +509,10 @@ class RobotBrainSystem:
                     if not sim_skill_exec_status.get("is_running"):
                         # Current skill in sim finished or no skill started yet for current brain step.
                         # Check if the last skill in sim was successful (if one was running)
-                        last_sim_skill_state = sim_skill_exec_status.get(
-                            "status"
-                        )
+                        last_sim_skill_state = sim_skill_exec_status.get("status")
                         if len(self.state.skill_history) == 0:
                             print(
-                                f"[RobotBrainSystem] No skill be executing now, start to exec first skill."
+                                "[RobotBrainSystem] No skill be executing now, start to exec first skill."
                             )
                         elif (
                             last_sim_skill_state == "completed"
@@ -598,20 +552,16 @@ class RobotBrainSystem:
                             last_plan_info = self.state.plan_history[-1]
                             last_skill_info = self.state.skill_history[-1]
                             last_skill_execution_summary = (
-                                self.brain.summary_skill_execution(
-                                    last_skill_info
-                                )
+                                self.brain.summary_skill_execution(last_skill_info)
                             )
-                            self.state.skill_history[-1][
-                                "execution_summary"
-                            ] = last_skill_execution_summary
+                            self.state.skill_history[-1]["execution_summary"] = (
+                                last_skill_execution_summary
+                            )
                             obss = self.simulator.get_observation()
                             if obss:
                                 self.state.obs_history.extend(obss)
                             else:
-                                self.state.obs_history = (
-                                    self.state.obs_history[-1:]
-                                )
+                                self.state.obs_history = self.state.obs_history[-1:]
                             obs = self.state.obs_history[-1]
                             assert self.state.current_task
                             new_plan = self.brain.replan_task(
@@ -642,10 +592,8 @@ class RobotBrainSystem:
                                 f"[RobotBrainSystem] Requesting simulator to start skill: {skill_name} with params {skill_params}"
                             )
                             if self.simulator:
-                                success = (
-                                    self.simulator.start_skill_non_blocking(
-                                        skill_name, skill_params
-                                    )
+                                success = self.simulator.start_skill_non_blocking(
+                                    skill_name, skill_params
                                 )
                                 if not success:
                                     print(
@@ -658,15 +606,12 @@ class RobotBrainSystem:
                                     self.state.error_message = (
                                         f"Failed to start skill {skill_name}"
                                     )
-                                self.state.skill_history.append(
-                                    next_skill_to_run
-                                )
+                                self.state.skill_history.append(next_skill_to_run)
                         else:
                             # No more skills in brain's plan, and last sim skill (if any) is done.
                             # TODO IT SHOULD BE DOUBLE CHECKED THE TASK IS FINISHED NOR NOT, NOT SUPPORTED NOW
                             if (
-                                self.brain.state.status
-                                == SystemStatus.EXECUTING
+                                self.brain.state.status == SystemStatus.EXECUTING
                             ):  # Brain thinks it has more or just finished
                                 print(
                                     "[RobotBrainSystem] Brain has no next skill, but is still in EXECUTING state. Assuming plan completion."
@@ -766,10 +711,8 @@ class RobotBrainSystem:
                 f"[RobotBrainSystem] Brain decided to retry current skill: {reason}. Terminating and re-queueing."
             )
             if self.simulator and self.simulator.is_initialized:
-                current_sim_skill = (
-                    self.simulator.get_skill_executor_status().get(
-                        "current_skill"
-                    )
+                current_sim_skill = self.simulator.get_skill_executor_status().get(
+                    "current_skill"
                 )
                 if current_sim_skill:  # A skill is actually running
                     self.simulator.terminate_current_skill()
@@ -779,13 +722,9 @@ class RobotBrainSystem:
                 # This might require a new method in brain, e.g., brain.retry_current_skill_in_plan()
                 # For now, we rely on the main loop to pick it up after termination.
             else:
-                print(
-                    "[RobotBrainSystem] Cannot retry, simulator not available."
-                )
+                print("[RobotBrainSystem] Cannot retry, simulator not available.")
         elif action == "successed":
-            print(
-                f"[RobotBrainSystem] Brain decided skill is successed: {reason}"
-            )
+            print(f"[RobotBrainSystem] Brain decided skill is successed: {reason}")
             self.interrupt_skill(
                 f"Brain decision: {reason}", skill_status=SkillStatus.COMPLETED
             )
