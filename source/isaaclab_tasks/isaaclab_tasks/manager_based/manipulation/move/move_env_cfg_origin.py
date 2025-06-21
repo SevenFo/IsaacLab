@@ -12,8 +12,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-# from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
-from isaaclab.sensors import FrameTransformerCfg, ContactSensorCfg
+from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import  UsdFileCfg
 from isaaclab.utils import configclass
 
@@ -30,8 +29,6 @@ class RoomSetSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = MISSING
     # end-effector sensor: will be populated by agent env cfg
     ee_frame: FrameTransformerCfg = MISSING
-    # conmtact sensor: will be populated by agent env cfg
-    contact_sensor: ContactSensorCfg = MISSING
 
     # Room_set
     ROOM_set = AssetBaseCfg(
@@ -63,15 +60,16 @@ class ObservationsCfg:
         actions = ObsTerm(func=mdp.last_action)        # 上一次执行的动作                                                                             
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)      # 关节位置
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)      # 关节速度
-        object = ObsTerm(func=mdp.object_obs)            
-        box_positions = ObsTerm(func=mdp.box_positions_in_world_frame)    # 箱子的位置
-        box_orientations = ObsTerm(func=mdp.box_orientations_in_world_frame)    # 箱子的朝向
-        spanner_positions = ObsTerm(func=mdp.spanner_positions_in_world_frame)  # 扳手的位置
-        spanner_orientations = ObsTerm(func=mdp.spanner_orientations_in_world_frame)  # 扳手的朝向
+        object = ObsTerm(func=mdp.object_obs)            # assemble位置、角度，末端执行器相对箱子位置，箱子相对桌子位置
+        assemble_inner_positions = ObsTerm(func=mdp.assemble_inner_positions_in_world_frame)    # assemble_inner的位置
+        assemble_inner_orientations = ObsTerm(func=mdp.assemble_inner_orientations_in_world_frame)    # assemble_inner的朝向
+        assemble_outer_positions = ObsTerm(func=mdp.assemble_outer_positions_in_world_frame)    # assemble_inner的位置
+        assemble_outer_orientations = ObsTerm(func=mdp.assemble_outer_orientations_in_world_frame)    # assemble_inner的朝向
+        # box_positions = ObsTerm(func=mdp.box_positions_in_world_frame)    # 箱子的位置
+        # box_orientations = ObsTerm(func=mdp.box_orientations_in_world_frame)    # 箱子的朝向
         eef_pos = ObsTerm(func=mdp.ee_frame_pos)     # 末端执行器的位置
         eef_quat = ObsTerm(func=mdp.ee_frame_quat)      # 末端执行器的朝向
         gripper_pos = ObsTerm(func=mdp.gripper_pos)      # 夹爪的位置
-        # camera_rgbd = ObsTerm(func=mdp.camera_rgbd)     # RGBD相机图像
      
         def __post_init__(self):
             self.enable_corruption = False
@@ -80,9 +78,7 @@ class ObservationsCfg:
     @configclass
     class RGBCameraPolicyCfg(ObsGroup):                                                                  
         """Observations for policy group with RGB images."""
-        
-        # camera_rgbd = ObsTerm(func=mdp.camera_rgbd)     # RGBD相机图像
-        
+
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = False
@@ -91,23 +87,23 @@ class ObservationsCfg:
     class SubtaskCfg(ObsGroup):
         """Observations for subtask group."""
 
-        # subtask_1
-        # press = ObsTerm(
-        #     func=mdp.press_button,
-        #     params={
-        #         "contact_sensor_cfg": SceneEntityCfg("contact_sensor"),
-        #     },
-        # )
-        
-        # subtask_2
         grasp = ObsTerm(
             func=mdp.object_grasped,    
             params={
                 "robot_cfg": SceneEntityCfg("robot"),
                 "ee_frame_cfg": SceneEntityCfg("ee_frame"),
-                "object_cfg": SceneEntityCfg("spanner"),
+                "object_cfg": SceneEntityCfg("assemble_outer"),
             },
         )
+        # stack = ObsTerm(
+        #     func=mdp.object_stacked,
+        #     params={
+        #         "robot_cfg": SceneEntityCfg("robot"),
+        #         "inner_object_cfg": SceneEntityCfg("assemble_inner"),
+        #         "outer_object_cfg": SceneEntityCfg("assemble_outer"),
+        #         "desk_cfg": SceneEntityCfg("desk"),
+        #     },
+        # )
       
         def __post_init__(self):
             self.enable_corruption = False
@@ -124,9 +120,12 @@ class TerminationsCfg:
     """Termination terms for the MDP."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    
-    # subtask_3
-    success = DoneTerm(func=mdp.spanner_stacked)
+
+    # box_dropping = DoneTerm(
+    #     func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("box")}
+    # )
+
+    success = DoneTerm(func=mdp.outer_stacked)
 
 
 @configclass

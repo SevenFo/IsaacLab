@@ -6,284 +6,108 @@
 from __future__ import annotations
 
 import torch
-from typing import TYPE_CHECKING
+import numpy as np
+import cv2
+from typing import TYPE_CHECKING, Dict, Union
 
 from isaaclab.assets import Articulation, RigidObject, RigidObjectCollection
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import FrameTransformer
+from isaaclab.sensors import FrameTransformer, Camera, ContactSensor
+import isaaclab.utils.math as math_utils
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-# def box_positions_in_world_frame(
-#     env: ManagerBasedRLEnv,
-#     box_cfg: SceneEntityCfg = SceneEntityCfg("box"),
-# ) -> torch.Tensor:
-#     """The position of the  box in the world frame."""
-#     box: RigidObject = env.scene[box_cfg.name]
-    
-#     return box.data.root_pos_w
-
-
-def assemble_inner_positions_in_world_frame(
+def box_positions_in_world_frame(
     env: ManagerBasedRLEnv,
-    assemble_inner_cfg: SceneEntityCfg = SceneEntityCfg("assemble_inner"),
+    box_cfg: SceneEntityCfg = SceneEntityCfg("box"),
 ) -> torch.Tensor:
-    """The position of the assemble_inner in the world frame."""
-    assemble_inner: RigidObject = env.scene[assemble_inner_cfg.name]
+    """The position of the  box in the world frame."""
+    box: Articulation = env.scene[box_cfg.name]
     
-    return assemble_inner.data.root_pos_w
+    return box.data.root_state_w[:, :3]
 
 
-def assemble_outer_positions_in_world_frame(
+def box_orientations_in_world_frame(
     env: ManagerBasedRLEnv,
-    assemble_outer_cfg: SceneEntityCfg = SceneEntityCfg("assemble_outer"),
-) -> torch.Tensor:
-    """The position of the assemble_outer in the world frame."""
-    assemble_outer: RigidObject = env.scene[assemble_outer_cfg.name]
-    
-    return assemble_outer.data.root_pos_w
-
-
-def instance_randomize_cube_positions_in_world_frame(
-    env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
-) -> torch.Tensor:
-    """The position of the cubes in the world frame."""
-    if not hasattr(env, "rigid_objects_in_focus"):
-        return torch.full((env.num_envs, 9), fill_value=-1)
-
-    cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
-    cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
-    cube_3: RigidObjectCollection = env.scene[cube_3_cfg.name]
-
-    cube_1_pos_w = []
-    cube_2_pos_w = []
-    cube_3_pos_w = []
-    for env_id in range(env.num_envs):
-        cube_1_pos_w.append(cube_1.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][0], :3])
-        cube_2_pos_w.append(cube_2.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][1], :3])
-        cube_3_pos_w.append(cube_3.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][2], :3])
-    cube_1_pos_w = torch.stack(cube_1_pos_w)
-    cube_2_pos_w = torch.stack(cube_2_pos_w)
-    cube_3_pos_w = torch.stack(cube_3_pos_w)
-
-    return torch.cat((cube_1_pos_w, cube_2_pos_w, cube_3_pos_w), dim=1)
-
-
-# def box_orientations_in_world_frame(
-#     env: ManagerBasedRLEnv,
-#     box_cfg: SceneEntityCfg = SceneEntityCfg("box"),
-# ):
-#     """The orientation of the cubes in the world frame."""
-#     box: RigidObject = env.scene[box_cfg.name]
-
-#     return box.data.root_quat_w
-
-
-def assemble_inner_orientations_in_world_frame(
-    env: ManagerBasedRLEnv,
-    assemble_inner_cfg: SceneEntityCfg = SceneEntityCfg("assemble_inner"),
+    box_cfg: SceneEntityCfg = SceneEntityCfg("box"),
 ):
     """The orientation of the cubes in the world frame."""
-    assemble_inner: RigidObject = env.scene[assemble_inner_cfg.name]
+    box: Articulation = env.scene[box_cfg.name]
 
-    return assemble_inner.data.root_quat_w
+    return box.data.root_state_w[:, 3:7]
 
 
-def assemble_outer_orientations_in_world_frame(
+def spanner_positions_in_world_frame(
     env: ManagerBasedRLEnv,
-    assemble_outer_cfg: SceneEntityCfg = SceneEntityCfg("assemble_outer"),
-):
-    """The orientation of the cubes in the world frame."""
-    assemble_outer: RigidObject = env.scene[assemble_outer_cfg.name]
-
-    return assemble_outer.data.root_quat_w
-
-
-def instance_randomize_cube_orientations_in_world_frame(
-    env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    spanner_cfg: SceneEntityCfg = SceneEntityCfg("spanner"),
 ) -> torch.Tensor:
-    """The orientation of the cubes in the world frame."""
-    if not hasattr(env, "rigid_objects_in_focus"):
-        return torch.full((env.num_envs, 9), fill_value=-1)
-
-    cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
-    cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
-    cube_3: RigidObjectCollection = env.scene[cube_3_cfg.name]
-
-    cube_1_quat_w = []
-    cube_2_quat_w = []
-    cube_3_quat_w = []
-    for env_id in range(env.num_envs):
-        cube_1_quat_w.append(cube_1.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][0], :4])
-        cube_2_quat_w.append(cube_2.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][1], :4])
-        cube_3_quat_w.append(cube_3.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][2], :4])
-    cube_1_quat_w = torch.stack(cube_1_quat_w)
-    cube_2_quat_w = torch.stack(cube_2_quat_w)
-    cube_3_quat_w = torch.stack(cube_3_quat_w)
-
-    return torch.cat((cube_1_quat_w, cube_2_quat_w, cube_3_quat_w), dim=1)
-
-
-# def object_obs(
-#     env: ManagerBasedRLEnv,
-#     box_cfg: SceneEntityCfg = SceneEntityCfg(""),
-#     desk_cfg: SceneEntityCfg = SceneEntityCfg("desk"),
-#     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
-# ):
-#     """
-#     Object observations (in world frame):
-#         box pos,
-#         box quat,
-#         gripper to box,
-#         box to desk,
-#     """
+    """The position of the spanner in the world frame."""
+    spanner: RigidObject = env.scene[spanner_cfg.name]
     
-#     box: RigidObject = env.scene[box_cfg.name]
-#     desk: RigidObject = env.scene[desk_cfg.name]
-#     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+    return spanner.data.root_pos_w
 
-#     box_pos_w = box.data.root_pos_w
-#     box_quat_w = box.data.root_quat_w
-    
-#     desk_pos_w = desk.data.root_pos_w
-#     ee_pos_w = ee_frame.data.target_pos_w[:, 0, :]
-    
-#     gripper_to_box = box_pos_w - ee_pos_w
-#     box_to_desk = box_pos_w - desk_pos_w
 
-#     return torch.cat(
-#         (
-#             box_pos_w - env.scene.env_origins,
-#             box_quat_w,
-#             gripper_to_box,
-#             box_to_desk,
-#         ),
-#         dim=1,
-#     )
+def spanner_orientations_in_world_frame(
+    env: ManagerBasedRLEnv,
+    spanner_cfg: SceneEntityCfg = SceneEntityCfg("spanner"),
+):
+    """The orientation of the spanner in the world frame."""
+    spanner: RigidObject = env.scene[spanner_cfg.name]
+
+    return spanner.data.root_quat_w
 
 
 def object_obs(
     env: ManagerBasedRLEnv,
-    assemble_inner_cfg: SceneEntityCfg = SceneEntityCfg("assemble_inner"),
-    assenmble_outer_cfg: SceneEntityCfg = SceneEntityCfg("assemble_outer"),
+    box_cfg: SceneEntityCfg = SceneEntityCfg("box"),
+    desk_cfg: SceneEntityCfg = SceneEntityCfg("desk"),
+    spanner_cfg: SceneEntityCfg = SceneEntityCfg("spanner"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
 ):
     """
     Object observations (in world frame):
-        assemble_inner pos,
-        assemble_inner quat,
-        assemble_outer pos,
-        assemble_outer quat,
-        gripper to assemble_outer,
-        assenmble_outer to assemble_inner,
+        box pos,
+        box quat,
+        spanner pos.
+        spanner quat,
+        gripper to box,
+        box to desk,
+        gripper to spanner,
+        spanner to desk
     """
-    assemble_inner: RigidObject = env.scene[assemble_inner_cfg.name]
-    assemble_outer: RigidObject = env.scene[assenmble_outer_cfg.name]
-    ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
-
-    assemble_inner_pos_w = assemble_inner.data.root_pos_w
-    assemble_inner_quat_w = assemble_inner.data.root_quat_w
-
-    assemble_outer_pos_w = assemble_inner.data.root_pos_w
-    assemble_inner_quat_w = assemble_outer.data.root_quat_w
     
-    gripper_to_assemble_outer = assemble_outer_pos_w - ee_frame.data.target_pos_w[:, 0, :]
-    assemble_outer_to_assemble_inner = assemble_outer_pos_w - assemble_inner_pos_w
-
-    return torch.cat(
-        (
-            assemble_inner_pos_w - env.scene.env_origins,
-            assemble_inner_quat_w,
-            assemble_outer_pos_w - env.scene.env_origins,
-            assemble_inner_quat_w,
-            gripper_to_assemble_outer,
-            assemble_outer_to_assemble_inner,
-        ),
-        dim=1,
-    )
-
-
-def instance_randomize_object_obs(
-    env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
-    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
-):
-    """
-    Object observations (in world frame):
-        cube_1 pos,
-        cube_1 quat,
-        cube_2 pos,
-        cube_2 quat,
-        cube_3 pos,
-        cube_3 quat,
-        gripper to cube_1,
-        gripper to cube_2,
-        gripper to cube_3,
-        cube_1 to cube_2,
-        cube_2 to cube_3,
-        cube_1 to cube_3,
-    """
-    if not hasattr(env, "rigid_objects_in_focus"):
-        return torch.full((env.num_envs, 9), fill_value=-1)
-
-    cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
-    cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
-    cube_3: RigidObjectCollection = env.scene[cube_3_cfg.name]
+    box: Articulation = env.scene[box_cfg.name]
+    spanner: RigidObject = env.scene[spanner_cfg.name]
+    desk: RigidObject = env.scene[desk_cfg.name]
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
 
-    cube_1_pos_w = []
-    cube_2_pos_w = []
-    cube_3_pos_w = []
-    cube_1_quat_w = []
-    cube_2_quat_w = []
-    cube_3_quat_w = []
-    for env_id in range(env.num_envs):
-        cube_1_pos_w.append(cube_1.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][0], :3])
-        cube_2_pos_w.append(cube_2.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][1], :3])
-        cube_3_pos_w.append(cube_3.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][2], :3])
-        cube_1_quat_w.append(cube_1.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][0], :4])
-        cube_2_quat_w.append(cube_2.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][1], :4])
-        cube_3_quat_w.append(cube_3.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][2], :4])
-    cube_1_pos_w = torch.stack(cube_1_pos_w)
-    cube_2_pos_w = torch.stack(cube_2_pos_w)
-    cube_3_pos_w = torch.stack(cube_3_pos_w)
-    cube_1_quat_w = torch.stack(cube_1_quat_w)
-    cube_2_quat_w = torch.stack(cube_2_quat_w)
-    cube_3_quat_w = torch.stack(cube_3_quat_w)
+    box_pos_w = box.data.root_state_w[:, :3]
+    box_quat_w = box.data.root_state_w[:, 3:7]
 
+    spanner_pos_w = spanner.data.root_pos_w
+    spanner_quat_w = spanner.data.root_quat_w
+
+    desk_pos_w = desk.data.root_pos_w
+    
     ee_pos_w = ee_frame.data.target_pos_w[:, 0, :]
-    gripper_to_cube_1 = cube_1_pos_w - ee_pos_w
-    gripper_to_cube_2 = cube_2_pos_w - ee_pos_w
-    gripper_to_cube_3 = cube_3_pos_w - ee_pos_w
-
-    cube_1_to_2 = cube_1_pos_w - cube_2_pos_w
-    cube_2_to_3 = cube_2_pos_w - cube_3_pos_w
-    cube_1_to_3 = cube_1_pos_w - cube_3_pos_w
+    
+    gripper_to_box = box_pos_w - ee_pos_w
+    box_to_desk = desk_pos_w - box_pos_w
+    gripper_to_spanner = spanner_pos_w - ee_pos_w
+    spanner_to_desk = desk_pos_w - spanner_pos_w
 
     return torch.cat(
         (
-            cube_1_pos_w - env.scene.env_origins,
-            cube_1_quat_w,
-            cube_2_pos_w - env.scene.env_origins,
-            cube_2_quat_w,
-            cube_3_pos_w - env.scene.env_origins,
-            cube_3_quat_w,
-            gripper_to_cube_1,
-            gripper_to_cube_2,
-            gripper_to_cube_3,
-            cube_1_to_2,
-            cube_2_to_3,
-            cube_1_to_3,
+            box_pos_w - env.scene.env_origins,
+            box_quat_w,
+            spanner_pos_w - env.scene.env_origins,
+            spanner_quat_w,
+            gripper_to_box,
+            box_to_desk,
+            gripper_to_spanner,
+            spanner_to_desk,
         ),
         dim=1,
     )
@@ -316,8 +140,13 @@ def object_grasped(
     robot_cfg: SceneEntityCfg,
     ee_frame_cfg: SceneEntityCfg,
     object_cfg: SceneEntityCfg,
-    diff_threshold: float = 3.5,
-    gripper_open_val: torch.tensor = torch.tensor([0.04]),
+    x_threshold_1: float = 0.140,
+    x_threshold_2: float = 0.165,
+    y_threshold_1: float = -0.015,
+    y_threshold_2: float = 0,
+    z_threshold_1: float = -0.02,
+    z_threshold_2: float = 0.118,
+    gripper_open_val: torch.tensor = torch.tensor([-0.48]),
     gripper_threshold: float = 0.005,
 ) -> torch.Tensor:
     """Check if an object is grasped by the specified robot."""
@@ -326,63 +155,105 @@ def object_grasped(
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
     object: RigidObject = env.scene[object_cfg.name]
 
-    object_pos = object.data.root_pos_w
-    end_effector_pos = ee_frame.data.target_pos_w[:, 0, :]
-    pose_diff = torch.linalg.vector_norm(object_pos - end_effector_pos, dim=1)
-
-    grasped = torch.logical_and(
-        pose_diff < diff_threshold,
-        torch.abs(robot.data.joint_pos[:, -1] - gripper_open_val.to(env.device)) > gripper_threshold,
-    )
-    grasped = torch.logical_and(
-        grasped, torch.abs(robot.data.joint_pos[:, -2] - gripper_open_val.to(env.device)) > gripper_threshold
-    )
+    object_pos_w = object.data.root_pos_w
+    ee_pos_w = ee_frame.data.target_pos_w[:, 0, :]
+    ee_quat_w = ee_frame.data.target_quat_w[:, 0, :]  # (B, 4)
     
-    # print("grasped:", grasped)
+    # 物体在世界坐标系下相对末端的向量
+    obj_vec_w = object_pos_w - ee_pos_w  # (B, 3)
+    
+    # 将obj_vec_w从世界坐标系变换到ee_frame本体坐标系下
+    ee_quat_conj = torch.cat([ee_quat_w[:, :1], -ee_quat_w[:, 1:]], dim=1)  # (B, 4)
+    
+    # 将物体向量从世界坐标系转换到末端执行器坐标系
+    obj_vec_ee = math_utils.quat_apply(ee_quat_conj, obj_vec_w)  # (B, 3)
+    
+    # 空间约束
+    x_ok = (obj_vec_ee[:, 0] >= x_threshold_1) & (obj_vec_ee[:, 0] <= x_threshold_2)
+    y_ok = (obj_vec_ee[:, 1] >= y_threshold_1) & (obj_vec_ee[:, 1] <= y_threshold_2)
+    z_ok = (obj_vec_ee[:, 2] >= z_threshold_1) & (obj_vec_ee[:, 2] <= z_threshold_2)
+    # print(f"x: {obj_vec_ee[:, 0]}, y: {obj_vec_ee[:, 1]}, z: {obj_vec_ee[:, 2]}")
+    spatial_ok = x_ok & y_ok & z_ok
+
+    # 爪夹闭合条件
+    gripper1_ok = (robot.data.joint_pos[:, -1] - gripper_open_val.to(env.device)) < gripper_threshold
+    gripper2_ok = (robot.data.joint_pos[:, -2] - gripper_open_val.to(env.device)) < gripper_threshold
+    gripper_ok = gripper1_ok & gripper2_ok
+
+    grasped = spatial_ok & gripper_ok
+    
+    # if torch.any(grasped):
+    #     print("Object grasped")
 
     return grasped
 
 
-def object_stacked(
+def press_button(
     env: ManagerBasedRLEnv,
-    robot_cfg: SceneEntityCfg,
-    inner_object_cfg: SceneEntityCfg,
-    outer_object_cfg: SceneEntityCfg,
-    desk_cfg: SceneEntityCfg,
-    xy_threshold: float = 0.011345,
-    height_threshold: float = 1.07,
-    gripper_open_val: torch.tensor = torch.tensor([0.04]),
+    contact_sensor_cfg: SceneEntityCfg,
+    force_threshold: float = 0.1,
+    time_threshold: float = 0,
 ) -> torch.Tensor:
-    """Check if an object is stacked by the specified robot."""
+    """Check if the button is pressed by the specified robot."""
+    contactsensor: ContactSensor = env.scene[contact_sensor_cfg.name]
 
-    robot: Articulation = env.scene[robot_cfg.name]
-    inner_object: RigidObject = env.scene[inner_object_cfg.name]
-    outer_object: RigidObject = env.scene[outer_object_cfg.name]
-    desk: RigidObject = env.scene[desk_cfg.name]
+    if contactsensor.data.force_matrix_w is not None:
+        force_norms = torch.norm(contactsensor.data.force_matrix_w, dim=-1)
+        max_forces = torch.max(force_norms.view(force_norms.shape[0], -1), dim=1).values
+    else:
+        max_forces = torch.zeros(contactsensor.num_instances, device=env.device)
+
+    pressed = torch.logical_and(max_forces > force_threshold, contactsensor.data.current_contact_time > time_threshold)
+
+    # if torch.any(pressed):
+    #     print("Button pressed")
     
-    inner_object_pos = inner_object.data.root_pos_w
-    outer_object_pos = outer_object.data.root_pos_w
-    desk_pos = desk.data.root_pos_w
+    return pressed
+
+
+def camera_rgbd(
+    env: ManagerBasedRLEnv,
+    frontcamera_cfg: SceneEntityCfg = SceneEntityCfg("frontcamera"),
+    sidecamera_cfg: SceneEntityCfg = SceneEntityCfg("sidecamera"),
+    wristcamera_cfg: SceneEntityCfg = SceneEntityCfg("wristcamera"),
+    depth_scale: float = 10.0,  # 深度范围上限（单位：米）
+) -> torch.Tensor:
+    """
+    返回压缩后的RGBD张量 (B, 3, H, W, 4)，数据类型为uint16
+    - RGB通道：0-65535对应0-1
+    - Depth通道：0-65535对应0-depth_scale米
+    """
+    # 获取相机对象
+    cameras = {
+        "front": env.scene[frontcamera_cfg.name],
+        "side": env.scene[sidecamera_cfg.name],
+        "wrist": env.scene[wristcamera_cfg.name]
+    }
     
-    pos_x_diff = inner_object_pos[:, 0] - outer_object_pos[:, 0]
-    pos_y_diff = inner_object_pos[:, 1] - outer_object_pos[:, 1]
-    height_diff = outer_object_pos[:, 2] - desk_pos[:, 2]
+    def ensure_4d(t: torch.Tensor) -> torch.Tensor:
+        """确保张量是 (B, H, W, C) 格式"""
+        return t.unsqueeze(-1) if t.ndim == 3 else t
 
-    # pos_diff = upper_object.data.root_pos_w - lower_object.data.root_pos_w
-    # height_dist = torch.linalg.vector_norm(pos_diff[:, 2:], dim=1)
-    # xy_dist = torch.linalg.vector_norm(pos_diff[:, :2], dim=1)
+    def compress_to_uint16(rgb: torch.Tensor, depth: torch.Tensor) -> torch.Tensor:
+        """
+        压缩数据到uint16:
+        - RGB: [0,1] -> [0,65535]
+        - Depth: [0,depth_scale] -> [0,65535]
+        """
+        rgb_uint16 = (rgb.clamp(0, 1) * 65535).round().to(torch.uint16)
+        depth_uint16 = (depth.clamp(0, depth_scale) * (65535 / depth_scale)).round().to(torch.uint16)
+        return torch.cat([rgb_uint16, depth_uint16], dim=-1)
 
-    stacked = torch.logical_and(abs(pos_x_diff) < xy_threshold, abs(pos_y_diff) < xy_threshold)
-    
-    stacked = torch.logical_and(stacked, height_diff < height_threshold)
-    
-    # stacked = torch.logical_and(xy_dist < xy_threshold, (height_dist - height_diff) < height_threshold)
+    # 处理每个相机
+    compressed_data = []
+    for cam in cameras.values():
+        # 获取原始数据 (B, H, W, C)
+        rgb = ensure_4d(cam.data.output["rgb"].float())  # (B, H, W, 3)
+        depth = ensure_4d(cam.data.output["depth"].float())  # (B, H, W, 1)
+        
+        # 压缩并保持形状 (B, H, W, 4)
+        rgbd = compress_to_uint16(rgb, depth)
+        compressed_data.append(rgbd.unsqueeze(1))  # (B, 1, H, W, 4)
 
-    stacked = torch.logical_and(
-        torch.isclose(robot.data.joint_pos[:, -1], gripper_open_val.to(env.device), atol=1e-4, rtol=1e-4), stacked
-    )
-    stacked = torch.logical_and(
-        torch.isclose(robot.data.joint_pos[:, -2], gripper_open_val.to(env.device), atol=1e-4, rtol=1e-4), stacked
-    )
-
-    return stacked
+    # 拼接所有相机 (B, 3, H, W, 4)
+    return torch.cat(compressed_data, dim=1)

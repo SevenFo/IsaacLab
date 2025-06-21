@@ -6,17 +6,15 @@ from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import FrameTransformerCfg
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.sensors import TiledCameraCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import quat_from_euler_xyz
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from isaaclab_tasks.manager_based.manipulation.move import mdp
-from isaaclab_tasks.manager_based.manipulation.move.move_env_cfg import (
+from isaaclab_tasks.manager_based.manipulation.assemble import mdp
+from isaaclab_tasks.manager_based.manipulation.assemble.move_env_cfg import (
     MoveEnvCfg,
 )
 
@@ -115,9 +113,7 @@ class FrankBoxMoveEnvCfg(MoveEnvCfg):
         self._robot_prim_path = "{ENV_REGEX_NS}/Robot"
 
         # Set robot
-        self.scene.robot = FRANKA_PANDA_CFG.replace(
-            prim_path=self._robot_prim_path
-        )
+        self.scene.robot = FRANKA_PANDA_CFG.replace(prim_path=self._robot_prim_path)
         self.scene.robot.spawn.semantic_tags = [("class", "robot")]
 
         # Add semantics to lunar_base
