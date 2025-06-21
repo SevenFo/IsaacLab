@@ -8,7 +8,6 @@ from . import move_joint_pos_env_cfg
 # Pre-defined configs
 ##
 from isaaclab_assets.robots.universal_robots import UR5_CFG  # isort: skip
-from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG, FRANKA_PANDA_CFG  # isort: skip
 
 
 @configclass
@@ -26,13 +25,13 @@ class UR5BoxMoveEnvCfg(move_joint_pos_env_cfg.UR5BoxMoveEnvCfg):
             asset_name="robot",
             joint_names=["shoulder.*", "elbow.*", "wrist.*"],
             body_name="base_link_gripper",
-            controller=DifferentialIKControllerCfg(command_type="pose", 
-                                                   use_relative_mode=True, 
-                                                   ik_method="dls", 
-                                                   gravity_compensation=False, 
-                                                   load_mass=0.0, 
-                                                   gravity_gain=0.0),
+            controller=DifferentialIKControllerCfg(
+                command_type="pose",
+                use_relative_mode=True,
+                ik_method="dls",
+            ),
             scale=0.5,
-            body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.0]),
-            
+            body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(
+                pos=[0.0, 0.0, 0.0]
+            ),
         )
