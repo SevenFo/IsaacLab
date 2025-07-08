@@ -14,9 +14,14 @@ from isaaclab.app import AppLauncher
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Zero agent for Isaac Lab environments.")
 parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
+    "--disable_fabric",
+    action="store_true",
+    default=False,
+    help="Disable fabric and use USD I/O operations.",
 )
-parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
+parser.add_argument(
+    "--num_envs", type=int, default=None, help="Number of environments to simulate."
+)
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--env_config_file",
@@ -47,7 +52,10 @@ def main():
     """Zero actions agent with Isaac Lab environment."""
     # parse configuration
     env_cfg = parse_env_cfg(
-        args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
+        args_cli.task,
+        device=args_cli.device,
+        num_envs=args_cli.num_envs,
+        use_fabric=not args_cli.disable_fabric,
     )
 
     if args_cli.env_config_file:
@@ -60,9 +68,7 @@ def main():
                     if isinstance(v, dict):
                         next_path = path.copy()
                         next_path.append(k)
-                        dynamic_set_attr(
-                            object.__getattribute__(k), v, next_path
-                        )
+                        dynamic_set_attr(object.__getattribute__(k), v, next_path)
                     else:
                         print(
                             f"set {'.'.join(path + [k])} from {object.__getattribute__(k)} to {v}"
@@ -84,11 +90,8 @@ def main():
         with torch.inference_mode():
             # compute zero actions
             device = env.unwrapped.device  # 获取设备信息
-            actions = {
-                key: torch.zeros(space.shape, device=device)
-                for key, space in env.action_space.spaces.items()
-            }
-            actions["end_effector"][:, 2] = 0.1
+            actions = torch.zeros(env.action_space.shape, device=device)
+
             # apply actions
             env.step(actions)
 

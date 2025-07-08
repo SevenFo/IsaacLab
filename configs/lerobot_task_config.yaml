@@ -1,0 +1,142 @@
+# Isaac Lab to LeRobot Unified Configuration
+# This configuration is shared between dataset conversion, training, and inference
+# It provides a single source of truth for all pipeline components
+
+dataset_config:
+  # Dataset metadata
+  name: "pressed_ori_20250708_rgb"
+  task: "grasp_spanner"
+  fps: 10
+  max_episodes: null  # null means convert all episodes
+  
+  # Source data
+  source_hdf5: "assets/pressed_ori_20250708_rgb.hdf5"
+  output_root: "assets/converted_dataset"
+
+# Observation mapping: Isaac environment key -> LeRobot policy key
+# This defines how IsaacLab observations are mapped to LeRobot dataset format
+observation_mapping:
+  # Robot state observations
+  joint_pos:
+    policy_key: "observation.state"
+    slice: null  # null means use all dimensions
+    data_type: "state"
+    
+  # Environment/object state (commented out - uncomment and configure as needed)
+  # object_state:
+  #   policy_key: "observation.state" 
+  #   slice: [0, 7]  # Use first 7 dimensions only
+  #   data_type: "state"
+  
+  # Camera observations
+  camera_top:
+    policy_key: "observation.images.top"
+    slice: null
+    data_type: "image"
+    
+  camera_side:
+    policy_key: "observation.images.side"
+    slice: null
+    data_type: "image"
+    
+  camera_wrist:
+    policy_key: "observation.images.wrist"
+    slice: null
+    data_type: "image"
+
+# Reverse mapping for inference: LeRobot policy key -> Isaac environment key candidates
+# This helps the agent find the correct Isaac observations during inference
+inference_mapping:
+  "observation.images.top":
+    isaac_candidates: ["camera_top", "rgb", "camera", "top_camera"]
+    fallback_patterns: ["top", "camera", "rgb"]
+    
+  "observation.images.side":
+    isaac_candidates: ["camera_side", "side_camera"]
+    fallback_patterns: ["side"]
+    
+  "observation.images.wrist":
+    isaac_candidates: ["camera_wrist", "wrist_camera"] 
+    fallback_patterns: ["wrist"]
+    
+  "observation.state":
+    isaac_candidates: ["joint_pos", "arm_joint_pos", "robot_state", "observation"]
+    fallback_patterns: ["joint", "pos", "state", "robot"]
+
+# Feature specifications for LeRobot dataset
+# These will be auto-generated based on the actual data, but can be overridden here
+feature_overrides:
+  # Example: force specific action dimension
+  # action:
+  #   dtype: "float32"
+  #   shape: [7]
+  #   names: null
+  
+  # Example: force specific image size
+  # "observation.images.top":
+  #   dtype: "image"
+  #   shape: [256, 256, 3]
+  #   names: ["height", "width", "channels"]
+
+# Training configuration (used during training)
+training:
+  # Policy type specific settings
+  diffusion:
+    image_features: ["observation.images.top", "observation.images.side", "observation.images.wrist"]
+    state_features: ["observation.state"]
+    
+  act:
+    image_features: ["observation.images.top", "observation.images.side", "observation.images.wrist"] 
+    state_features: ["observation.state"]
+    
+  # Training parameters that can be shared across different policy types
+  shared:
+    # Dataset settings
+    dataset:
+      repo_id: "pressed_ori_20250708_rgb"
+      root: "assets/converted_dataset/pressed_ori_20250708_rgb"
+    
+    # Training settings
+    output_dir: "outputs/train"
+    steps: 5000000
+    batch_size: 64
+    num_workers: 4
+    
+    log_freq: 100
+    save_freq: 10000
+    eval_freq: 0
+    
+    # Optimizer settings
+    optimizer:
+      type: "adamw"
+      lr: 5.0e-5
+      weight_decay: 1.0e-3
+      grad_clip_norm: 5.0
+    
+    # Scheduler settings
+    scheduler:
+      type: "cosine_decay_with_warmup"
+      warmup_steps: 1000
+      num_decay_steps: 50000
+      peak_lr: 5.0e-5
+      decay_lr: 1.0e-6
+    
+    # Logging settings
+    wandb:
+      enable: true
+      project: "isaac_lab_lerobot"
+      offline: true
+      run_id: null  # Will be auto-generated
+
+# Inference configuration (used by agent)
+inference:
+  # Policy device
+  device: "cuda"
+  
+  # Episode settings
+  max_episode_steps: 1000
+  
+  # Action processing
+  action_postprocessing:
+    ensure_batch_dim: true  # Ensure action has batch dimension for Isaac Lab
+    clip_actions: false     # Whether to clip actions to action space bounds

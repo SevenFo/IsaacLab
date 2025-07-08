@@ -1,0 +1,48 @@
+# LeRobot Training Configuration - Custom Optimizer/Scheduler
+# Example showing custom optimizer and scheduler configuration
+
+dataset:
+  repo_id: "siky/pressed_grasp_spanner"
+  root: "/home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/assets/converted_dataset/pressed_grasp_spanner_gen"
+
+policy:
+  type: "act"
+  device: "cuda:1"
+  push_to_hub: false
+  repo_id: ""  
+  
+  n_obs_steps: 1
+  chunk_size: 64
+  n_action_steps: 1
+  temporal_ensemble_coeff: 0.01
+  
+training:
+  output_dir: "outputs/train/act_generation_data_temporal_ensemble_coeff_64"
+  steps: 5000000
+  batch_size: 64
+  num_workers: 4
+  
+  log_freq: 100
+  save_freq: 50000
+  eval_freq: 0
+
+# Custom optimizer and scheduler (not using policy preset)
+optimizer:
+  use_policy_training_preset: true  # Use custom settings
+  type: "adamw"
+  lr: 5.0e-5  # Higher learning rate
+  weight_decay: 1.0e-3  # Higher weight decay
+  grad_clip_norm: 5.0  # Lower gradient clipping
+
+scheduler:
+  type: "cosine_decay_with_warmup"
+  warmup_steps: 1000
+  num_decay_steps: 50000
+  peak_lr: 5.0e-5
+  decay_lr: 1.0e-6
+
+wandb:
+  enable: true
+  project: "pressed_grasp_spanner"
+  offline: true  # Save logs locally
+  run_id: "act_gen_64_ens"

@@ -69,7 +69,7 @@ def object_obs(
     Object observations (in world frame):
         box pos,
         box quat,
-        spanner pos.
+        spanner pos,
         spanner quat,
         gripper to box,
         box to desk,
@@ -102,19 +102,22 @@ def object_obs(
     spanner_to_desk = desk_pos_w - spanner_pos_w
     gripper_to_button = button_pos_w - ee_pos_w
 
+    # box_joint = box.data.joint_pos[:, 0].unsqueeze(1)  # 获取箱子关节位置
+
     return torch.cat(
         (
             box_pos_w - env.scene.env_origins,
             box_quat_w,
             spanner_pos_w - env.scene.env_origins,
             spanner_quat_w,
-            # button_pos_w - env.scene.env_origins,
-            # button_quat_w,
+            button_pos_w - env.scene.env_origins,
+            button_quat_w,
             gripper_to_box,
             box_to_desk,
             gripper_to_spanner,
             spanner_to_desk,
-            # gripper_to_button,
+            gripper_to_button,
+            # box_joint,
         ),
         dim=1,
     )
@@ -222,12 +225,9 @@ def press_button(
 
     pressed = torch.logical_and(
         max_forces > force_threshold,
-        contactsensor.data.current_contact_time > time_threshold,
+        contactsensor.data.current_contact_time.squeeze(-1) > time_threshold,
     )
-
-    # if torch.any(pressed):
-    #     print("Button pressed")
-
+    # print(pressed)
     return pressed
 
 
@@ -289,7 +289,6 @@ def camera_rgb(
     sidecamera_cfg: SceneEntityCfg = SceneEntityCfg("sidecamera"),
     wristcamera_cfg: SceneEntityCfg = SceneEntityCfg("wristcamera"),
 ) -> torch.Tensor:
-    """ """
     # 获取相机对象
     cameras = {
         "front": env.scene[frontcamera_cfg.name],
@@ -306,7 +305,9 @@ def camera_rgb(
     for cam in cameras.values():
         # 获取原始数据 (B, H, W, C)
         rgb = ensure_4d(cam.data.output["rgb"].float())  # (B, H, W, 3)
-        compressed_data.append(rgb)
+
+        # 压缩并保持形状 (B, H, W, 4)
+        compressed_data.append(rgb.unsqueeze(1))  # (B, 1, H, W, 4)
 
     # 拼接所有相机 (B, 3, H, W, 4)
     return torch.cat(compressed_data, dim=1)

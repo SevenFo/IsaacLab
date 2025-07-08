@@ -19,15 +19,33 @@ import os
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Replay and record demonstrations in Isaac Lab environments.")
-parser.add_argument(
-    "--input_dataset_file", type=str, required=True, help="Input dataset file to be replayed (source)."
+parser = argparse.ArgumentParser(
+    description="Replay and record demonstrations in Isaac Lab environments."
 )
 parser.add_argument(
-    "--output_dataset_file", type=str, required=True, help="Output dataset file to save the re-recorded episodes."
+    "--input_dataset_file",
+    type=str,
+    required=True,
+    help="Input dataset file to be replayed (source).",
 )
-parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to replay episodes in parallel.")
-parser.add_argument("--task", type=str, default=None, help="Force to use the specified task, overriding the one from the dataset.")
+parser.add_argument(
+    "--output_dataset_file",
+    type=str,
+    required=True,
+    help="Output dataset file to save the re-recorded episodes.",
+)
+parser.add_argument(
+    "--num_envs",
+    type=int,
+    default=1,
+    help="Number of environments to replay episodes in parallel.",
+)
+parser.add_argument(
+    "--task",
+    type=str,
+    default=None,
+    help="Force to use the specified task, overriding the one from the dataset.",
+)
 parser.add_argument(
     "--select_episodes",
     type=int,
@@ -62,8 +80,10 @@ def main():
 
     # --- 1. Load Input Dataset ---
     if not os.path.exists(args_cli.input_dataset_file):
-        raise FileNotFoundError(f"The input dataset file {args_cli.input_dataset_file} does not exist.")
-    
+        raise FileNotFoundError(
+            f"The input dataset file {args_cli.input_dataset_file} does not exist."
+        )
+
     input_dataset_handler = HDF5DatasetFileHandler()
     input_dataset_handler.open(args_cli.input_dataset_file)
     env_name = input_dataset_handler.get_env_name()
@@ -94,7 +114,9 @@ def main():
 
     # ** KEY CHANGE: Enable the recorder to save data to the new output file **
     output_dir = os.path.dirname(args_cli.output_dataset_file)
-    output_file_name = os.path.splitext(os.path.basename(args_cli.output_dataset_file))[0]
+    output_file_name = os.path.splitext(os.path.basename(args_cli.output_dataset_file))[
+        0
+    ]
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -115,7 +137,11 @@ def main():
     episode_names = list(input_dataset_handler.get_episode_names())
     replayed_episode_count = 0
     with contextlib.suppress(KeyboardInterrupt) and torch.inference_mode():
-        while simulation_app.is_running() and not simulation_app.is_exiting() and episode_indices_to_replay:
+        while (
+            simulation_app.is_running()
+            and not simulation_app.is_exiting()
+            and episode_indices_to_replay
+        ):
             env_episode_data_map = {index: EpisodeData() for index in range(num_envs)}
             is_first_step_in_batch = True
             has_more_actions = True
@@ -123,57 +149,74 @@ def main():
             while has_more_actions:
                 actions = torch.zeros(env.action_space.shape, device=env.device)
                 has_more_actions = False
-                
+
                 # Buffer for envs that just finished an episode
                 envs_finished_episode = []
 
                 for env_id in range(num_envs):
                     env_next_action = env_episode_data_map[env_id].get_next_action()
-                    
+
                     if env_next_action is None:
                         # This env has finished its current episode.
                         # Mark it for potential export and loading of a new one.
                         if not is_first_step_in_batch:
                             envs_finished_episode.append(env_id)
-                        
+
                         # Try to load the next available episode
                         next_episode_index = None
                         if episode_indices_to_replay:
                             next_episode_index = episode_indices_to_replay.pop(0)
 
                         if next_episode_index is not None:
-                            print(f"Env {env_id}: Loading episode #{next_episode_index} to replay...")
+                            print(
+                                f"Env {env_id}: Loading episode #{next_episode_index} to replay..."
+                            )
                             episode_data = input_dataset_handler.load_episode(
                                 episode_names[next_episode_index], env.device
                             )
                             env_episode_data_map[env_id] = episode_data
-                            
+
                             # Set initial state for the new episode
                             initial_state = episode_data.get_initial_state()
-                            env.reset_to(initial_state, torch.tensor([env_id], device=env.device), is_relative=True)
-                            
+                            env.reset_to(
+                                initial_state,
+                                torch.tensor([env_id], device=env.device),
+                                is_relative=True,
+                            )
+
                             # Get the first action for the new episode
-                            env_next_action = env_episode_data_map[env_id].get_next_action()
-                            has_more_actions = True # We have a new episode to process
+                            env_next_action = env_episode_data_map[
+                                env_id
+                            ].get_next_action()
+                            has_more_actions = True  # We have a new episode to process
                         else:
                             # No more episodes to assign to this env
                             continue
-                    
+
                     if env_next_action is not None:
                         actions[env_id] = env_next_action
                         has_more_actions = True
-                
+
                 # ** KEY CHANGE: Export completed episodes before the next step **
                 if envs_finished_episode:
-                    env_ids_to_export = torch.tensor(envs_finished_episode, device=env.device)
-                    print(f"Exporting completed episodes for envs: {envs_finished_episode}")
+                    env_ids_to_export = torch.tensor(
+                        envs_finished_episode, device=env.device
+                    )
+                    print(
+                        f"Exporting completed episodes for envs: {envs_finished_episode}"
+                    )
                     # Mark the completed episodes as successful
-                    success_flags = torch.ones((len(envs_finished_episode), 1), dtype=torch.bool, device=env.device)
-                    env.recorder_manager.set_success_to_episodes(env_ids_to_export, success_flags)
+                    success_flags = torch.ones(
+                        (len(envs_finished_episode), 1),
+                        dtype=torch.bool,
+                        device=env.device,
+                    )
+                    env.recorder_manager.set_success_to_episodes(
+                        env_ids_to_export, success_flags
+                    )
                     # Export the episodes to the new HDF5 file
                     env.recorder_manager.export_episodes(env_ids_to_export)
                     replayed_episode_count += len(envs_finished_episode)
-
 
                 if not has_more_actions:
                     break
@@ -182,21 +225,31 @@ def main():
                 env.step(actions)
                 is_first_step_in_batch = False
 
-            # --- 4. Final Export ---
-            # After the loop, export any remaining episodes that were fully replayed but not yet exported
-            final_envs_to_export = []
-            for env_id in range(num_envs):
-                # Check if the env has valid data (i.e., it was used) and hasn't been exported yet
-                if env_episode_data_map[env_id].get_num_steps() > 0 and env_episode_data_map[env_id].next_action_index >= env_episode_data_map[env_id].get_num_steps():
-                    final_envs_to_export.append(env_id)
+            # # --- 4. Final Export ---
+            # # After the loop, export any remaining episodes that were fully replayed but not yet exported
+            # final_envs_to_export = []
+            # for env_id in range(num_envs):
+            #     # Check if the env has valid data (i.e., it was used) and hasn't been exported yet
+            #     if (
+            #         env_episode_data_map[env_id].get_num_steps() > 0
+            #         and env_episode_data_map[env_id].next_action_index
+            #         >= env_episode_data_map[env_id].get_num_steps()
+            #     ):
+            #         final_envs_to_export.append(env_id)
 
-            if final_envs_to_export:
-                env_ids_to_export = torch.tensor(final_envs_to_export, device=env.device)
-                print(f"Exporting final episodes for envs: {final_envs_to_export}")
-                success_flags = torch.ones((len(final_envs_to_export), 1), dtype=torch.bool, device=env.device)
-                env.recorder_manager.set_success_to_episodes(env_ids_to_export, success_flags)
-                env.recorder_manager.export_episodes(env_ids_to_export)
-                replayed_episode_count += len(final_envs_to_export)
+            # if final_envs_to_export:
+            #     env_ids_to_export = torch.tensor(
+            #         final_envs_to_export, device=env.device
+            #     )
+            #     print(f"Exporting final episodes for envs: {final_envs_to_export}")
+            #     success_flags = torch.ones(
+            #         (len(final_envs_to_export), 1), dtype=torch.bool, device=env.device
+            #     )
+            #     env.recorder_manager.set_success_to_episodes(
+            #         env_ids_to_export, success_flags
+            #     )
+            #     env.recorder_manager.export_episodes(env_ids_to_export)
+            #     replayed_episode_count += len(final_envs_to_export)
 
             # If all episodes from the list are processed, break the main while loop
             if not episode_indices_to_replay:
@@ -204,7 +257,9 @@ def main():
 
     # Close environment after replay is complete
     plural_trailing_s = "s" if replayed_episode_count != 1 else ""
-    print(f"\nFinished replaying and recording {replayed_episode_count} episode{plural_trailing_s}.")
+    print(
+        f"\nFinished replaying and recording {replayed_episode_count} episode{plural_trailing_s}."
+    )
     print(f"New dataset saved to: {args_cli.output_dataset_file}")
     env.close()
 

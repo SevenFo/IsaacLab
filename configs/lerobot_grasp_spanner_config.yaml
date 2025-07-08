@@ -1,0 +1,115 @@
+# Example configuration for grasp_spanner task with diffusion policy
+# This shows how to create task-specific configurations
+
+dataset_config:
+  name: "pressed_ori_20250708_rgb"
+  task: "grasp_spanner"
+  fps: 10
+  max_episodes: null
+  source_hdf5: "assets/pressed_ori_20250708_rgb.hdf5"
+  output_root: "assets/converted_dataset"
+
+observation_mapping:
+  # Robot joint positions
+  joint_pos:
+    policy_key: "observation.state"
+    slice: null
+    data_type: "state"
+  
+  # End effector pose (if available)
+  ee_pose:
+    policy_key: "observation.state"
+    slice: null
+    data_type: "state"
+  
+  # Top camera view
+  camera_top:
+    policy_key: "observation.images.top"
+    slice: null
+    data_type: "image"
+  
+  # Side camera view
+  camera_side:
+    policy_key: "observation.images.side"
+    slice: null
+    data_type: "image"
+  
+  # Wrist camera view
+  camera_wrist:
+    policy_key: "observation.images.wrist"
+    slice: null
+    data_type: "image"
+
+inference_mapping:
+  "observation.images.top":
+    isaac_candidates: ["camera_top", "rgb", "camera", "top_camera"]
+    fallback_patterns: ["top", "camera", "rgb"]
+  
+  "observation.images.side":
+    isaac_candidates: ["camera_side", "side_camera"]
+    fallback_patterns: ["side"]
+  
+  "observation.images.wrist":
+    isaac_candidates: ["camera_wrist", "wrist_camera"]
+    fallback_patterns: ["wrist"]
+  
+  "observation.state":
+    isaac_candidates: ["joint_pos", "ee_pose", "arm_joint_pos", "robot_state"]
+    fallback_patterns: ["joint", "pos", "state", "robot", "ee"]
+
+feature_overrides:
+  # Override action dimension for 7-DOF arm
+  action:
+    dtype: "float32"
+    shape: [7]
+    names: null
+
+# training:
+#   diffusion:
+#     image_features: ["observation.images.top", "observation.images.side", "observation.images.wrist"]
+#     state_features: ["observation.state"]
+  
+#   act:
+#     image_features: ["observation.images.top", "observation.images.side", "observation.images.wrist"]  # Only use 2 cameras for ACT
+#     state_features: ["observation.state"]
+  
+#   shared:
+#     dataset:
+#       repo_id: "pressed_ori_20250708_rgb"
+#       root: "assets/converted_dataset/pressed_ori_20250708_rgb"
+    
+#     output_dir: "outputs/train/grasp_spanner"
+#     steps: 3000000
+#     batch_size: 32
+#     num_workers: 4
+    
+#     log_freq: 50
+#     save_freq: 5000
+#     eval_freq: 0
+    
+#     optimizer:
+#       type: "adamw"
+#       lr: 1.0e-4
+#       weight_decay: 1.0e-4
+#       grad_clip_norm: 10.0
+    
+#     scheduler:
+#       type: "cosine_decay_with_warmup"
+#       warmup_steps: 500
+#       num_decay_steps: 30000
+#       peak_lr: 1.0e-4
+#       decay_lr: 1.0e-7
+    
+#     wandb:
+#       enable: true
+#       project: "grasp_spanner"
+#       offline: false
+#       run_id: null
+
+inference:
+  device: "cuda:1"
+  max_episode_steps: 500  # Shorter episodes for grasping tasks
+  
+  action_postprocessing:
+    ensure_batch_dim: true
+    clip_actions: true  # Enable action clipping for safety

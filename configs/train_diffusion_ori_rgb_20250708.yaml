@@ -1,0 +1,57 @@
+# LeRobot Training Configuration - DiffusionPolicy
+# 适用于 DiffusionPolicy 的配置文件示例
+
+dataset:
+  # 指向你为 DiffusionPolicy 生成的新数据集
+  repo_id: "siky/pressed_diffusion" # 在Hub上的名字 (如果上传的话)
+  root: "/home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/assets/converted_dataset/pressed_ori_20250708_rgb"
+
+policy:
+  # 关键：修改策略类型
+  type: "diffusion"
+  device: "cuda:2"
+  push_to_hub: false
+  repo_id: ""  
+  
+  # --- DiffusionPolicy 关键参数 ---
+  # 时间窗口相关
+  n_obs_steps: 8      # 使用过去2帧的观测
+  horizon: 64         # 预测未来16个动作
+  n_action_steps: 32   # 每次执行8个预测的动作
+
+  # 视觉处理相关 (根据你的图像尺寸调整)
+  # 假设你的图像尺寸大于 84x84
+  crop_shape: null # [84, 84] # 将图像裁剪到 84x84
+  crop_is_random: false # 训练时随机裁剪
+
+  # 扩散模型超参数 (通常可以保持默认)
+  num_train_timesteps: 100
+  beta_schedule: "squaredcos_cap_v2"
+  prediction_type: "epsilon"
+  
+training:
+  # 建议为 diffusion policy 使用新的输出目录
+  output_dir: "outputs/train/pressed/ori/20250708/diffusion_rgb"
+  steps: 5000000
+  # DiffusionPolicy 可能对显存要求更高，如果遇到 OOM (Out of Memory)，可以减小 batch_size
+  batch_size: 8
+  num_workers: 4
+  
+  log_freq: 100
+  save_freq: 10000
+  eval_freq: 0
+
+# 简单起见，先使用 DiffusionPolicy 的内置优化器和学习率调度器预设
+optimizer:
+  use_policy_training_preset: true 
+
+# 使用预设时， scheduler 部分可以省略或注释掉
+# scheduler:
+#   ...
+
+wandb:
+  enable: true
+  project: "pressed"
+  offline: true
+  # 为这个新实验使用一个新的 run_id
+  run_id: "ori-20250708-diffusion_rgb"

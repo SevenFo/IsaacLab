@@ -831,7 +831,9 @@ class QwenVLBrain:
             "confidence": 0.8,
         }
 
-    def _parse_json_response(self, response_text: str) -> Dict | List:
+    def _parse_json_response(
+        self, response_text: str, repair_by_llm=False
+    ) -> Dict | List:
         """
         从响应文本中提取并解析JSON内容.
         如果初次解析失败,会尝试请求模型生成有效的JSON再次解析.
@@ -842,7 +844,7 @@ class QwenVLBrain:
         Returns:
             解析成功的字典或列表对象，失败返回None
         """
-        parsed_data = extract_json_from_text(response_text)
+        parsed_data = extract_json_from_text(response_text, repair=not repair_by_llm)
 
         if parsed_data is not None:
             return parsed_data
@@ -882,7 +884,9 @@ class QwenVLBrain:
         print(
             f"[QwenVLBrain] Received new response from LLM for JSON recovery: '{new_llm_response_text}'"
         )
-        parsed_data_after_recovery = extract_json_from_text(new_llm_response_text)
+        parsed_data_after_recovery = extract_json_from_text(
+            new_llm_response_text, repair=not repair_by_llm
+        )
 
         if parsed_data_after_recovery is not None:
             print("[QwenVLBrain] Successfully parsed JSON after LLM recovery.")

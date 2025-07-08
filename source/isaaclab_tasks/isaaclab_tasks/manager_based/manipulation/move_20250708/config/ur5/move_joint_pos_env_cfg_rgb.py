@@ -1,16 +1,21 @@
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import FrameTransformerCfg, CameraCfg, ContactSensorCfg
-from isaaclab.sim.spawners.sensors.sensors_cfg import PinholeCameraCfg
+from isaaclab.sensors import (
+    FrameTransformerCfg,
+    ContactSensorCfg,
+    CameraCfg,
+)
+from isaaclab.sim.spawners import PinholeCameraCfg
+
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils import configclass
 
-from isaaclab_tasks.manager_based.manipulation.move import mdp
-from isaaclab_tasks.manager_based.manipulation.move.mdp import ur5_move_events
-from isaaclab_tasks.manager_based.manipulation.move.move_env_cfg import MoveEnvCfg
+from ....move_20250708 import mdp
+from ....move_20250708.mdp import ur5_move_events
+from ....move_20250708.move_env_cfg_rgb import MoveEnvCfg
 
 ##
 # Pre-defined configs
@@ -32,6 +37,7 @@ class EventCfg:
         params={
             "mean": 0.0,
             "std": 0.02,
+            # "std": 0.5,
             "asset_cfg": SceneEntityCfg("robot"),
         },
     )
@@ -43,10 +49,11 @@ class EventCfg:
         params={
             "pose_range": {
                 "x": (1.15, 1.28),
-                "y": (-3.4, -3.48),
+                "y": (-3.48, -3.4),
                 "z": (2.9, 2.9),
                 "yaw": (-0.1, 0.1),
             },
+            # "pose_range": {"x": (1.215, 1.215), "y": (-3.45, -3.45), "z": (2.9, 2.9), "yaw": (0, 0)},
             "asset_cfgs": [SceneEntityCfg("box"), SceneEntityCfg("spanner")],
         },
     )
@@ -57,10 +64,15 @@ class EventCfg:
         mode="reset",
         params={
             "target_joint_pos": 0.0,
-            # "target_joint_pos": 0.33,
             "asset_cfg": SceneEntityCfg("box"),
         },
     )
+
+    # reset_last_press = EventTerm(
+    #     func=ur5_move_events.reset_last_leave,
+    #     mode="reset",
+    #     params={},
+    # )
 
     # 按钮按下时触发箱盖打开
     button_pressed = EventTerm(
@@ -187,29 +199,28 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
                     prim_path="{ENV_REGEX_NS}/Robot/ur5/gripper/right_inner_finger",
                     name="rightfinger",
                     offset=OffsetCfg(
-                        pos=(0.0, 0.0, 0.0),
+                        pos=(0.15, 0.0425, 0.0),
                     ),
                 ),
                 FrameTransformerCfg.FrameCfg(
                     prim_path="{ENV_REGEX_NS}/Robot/ur5/gripper/left_inner_finger",
                     name="leftfinger",
                     offset=OffsetCfg(
-                        pos=(0.0, 0.0, 0.0),
+                        pos=(0.15, -0.0425, 0.0),
                     ),
                 ),
             ],
         )
 
         # add frontcemaera
-        self.scene.frontcamera = CameraCfg(
-            prim_path="{ENV_REGEX_NS}/FrontCamera",
+        self.scene.topcamera = CameraCfg(
+            prim_path="{ENV_REGEX_NS}/TopCamera",
             spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=12.5),
             offset=CameraCfg.OffsetCfg(
-                pos=(1.175, -2.29804, 3.19415),
-                rot=(0, 0, 0.6157, 0.7880),
+                pos=(1.175, -3.7, 4.04),
+                rot=(0.99027, 0.13917, 0, 0),
                 convention="opengl",
             ),
-            # offset=CameraCfg.OffsetCfg(pos=(1.175, -2.43562, 3.30584), rot=(1, 0, 0, 0), convention="opengl"),
             width=256,
             height=256,
             data_types=["rgb"],
@@ -220,9 +231,8 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
         self.scene.sidecamera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/SideCamera",
             spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=12.5),
-            # offset=CameraCfg.OffsetCfg(pos=(0.07763, -3.56398, 3.63566), rot=(0.5792, -0.4056, -0.4056, -0.5792), convention="opengl"),
             offset=CameraCfg.OffsetCfg(
-                pos=(0.07763, -3.56398, 3.63566),
+                pos=(0.07763, -3.7, 3.63566),
                 rot=(0.57923, 0.40558, -0.40558, -0.57923),
                 convention="opengl",
             ),
@@ -247,7 +257,7 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             debug_vis=True,
         )
 
-        # # add contact_sensor
+        # add contact_sensor
         self.scene.contact_sensor = ContactSensorCfg(
             track_air_time=True,
             prim_path="{ENV_REGEX_NS}/Box/red_toolbox/Toolbox/box_lower/Button/button",

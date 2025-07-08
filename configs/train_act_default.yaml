@@ -1,0 +1,103 @@
+# LeRobot Training Configuration
+# This configuration file defines all parameters for training a policy
+
+# Dataset Configuration
+dataset:
+  repo_id: "lerobot/pressed_grasp_spanner"  # HuggingFace dataset repository
+  root: "./assets"  # Local dataset root directory
+  episodes: null  # Episodes to use (null means all)
+  video_backend: "pyav"  # Video backend for image processing
+
+# Policy Configuration
+policy:
+  type: "act"  # Policy type (act, diffusion, etc.)
+  device: "cuda:1"  # Device to use for training
+  repo_id: "my-robot/act-pressed-grasp-default"  # Required for model hub
+  
+  # ACT-specific parameters
+  n_obs_steps: 1  # Number of observation steps
+  chunk_size: 64  # Action chunk size
+  n_action_steps: 32  # Number of action steps per policy call
+  temporal_ensemble_coeff: null  # Temporal ensembling coefficient (set to null or n_action_steps must be 1)
+  
+  # Model architecture
+  vision_backbone: "resnet18"
+  pretrained_backbone_weights: "ResNet18_Weights.IMAGENET1K_V1"
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  
+  # VAE settings
+  use_vae: true
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+  
+  # Training parameters
+  dropout: 0.1
+  kl_weight: 10.0
+  use_amp: false  # Automatic Mixed Precision
+  
+  # Normalization
+  normalization_mapping:
+    VISUAL: "MEAN_STD"
+    STATE: "MEAN_STD" 
+    ACTION: "MEAN_STD"
+
+# Environment Configuration (optional, for evaluation during training)
+env:
+  type: null  # Environment type (set to null for offline training only)
+  task: null  # Specific task name
+  fps: 50  # Frames per second
+
+# Training Configuration
+training:
+  output_dir: "outputs/train/act_pressed_grasp"  # Output directory
+  job_name: null  # Job name (auto-generated if null)
+  resume: false  # Resume from checkpoint
+  seed: 1000  # Random seed
+  
+  # Training parameters
+  steps: 50000  # Total training steps
+  batch_size: 64  # Batch size
+  num_workers: 4  # Number of dataloader workers
+  
+  # Logging and saving
+  log_freq: 100  # Log frequency (steps)
+  save_freq: 5000  # Checkpoint save frequency (steps)
+  save_checkpoint: true  # Whether to save checkpoints
+  eval_freq: 0  # Evaluation frequency (0 = no evaluation)
+
+# Optimizer Configuration
+optimizer:
+  # Use policy preset or custom settings
+  use_policy_training_preset: true  # Use policy's default optimizer/scheduler
+  
+  # Custom optimizer settings (only used if use_policy_training_preset: false)
+  type: "adamw"  # Optimizer type
+  lr: 1.0e-5  # Learning rate
+  weight_decay: 1.0e-4  # Weight decay
+  grad_clip_norm: 10.0  # Gradient clipping norm
+
+# Scheduler Configuration (only used if use_policy_training_preset: false)
+scheduler:
+  type: null  # Scheduler type (null, cosine_decay_with_warmup, etc.)
+  warmup_steps: 500  # Warmup steps
+  num_decay_steps: 50000  # Total decay steps
+  peak_lr: 1.0e-5  # Peak learning rate
+  decay_lr: 1.0e-6  # Final learning rate
+
+# Evaluation Configuration
+eval:
+  n_episodes: 10  # Number of episodes for evaluation
+  batch_size: 1  # Batch size for evaluation
+  use_async_envs: false  # Use asynchronous environments
+
+# Weights & Biases Configuration
+wandb:
+  enable: false  # Enable wandb logging
+  project: "act_training"  # Project name
+  run_id: null  # Run ID (auto-generated if null)
+  offline: false  # Offline mode
+  local_server: false  # Use local wandb server

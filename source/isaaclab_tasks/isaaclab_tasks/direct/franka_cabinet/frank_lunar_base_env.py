@@ -11,9 +11,7 @@ from collections import OrderedDict
 import gymnasium as gym
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets import (
-    ArticulationCfg,
     RigidObjectCfg,
     RigidObject,
     AssetBaseCfg,
@@ -33,10 +31,9 @@ from isaaclab_tasks.direct.franka_cabinet.lunar_base_env import (
 )
 from isaaclab_assets.robots.franka import (
     FRANKA_PANDA_HIGH_PD_CFG,
-    FRANKA_PANDA_CFG,
 )  # isort: skip
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab_tasks.manager_based.manipulation.move import mdp
+from isaaclab_tasks.manager_based.manipulation.assemble import mdp
 from isaaclab.managers import SceneEntityCfg
 
 
@@ -46,9 +43,7 @@ class FrankLunarBaseSceneCfg(LunarBaseSceneCfg):
 
     lunar_base = AssetBaseCfg(
         prim_path="/World/ROOM_set",
-        init_state=AssetBaseCfg.InitialStateCfg(
-            pos=[0, 0, 0], rot=[0, 0, 0, 0]
-        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=[0, 0, 0], rot=[0, 0, 0, 0]),
         spawn=sim_utils.UsdFileCfg(
             usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0403/Collected_ROOM_set/ROOM_set.no.ur5.box.desk_clean_version.usd"
         ),
@@ -107,9 +102,7 @@ class FrankLunarBaseSceneCfg(LunarBaseSceneCfg):
         spawn=sim_utils.UsdFileCfg(
             usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_assemble_inner/assemble_inner.usdc",
             scale=(1.0, 1.0, 1.0),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False
-            ),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=False),
             semantic_tags=[("class", "Assenmble_inner")],
         ),
     )
@@ -122,24 +115,16 @@ class FrankLunarBaseSceneCfg(LunarBaseSceneCfg):
         spawn=sim_utils.UsdFileCfg(
             usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_assemble_outer/assemble_outer.usdc",
             scale=(1.0, 1.0, 1.0),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False
-            ),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=False),
             semantic_tags=[("class", "Assenmble_outer")],
         ),
     )
 
     def __post_init__(self):
-        self.gripper_camera.prim_path = (
-            "{ENV_REGEX_NS}/Robot/panda_hand/wrist_camera"
-        )
+        self.gripper_camera.prim_path = "{ENV_REGEX_NS}/Robot/panda_hand/wrist_camera"
         self.gripper_camera.offset.pos = (0.05, 0.0, 0.0)
-        self.front_camera.prim_path = (
-            "{ENV_REGEX_NS}/Robot/panda_link0/top_camera"
-        )
-        self.robot = FRANKA_PANDA_HIGH_PD_CFG.replace(
-            prim_path="{ENV_REGEX_NS}/Robot"
-        )
+        self.front_camera.prim_path = "{ENV_REGEX_NS}/Robot/panda_link0/top_camera"
+        self.robot = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.robot.init_state.pos = (0.60000, -1.27000, 2.79427)
         self.robot.init_state.rot = (0.707, 0.0, 0.0, -0.707)
 
@@ -255,9 +240,7 @@ class FrankLunarBaseEnvCfg(LunarBaseEnvCfg):
 
         self.sim.physx.bounce_threshold_velocity = 0.2
         self.sim.physx.bounce_threshold_velocity = 0.01
-        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = (
-            1024 * 1024 * 4
-        )
+        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
 
@@ -363,8 +346,7 @@ class FrankLunarBaseEnv(LunarBaseEnv):
             return torch.cat(
                 (
                     self._robot.data.joint_pos[:, -1].clone().unsqueeze(1),
-                    -1
-                    * self._robot.data.joint_pos[:, -2].clone().unsqueeze(1),
+                    -1 * self._robot.data.joint_pos[:, -2].clone().unsqueeze(1),
                 ),
                 dim=1,
             )

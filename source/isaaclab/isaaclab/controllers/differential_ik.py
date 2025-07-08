@@ -51,9 +51,7 @@ class DifferentialIKController:
 
     """
 
-    def __init__(
-        self, cfg: DifferentialIKControllerCfg, num_envs: int, device: str
-    ):
+    def __init__(self, cfg: DifferentialIKControllerCfg, num_envs: int, device: str):
         """Initialize the controller.
 
         Args:
@@ -69,9 +67,7 @@ class DifferentialIKController:
         self.ee_pos_des = torch.zeros(self.num_envs, 3, device=self._device)
         self.ee_quat_des = torch.zeros(self.num_envs, 4, device=self._device)
         # -- input command
-        self._command = torch.zeros(
-            self.num_envs, self.action_dim, device=self._device
-        )
+        self._command = torch.zeros(self.num_envs, self.action_dim, device=self._device)
 
     """
     Properties.
@@ -214,6 +210,7 @@ class DifferentialIKController:
 
         Args:
             delta_pose: The desired delta pose in shape (N, 3) or (N, 6).
+            dssd'
             jacobian: The geometric jacobian matrix in shape (N, 3, num_joints) or (N, 6, num_joints).
 
         Returns:
@@ -224,6 +221,9 @@ class DifferentialIKController:
                 [0, -1, 0],  # 世界X → 基Y
                 [1, 0, 0],  # 世界Y → 基-X
                 [0, 0, 1],  # 世界Z → 基Z
+                # [1, 0, 0],  # 世界X → 基Y
+                # [0, 1, 0],  # 世界Y → 基-X
+                # [0, 0, 1],  # 世界Z → 基Z
             ],
             device=delta_pose.device,
             dtype=delta_pose.dtype,
@@ -236,13 +236,9 @@ class DifferentialIKController:
             )  # 等价于 R_world_to_base @ delta_pose.T
         elif delta_pose.shape[-1] == 6:  # 位置+姿态控制
             delta_pos_base = delta_pose[:, :3] @ R_world_to_base.T
-            delta_rot_base = delta_pose[
-                :, 3:
-            ]  # 姿态部分假设为旋转向量，需同样旋转
+            delta_rot_base = delta_pose[:, 3:]  # 姿态部分假设为旋转向量，需同样旋转
             delta_rot_base = delta_rot_base @ R_world_to_base.T
-            delta_pose_base = torch.cat(
-                [delta_pos_base, delta_rot_base], dim=-1
-            )
+            delta_pose_base = torch.cat([delta_pos_base, delta_rot_base], dim=-1)
         else:
             raise ValueError(f"Invalid delta_pose shape: {delta_pose.shape}")
 
@@ -266,9 +262,7 @@ class DifferentialIKController:
             # U: 6xd, S: dxd, V: d x num-joint
             U, S, Vh = torch.linalg.svd(jacobian)
             S_inv = 1.0 / S
-            S_inv = torch.where(
-                S > min_singular_value, S_inv, torch.zeros_like(S_inv)
-            )
+            S_inv = torch.where(S > min_singular_value, S_inv, torch.zeros_like(S_inv))
             jacobian_pinv = (
                 torch.transpose(Vh, dim0=1, dim1=2)[:, :, :6]
                 @ torch.diag_embed(S_inv)
