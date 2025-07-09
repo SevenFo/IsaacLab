@@ -2,11 +2,11 @@
 # This shows how to create task-specific configurations
 
 dataset_config:
-  name: "grasp_generated_dataset_visual_20250709"
-  task: "grasp_spanner"
+  name: "press_generated_dataset_fixed_visual_20250709"
+  task: "press_button"
   fps: 10
   max_episodes: null
-  source_hdf5: "/data/shared_folder/datasets/press_and_grasp/grasp_generated_dataset_visual_20250709.hdf5"
+  source_hdf5: "/data/shared_folder/datasets/press_and_grasp/press_generated_dataset_fixed_visual_20250709.hdf5"
   output_root: "/quick_data/datasets/press_and_grasp"
 
 observation_mapping:

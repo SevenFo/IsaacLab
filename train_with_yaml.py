@@ -12,7 +12,6 @@ Usage:
 
 import argparse
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict
 import inspect
@@ -343,12 +342,12 @@ def main():
     # Setup wandb offline mode if specified in config
     wandb_cfg = yaml_config.get("wandb", {})
     if wandb_cfg.get("offline", False):
-        os.environ["WANDB_MODE"] = "offline"
-        logging.info("Wandb set to offline mode")
+        ...
     elif wandb_cfg.get("local_server", False):
-        os.environ["WANDB_MODE"] = "online"
-        os.environ["WANDB_BASE_URL"] = "http://localhost:8080"
-        logging.info("Wandb set to use local server")
+        ...
+        # os.environ["WANDB_MODE"] = "online"
+        # os.environ["WANDB_BASE_URL"] = "http://localhost:8080"
+        # logging.info("Wandb set to use local server")
 
     # Log final configuration
     logging.info("Final training configuration:")
