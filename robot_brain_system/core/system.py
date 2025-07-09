@@ -48,7 +48,7 @@ class RobotBrainSystem:
         self.simulator: Optional[IsaacSimulator] = None
         self.skill_registry: SkillRegistry = get_skill_registry()  # Global registry
         # This SkillExecutor might be for skills not requiring the env, or removed if all skills go to subprocess
-        self.local_skill_executor: SkillExecutor = SkillExecutor(self.skill_registry)
+        # self.local_skill_executor: SkillExecutor = SkillExecutor(self.skill_registry)
         self.brain: QwenVLBrain = QwenVLBrain(config.get("brain", {}))
 
         # Threading
@@ -221,7 +221,7 @@ class RobotBrainSystem:
                 self.state.error_message = "No observations available"
                 return False
             obs = obss[-1] if obss else self.state.obs_history[-1]
-            inspector_rgb = obs.data["rgb_camera"]["inspector"][0].cpu().numpy()
+            inspector_rgb = obs.data["policy"]["camera_top"][0].cpu().numpy()
             if self.visualize:
                 import matplotlib.pyplot as plt
 
@@ -749,7 +749,7 @@ if __name__ == "__main__":
     result = system.initialize()
     system.start()
     system.execute_task(
-        "assemble the red object into the black object on the desk, which means Put the red cover on the black pillar."
+        "press the yellow button"
     )
     try:
         while system.state.is_running:

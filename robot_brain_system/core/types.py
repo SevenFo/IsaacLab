@@ -3,9 +3,10 @@ Core types and enums for the robot brain system.
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional, List, Union, Generator, Callable
+from typing import Any, Dict, Optional, List, Union, Generator, Callable, ClassVar
 from dataclasses import dataclass, field
 import numpy as np
+import torch
 
 
 
@@ -37,8 +38,8 @@ class SkillStatus(Enum):
 class Action:
     """Action representation for the environment."""
 
-    data: Union[np.ndarray, Dict[str, Any]]
-    metadata: Optional[Dict[str, Any]] = None
+    data: torch.tensor
+    metadata: Dict[str, Any] = field(default_factory=lambda:{})
 
     def to_numpy(self) -> np.ndarray:
         """Convert action to numpy array format."""
@@ -103,13 +104,13 @@ class ExecutionMode(Enum):
 
     DIRECT = "direct"  # Execute immediately without yielding
     GENERATOR = "generator"  # Execute with yield for env.step() calls
-
+    STEPACTION = 'stepaction'
 
 # Type aliases for better readability
 SkillGenerator = Callable[
     [Dict[str, Any]], Generator[Action, Observation, Any]
 ]
-PolicyFunction = Callable[[Observation], Action]
+PolicyFunction = object # TODO
 DirectFunction = Callable[[Dict[str, Any]], bool]
 
 
@@ -120,7 +121,7 @@ class SkillDefinition:
     name: str
     skill_type: SkillType
     execution_mode: ExecutionMode
-    function: Union[SkillGenerator, PolicyFunction, DirectFunction]
+    function: any # TODO
     description: str = ""
     timeout: Optional[float] = None
     requires_env: bool = False

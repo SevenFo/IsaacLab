@@ -500,7 +500,7 @@ class IsaacSimulator:
             }  # Add metadata and timestamp
             obs_queue.put(obs_payload)
             print(f"[IsaacSubprocess] Environment reset complete, obs {obs}")
-            latest_obs = obs_payload  # Store latest obs
+            latest_obs_payload = obs_payload  # Store latest obs
             print(
                 f"[Isaac Process] Environment '{cli_args.task}' created. Device: {_env.device}"
             )
@@ -517,7 +517,7 @@ class IsaacSimulator:
                 f"[IsaacSubprocess] Found {len(skill_registry.list_skills())} skills."
             )
 
-            skill_executor = SkillExecutor(skill_registry)
+            skill_executor = SkillExecutor(skill_registry, env = env)
             print("[IsaacSubprocess] SkillExecutor initialized.")
 
             # Send ready signal with env info
@@ -551,7 +551,7 @@ class IsaacSimulator:
                     raise TypeError(
                         f"Unsupport unwrapped enviroment type: {type(_env)}"
                     )
-
+            obs_dict = obs
             while active:
                 try:
                     # Handle commands from parent process
@@ -566,28 +566,14 @@ class IsaacSimulator:
                             break
                         elif cmd == "execute_skill_blocking":
                             assert False, "Unsupported now!"
-                            skill_name = command_data["skill_name"]
-                            params = command_data["parameters"]
-                            print(
-                                f"[IsaacSubprocess] Executing skill (blocking): {skill_name}"
-                            )
-                            success = skill_executor.execute_skill(
-                                skill_name, params, env
-                            )
-                            child_conn.send(
-                                {
-                                    "success": success,
-                                    "status": skill_executor.status.value,
-                                }
-                            )
                         elif cmd == "start_skill_non_blocking":
                             skill_name = command_data["skill_name"]
                             params = command_data["parameters"]
                             print(
                                 f"[IsaacSubprocess] Starting skill (non-blocking): {skill_name}"
                             )
-                            success = skill_executor.start_skill(
-                                skill_name, params, env
+                            success = skill_executor.initialize_skill(
+                                skill_name, params, _env.device,
                             )
                             child_conn.send(
                                 {
@@ -626,6 +612,7 @@ class IsaacSimulator:
                             )
 
                         elif cmd == "step_env":
+                            assert False, "Unsupported now!"
                             action_data_np = np.array(command_data["action_data"])
                             action_tensor = (
                                 torch.from_numpy(action_data_np)
@@ -643,7 +630,7 @@ class IsaacSimulator:
                                 "timestamp": time.time(),
                             }
                             obs_queue.put(obs_payload)
-                            latest_obs = obs_payload  # Store latest obs
+                            latest_obs_payload = obs_payload  # Store latest obs
 
                             child_conn.send(
                                 {
@@ -666,7 +653,7 @@ class IsaacSimulator:
                                 "timestamp": time.time(),
                             }
                             obs_queue.put(obs_payload)
-                            latest_obs = obs_payload  # Store latest obs
+                            latest_obs_payload = obs_payload  # Store latest obs
                             child_conn.send(
                                 {
                                     "success": True,
@@ -685,21 +672,18 @@ class IsaacSimulator:
                     # Step non-blocking skill if one is running
                     if skill_executor.is_running():
                         skill_exec_result = (
-                            skill_executor.step()
+                            skill_executor.step(obs_dict)
                         )  # env is passed during start_skill
-                        if isinstance(skill_exec_result, tuple) and (
-                            len(skill_exec_result) == 5
-                        ):  # skill that call env.step should yield 5 values
-                            obs_dict, reward, terminated, truncated, info = (
-                                skill_exec_result
-                            )
-                            obs_payload = {
-                                "data": obs_dict,
-                                "metadata": "None",
-                                "timestamp": time.time(),
-                            }
-                            obs_queue.put(obs_payload)
-                            latest_obs = obs_payload  # Store latest obs
+                        obs_dict, reward, terminated, truncated, info = (
+                            skill_exec_result
+                        )
+                        obs_payload = {
+                            "data": obs_dict,
+                            "metadata": "None",
+                            "timestamp": time.time(),
+                        }
+                        obs_queue.put(obs_payload)
+                        latest_obs_payload = obs_payload  # Store latest obs
 
                     # Small delay to prevent tight loop if no commands and no active skill
                     if not child_conn.poll(0) and not skill_executor.is_running():

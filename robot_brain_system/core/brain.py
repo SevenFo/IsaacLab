@@ -351,7 +351,7 @@ class QwenVLBrain:
                 print(text_prompt)
                 print("\n")
                 inspector_rgb = (
-                    observation.data["rgb_camera"]["inspector"][0].cpu().numpy()
+                    observation.data["policy"]["camera_top"][0].cpu().numpy()
                 )
                 if self.visualize:
                     import matplotlib.pyplot as plt
@@ -711,7 +711,7 @@ class QwenVLBrain:
         try:
             if self.visualize:
                 inspector_rgb = (
-                    observation[-1].data["rgb_camera"]["inspector"][0].cpu().numpy()
+                    observation[-1].data["policy"]["camera_top"][0].cpu().numpy()
                 )
                 import matplotlib.pyplot as plt
 
@@ -760,7 +760,7 @@ class QwenVLBrain:
                 video_frames.append(
                     Image.fromarray(
                         observation[frame_index]
-                        .data["rgb_camera"]["inspector"][0]
+                        .data["policy"]["camera_top"][0]
                         .cpu()
                         .numpy()
                     )
