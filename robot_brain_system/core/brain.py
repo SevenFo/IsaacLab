@@ -18,17 +18,7 @@ from robot_brain_system.core.types import (
 )
 from robot_brain_system.core.skill_manager import SkillRegistry
 from robot_brain_system.utils import extract_json_from_text
-
-try:
-    import robot_brain_system.core.model_adapters
-
-    MODEL_ADAPTERS_AVAILABLE = True
-except ImportError:
-    MODEL_ADAPTERS_AVAILABLE = False
-    print(
-        "[QwenVLBrain] Warning: Model adapters not available, using mock implementation"
-    )
-
+from robot_brain_system.core import model_adapters
 
 @dataclass
 class BrainState:
@@ -151,19 +141,16 @@ class QwenVLBrain:
         print("[QwenVLBrain] Initializing...")
         # Initialize model adapter
         self.model_adapter = None
-        if MODEL_ADAPTERS_AVAILABLE:
-            try:
-                self._initialize_model_adapter()
-            except Exception as e:
-                print(
-                    f"[QwenVLBrain] Failed to initialize model adapter: {type(e).__name__}: {e}"
-                )
-                import traceback
+        try:
+            self._initialize_model_adapter()
+        except Exception as e:
+            print(
+                f"[QwenVLBrain] Failed to initialize model adapter: {type(e).__name__}: {e}"
+            )
+            import traceback
 
-                traceback.print_exc()
-                print("[QwenVLBrain] Falling back to mock implementation")
-                self.adapter_type = "mock"
-        else:
+            traceback.print_exc()
+            print("[QwenVLBrain] Falling back to mock implementation")
             self.adapter_type = "mock"
         self.current_skill_monitor_time = 0
         print(f"[QwenVLBrain] Initialized with adapter: {self.adapter_type}")

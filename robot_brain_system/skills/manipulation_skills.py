@@ -23,7 +23,7 @@ try:
     ROBOMIMIC_AVAILABLE = True
 except ImportError:
     print(
-        "[Skill: assemble_object] Warning: robomimic library not found. Assemble skill will not be functional."
+        "[Skill] Warning: robomimic library not found. Assemble skill will not be functional."
     )
 
 
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 )
 class PressButton: 
     """
-    Assemble an object using a pre-trained Robomimic policy.
+    Press the yellow button on a red box using a pre-trained Robomimic policy.
     This skill runs the policy step-by-step within the Isaac simulator.
 
     Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
@@ -119,6 +119,95 @@ class PressButton:
         if not isinstance(action_np, np.ndarray):
             print(
                 f"[Skill: PressButton] Error: Policy output is not a numpy array (got {type(action_np)})."
+            )
+            return Action([], metadata={"info":'error'})
+        
+        return Action(torch.from_numpy(action_np).unsqueeze(0), metadata={"info":'success'})
+
+        
+@skill_register(
+    name="grasp_spanner",
+    skill_type=SkillType.POLICY,  # Could be SkillType.POLICY if you have a separate handler
+    execution_mode=ExecutionMode.STEPACTION,
+    timeout=300.0,  # 5 minutes, adjust as needed
+    criterion={
+        "successed": "the spanner is graspped by the gripper and pleased on the desk",
+        "failed": "".join(["any gripper state that is not reasonable to execute the skill."]),
+        "progress": "The gripper is on a reasonable state to execute the skill",
+    },
+    requires_env=True,
+)
+class GraspSpanner: 
+    """
+    Grasp a spanner on the red box and move it to the desk surface using a pre-trained Robomimic policy.
+    This skill runs the policy step-by-step within the Isaac simulator.
+
+    Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
+    """       
+    def __init__(self, policy_device: str = 'cuda', **running_params):
+        self.policy_device = policy_device
+        self.running_params = running_params
+        if not ROBOMIMIC_AVAILABLE:
+            print(  
+                "[Skill: GraspSpanner] Robomimic library not available. Cannot execute."
+            )
+            return None
+
+        print("[Skill: GraspSpanner] Starting...")
+
+        checkpoint_path = "assets/skills/grasp.pth"
+        if not os.path.exists(checkpoint_path):
+            print(
+                f"[Skill: GraspSpanner] Error: Checkpoint path '{checkpoint_path}' does not exist."
+            )
+            return None
+
+
+        print(f"[Skill: GraspSpanner] Using policy device: {policy_device}")
+        print(f"[Skill: GraspSpanner] Loading policy from: {checkpoint_path}")
+
+        try:
+            policy, _ = FileUtils.policy_from_checkpoint(
+                ckpt_path=checkpoint_path, device=policy_device, verbose=True
+            )
+        except Exception as e:
+            print(f"[Skill: GraspSpanner] Error: Failed to load policy: {e}")
+            return None
+
+        print("[Skill: GraspSpanner] Policy loaded")
+
+        self.policy = policy
+        self.policy.start_episode()
+
+    def select_action(self, obs_dict: dict) -> Action:
+        policy_obs_key = (
+            "policy"  # Common key in Isaac Lab tasks for policy inputs
+        )
+        if policy_obs_key not in obs_dict:
+            print(
+                f"[Skill: GraspSpanner] Error: Key '{policy_obs_key}' not found in initial observations."
+            )
+            return Action([], metadata={"info":'error'})
+
+        policy_input_source = obs_dict[policy_obs_key]
+
+        current_policy_obs = OrderedDict()
+        for key, tensor_val in policy_input_source.items():
+            if not isinstance(tensor_val, torch.Tensor):
+                print(
+                    f"[Skill: GraspSpanner] Warning: Obs value for key '{key}' is not a Tensor."
+                )
+                continue  # Or handle appropriately
+            current_policy_obs[key] = tensor_val.squeeze(0).to(
+                self.policy_device
+            )  # Robomimic expects squeeze
+
+        with torch.no_grad():
+            action_np = self.policy(current_policy_obs)  # Get action from policy
+
+        if not isinstance(action_np, np.ndarray):
+            print(
+                f"[Skill: GraspSpanner] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
             return Action([], metadata={"info":'error'})
         
