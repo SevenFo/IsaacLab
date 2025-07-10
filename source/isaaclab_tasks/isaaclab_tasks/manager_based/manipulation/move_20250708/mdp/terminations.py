@@ -23,9 +23,12 @@ if TYPE_CHECKING:
 
 def leave_button(
     env: ManagerBasedRLEnv,
+    disable: bool = False
 ) -> torch.Tensor:
     """当press_button从True变为False时返回True（falling edge）。"""
     # 当前帧press状态
+    if disable:
+        return torch.zeros(size=[env.num_envs], dtype=torch.bool, device=env.device)
     press = env.observation_manager.compute_group("subtask_terms")["press"]
     # 读取上一步状态
     if not hasattr(env, "_last_press_for_termination"):
