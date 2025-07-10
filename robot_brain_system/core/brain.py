@@ -2,6 +2,7 @@
 Brain component that uses Qwen VL for task planning and monitoring.
 """
 
+import sys
 import time
 import json
 import os
@@ -18,7 +19,7 @@ from robot_brain_system.core.types import (
 )
 from robot_brain_system.core.skill_manager import SkillRegistry
 from robot_brain_system.utils import extract_json_from_text
-from robot_brain_system.core import model_adapters
+
 
 @dataclass
 class BrainState:
@@ -83,12 +84,28 @@ class BrainMemory:
         )
 
     def fetch_history(self, last_n: int = 5) -> List[Dict[str, Any]]:
-        """Fetch the last N entries from the memory."""
-        return self.history[0:1] + (
-            self.history[-last_n * 2 :]  # n round
-            if len(self.history) - 1 >= last_n * 2
-            else self.history
-        )
+        """
+        获取系统提示（第一个条目）以及最后N轮对话。
+        这个方法能正确处理历史记录较短的情况，不会产生重复条目。
+        一轮对话包含一个用户输入和一个助手输出。
+        """
+        # 如果历史记录为空，直接返回空列表
+        if not self.history:
+            return []
+
+        # 1. 系统提示总是被包含在内
+        system_prompt = self.history[0:1]  # 使用切片[0:1]确保结果是列表
+
+        # 2. 对话历史是除了系统提示外的所有内容
+        conversation_history = self.history[1:]
+
+        # 3. 从对话历史中获取最后 n 轮 (n * 2 个条目)
+        # Python的负索引切片很安全，如果条目数不足，它会返回所有可用的条目
+        num_entries_to_fetch = last_n * 2
+        last_n_rounds = conversation_history[-num_entries_to_fetch:]
+
+        # 4. 将系统提示和最近的对话历史合并返回
+        return system_prompt + last_n_rounds
 
     def clear(self):
         """Clear the memory."""
@@ -277,7 +294,7 @@ class QwenVLBrain:
                 "## Skill Execution Context Info:\n"
                 f"Original Task: {self.state.current_task.description}\n"
                 f"Current Skill: {skill_info['name']}\n"
-                f"Skill Description: {skill_info['discription']}\n"
+                f"Skill Description: {skill_info['description']}\n"
                 f"Skill Parameters: {skill_info['parameters']}\n"
                 f"Skill Criterion: {skill_info['criterion']}\n\n"
                 "## Summary memory content as follows:\n"
@@ -422,7 +439,9 @@ class QwenVLBrain:
         assert current_plan is not None
 
         skill_info = self.get_next_skill()
-        assert skill_info is not None
+        assert skill_info is not None, (
+            f"Skill info not found for index {self.state.current_skill_index}"
+        )
 
         self.monitor_memory.clear()
 
@@ -454,15 +473,26 @@ class QwenVLBrain:
         ]
         skill_info = self.skill_registry.get_skill_info(skill_name)
         assert skill_info is not None
-        skill_criterion = skill_info["criterion"]
 
-        return {
-            "name": skill_name,
-            "parameters": skill_params,
-            "criterion": skill_criterion,
-            "discription": skill_info["description"],
-            "index": self.state.current_skill_index,
-        }
+        # skill info:
+        # return {
+        #     "name": skill.name,
+        #     "type": skill.skill_type.value,
+        #     "execution_mode": skill.execution_mode.value,
+        #     "description": skill.description,
+        #     "timeout": skill.timeout,
+        #     "requires_env": skill.requires_env,
+        #     "criterion": skill.criterion,
+        #     "enable_monitoring": skill.enable_monitoring,
+        #     "function_name": skill.function.__name__,  # function object itself is not easily serializable
+        # }
+        skill_info.update(
+            {
+                "parameters": skill_params,
+                "index": self.state.current_skill_index,
+            }
+        )
+        return skill_info
 
     def advance_skill(self):
         """Advance to the next skill in the plan."""
@@ -484,58 +514,58 @@ class QwenVLBrain:
         """Check if it's time to monitor the current skill execution."""
         if self.state.status != SystemStatus.EXECUTING or not self.state.current_plan:
             return False
+        current_skill_info = self.get_next_skill()
+        if not current_skill_info["enable_monitoring"]:
+            return False
         current_time = time.time()
         return (
             current_time - self.state.last_monitoring_time
         ) >= self.state.current_plan.skill_monitoring_interval
 
-    def monitor_skill_execution(
-        self, current_observation: list[Any] = []
-    ) -> Dict[str, Any]:
+    def monitor_skill_execution(self, obs_history: list[Any] = []) -> Dict[str, Any]:
         """
         Monitor current skill execution and make decisions. WE HAVED SUPPORTED MONITORING THE WHOLE TASK EXECUTION
 
         Args:
-            current_observation: Current environment observation
+            obs_history: obs_history
 
         Returns:
-            Dict with monitoring decision (continue, interrupt, retry, etc.)
+            Dict with monitoring result (success, failed, progress, etc.)
         """
         try:
             self.state.last_monitoring_time = time.time()
 
             if not self.state.current_plan or not self.state.current_task:
-                return {"action": "continue", "reason": "No active task"}
+                return {"result": "progress", "reason": "No active task"}
 
             if self.current_skill_monitor_time < self.monitor_waiting_times:
                 self.current_skill_monitor_time += 1
                 return {
-                    "action": "continue",
+                    "result": "progress",
                     "reason": f"current_skill_monitor_time: {self.current_skill_monitor_time}",
                 }
 
-            if len(current_observation) == 0:
+            if len(obs_history) == 0:
                 print("[QwenVLBrain] No observation data available for monitoring")
-                return {"action": "continue", "reason": "No observation data"}
+                return {"result": "progress", "reason": "No observation data"}
 
             # Get current skill info
             current_skill = self.get_next_skill()
-            if not current_skill:
-                return {"action": "complete", "reason": "All skills completed"}
+            assert current_skill
 
             self.state.status = SystemStatus.MONITORING
 
             # Use Qwen VL to analyze current situation
-            decision = self._query_qwen_for_monitoring(
-                self.state.current_task, current_skill, current_observation
+            result = self._query_qwen_for_monitoring(
+                self.state.current_task, current_skill, obs_history
             )
             self.state.status = SystemStatus.EXECUTING
-            return decision
+            return result
 
         except Exception as e:
             self.state.status = SystemStatus.ERROR
             self.state.error_message = str(e)
-            return {"action": "error", "reason": str(e)}
+            return {"result": "progress", "reason": str(e)}
 
     def interrupt_task(self, reason: str = "User interrupt"):
         """Interrupt the current task execution."""
@@ -683,22 +713,22 @@ class QwenVLBrain:
         self,
         task: Task,
         current_skill: Dict[str, Any],
-        observation: Optional[Any],
+        obs_history: Optional[Any],
     ) -> Dict[str, Any]:
         """
         Query Qwen VL to make monitoring decisions.
 
         Uses the configured model adapter to analyze the current situation
-        and decide whether to continue, interrupt, retry, or modify the execution.
+        and output the current skill execution status.
         """
         if self.model_adapter is None:
             # Fallback to mock implementation
-            return self._mock_monitoring_decision(task, current_skill, observation)
-        assert type(observation) is list
+            return self._mock_monitoring_decision(task, current_skill, obs_history)
+        assert type(obs_history) is list
         try:
             if self.visualize:
                 inspector_rgb = (
-                    observation[-1].data["policy"]["camera_top"][0].cpu().numpy()
+                    obs_history[-1].data["policy"]["camera_top"][0].cpu().numpy()
                 )
                 import matplotlib.pyplot as plt
 
@@ -727,10 +757,11 @@ class QwenVLBrain:
                 indices[-1] = available - 1  # Ensure the last index is correct
                 return indices
 
+            # TODO 提取 obs 这部分应该要放在外面才对，这里面只进行query_qwen的逻辑
             # 计算可用的观察帧数
-            available_frames = len(observation)
-            jump = 6
-            total = 8
+            available_frames = len(obs_history)
+            jump = 3
+            total = 4
             indices = []
             if not (
                 indices := calculate_indicesv2(total, available_frames, jump * total)
@@ -746,7 +777,7 @@ class QwenVLBrain:
             for frame_index in indices:
                 video_frames.append(
                     Image.fromarray(
-                        observation[frame_index]
+                        obs_history[frame_index]
                         .data["policy"]["camera_top"][0]
                         .cpu()
                         .numpy()
@@ -788,8 +819,10 @@ class QwenVLBrain:
             # Parse the response to extract monitoring decision
             decision = self._parse_monitoring_response(response_text)
             print(
-                f"[QwenVLBrain] Monitoring decision using {self.adapter_type}: {decision['action']}"
+                f"[QwenVLBrain] Monitoring result using {self.adapter_type}: {decision['result']}"
             )
+            # !!!---!!!
+            obs_history.clear()  # Clear obs_history after monitoring
             return decision
 
         except Exception as e:
@@ -798,7 +831,7 @@ class QwenVLBrain:
 
             traceback.print_exc()
             print("[QwenVLBrain] Falling back to mock monitoring")
-            return self._mock_monitoring_decision(task, current_skill, observation)
+            return self._mock_monitoring_decision(task, current_skill, obs_history)
 
     def _mock_monitoring_decision(
         self,
@@ -901,36 +934,31 @@ class QwenVLBrain:
             decision_data = self._parse_json_response(response_text)
 
             if decision_data is not None:
-                # 原有字段处理逻辑保持不变...
-                action = decision_data.get("action", "continue")
+                result = decision_data.get("result", "progress")
                 reason = decision_data.get("reason", "No reason provided")
                 confidence = decision_data.get("confidence", 0.5)
 
-                valid_actions = [
-                    "continue",
-                    "interrupt",
+                valid_options = [
                     "successed",
                     "failed",
-                    "retry",
-                    "modify",
-                    "complete",
-                    "error",
-                    "not determinable",
+                    "progress",
                 ]
-                if action not in valid_actions:
+                if result not in valid_options:
                     print(
-                        f"[QwenVLBrain] Invalid action '{action}', defaulting to 'continue'"
+                        f"[QwenVLBrain] Invalid result '{result}', defaulting to 'progress'"
                     )
-                    action = "continue"
+                    result = "progress"
 
                 return {
-                    "action": action,
+                    "result": result,
                     "reason": reason,
                     "confidence": confidence,
                 }
             else:
                 # 原有文本解析逻辑
-                return self._parse_monitoring_text(response_text)
+                raise ValueError(
+                    "[QwenVLBrain] Failed to parse valid JSON from response text"
+                )
 
         except json.JSONDecodeError as e:
             print(f"[QwenVLBrain] Failed to parse monitoring JSON: {e}")
@@ -938,64 +966,56 @@ class QwenVLBrain:
         except Exception as e:
             print(f"[QwenVLBrain] Error parsing monitoring response: {e}")
             return {
-                "action": "continue",
+                "result": "progress",
                 "reason": "Error in parsing response",
-            }
-
-    def _parse_monitoring_text(self, response_text: str) -> Dict[str, Any]:
-        """Parse monitoring decision from text response."""
-        response_lower = response_text.lower()
-
-        # Simple keyword-based parsing
-        if any(
-            word in response_lower for word in ["stop", "interrupt", "halt", "abort"]
-        ):
-            return {
-                "action": "interrupt",
-                "reason": "Model suggested interruption",
-            }
-        elif any(word in response_lower for word in ["retry", "again", "restart"]):
-            return {"action": "retry", "reason": "Model suggested retry"}
-        elif any(word in response_lower for word in ["complete", "done", "finished"]):
-            return {
-                "action": "complete",
-                "reason": "Model indicated completion",
-            }
-        elif any(word in response_lower for word in ["error", "fail", "problem"]):
-            return {"action": "error", "reason": "Model detected error"}
-        else:
-            return {
-                "action": "continue",
-                "reason": "Model suggested continuation",
             }
 
     def _format_prompt_for_planning(self, task: Task, skill_descriptions: str) -> str:
         """Format a prompt for Qwen VL planning."""
         prompt = f"""
-You are a robot task planner. Given a task description and available skills, create an execution plan.
+You are a helpful robot task planner. Your goal is to create a JSON execution plan based on a task description and available skills.
+
+**Planning Guidelines:**
+1.  **Analyze Preconditions:** Carefully analyze the task and the initial state (from the image) to determine the necessary preconditions for each step.
+2.  **Logical Order:** Ensure the sequence of skills is logical. For example, interacting with a container (like pressing a button on a box) must happen before taking an object from it.
+3.  **Follow Skill Instructions:** Pay close attention to the instructions within each skill's description, especially regarding required preceding skills.
 
 Task: {task.description}
 
 Available Skills:
 {skill_descriptions}
 
-Please respond with a JSON array representing a sequence of skills to execute.
-Each element in the array should be a JSON object with the following keys:
-- "method": A string representing the name of the skill to be called.
-- "params": A JSON object containing the parameters for that skill. If a skill has no parameters, provide an empty object {{}}.
+First, think step-by-step about the user's request and the available skills. Lay out your reasoning for the chosen sequence of skills. Enclose your entire thinking process within `<thinking>` and `</thinking>` tags.
 
-Example response:
+After your thinking process, provide the final execution plan as a JSON array.
+-   Each object in the array represents one step in the plan.
+-   Each object **must** include a `step` key, which is a sequential integer starting from 1, indicating the logical execution order.
+-   The JSON should be the only thing after the closing `</thinking>` tag.
+
+Example response format:
+<thinking>
+Here I will describe my thought process.
+1. First, I need to achieve X. The skill `skill_A` seems appropriate for this.
+2. Then, the user wants to do Y. The description for `skill_B` says it must be preceded by `skill_C`.
+3. Therefore, the logical sequence is `skill_A`, then `skill_C`, then `skill_B`.
+</thinking>
 ```json
 [
     {{
-        "method": "skill1",
+        "step": 1,
+        "method": "skill_A",
+        "params": {{}}
+    }},
+    {{
+        "step": 2,
+        "method": "skill_C",
         "params": {{
-            "param1_of_skill1": "value",
-            "param2_of_skill1": "value"
+            "param1": "value"
         }}
     }},
     {{
-        "method": "skill2",
+        "step": 3,
+        "method": "skill_B",
         "params": {{}}
     }}
 ]
@@ -1020,7 +1040,7 @@ Execution Summary: {skill_info.get("execution_summary", "No summary as it compel
         )
 
         prompt = f"""
-You are a robot task planner. Given a task description and available skills, create an execution plan.
+You are a helpful robot task planner. Your goal is to create a JSON execution plan based on a task description, the result of a previous attempt, and available skills.
 
 Task: {task.description}
 
@@ -1031,23 +1051,31 @@ Task: {task.description}
 Skill Sequence: {last_plan_info.skill_sequence}
 Skill Params: {last_plan_info.skill_params}
 
-## Skills Execution Info:
+## Skills Execution Info from Last Attempt:
 {skills_execution_info}
 
-## Output
-Based on the above information and the current scene images that will be provided to you next, please do reflection and plan the next plan
-Please respond with a JSON array representing a sequence of skills to execute.
-- "method": A string representing the name of the skill to be called.
-- "params": A JSON object containing the parameters for that skill. If a skill has no parameters, provide an empty object {{}}.
-If you determine the task is finished just output an empty sequence [].
+## Instructions for Your Response
+First, think step-by-step about the previous execution results and the current situation shown in the image. Your thinking process should include:
+1.  **Reflection:** What was the outcome of the last plan? Did it succeed, fail, or result in an unexpected state?
+2.  **Analysis:** Based on your reflection and the current visual evidence, what needs to happen next? Is the task finished? Does a step need to be retried? Or is a new approach required?
+Enclose your entire thinking process within `<thinking>` and `</thinking>` tags.
 
-### Output Format:
-Refection: YOUR REFECTION CONTENT HERE
-Analysis: YOUR ANALYSIS OF MAKEING THIS PLAN
-Plan:
+After your thinking process, provide the final execution plan as a JSON array.
+-   Each object in the array represents one step in the plan.
+-   Each object must include a `step` key (a sequential integer starting from 1), a `method` key (the skill name), and a `params` key.
+-   If you determine the task is finished, output an empty JSON array `[]`.
+-   The JSON should be the only thing after the closing `</thinking>` tag.
+
+### Example Response Format:
+<thinking>
+1.  **Reflection:** YOUR REFLECTION ON THE PREVIOUS EXECUTION AND CURRENT STATE.
+2.  **Analysis:** YOUR ANALYSIS FOR WHY YOU ARE CREATING THE NEW PLAN.
+3.  **Conclusion:** YOUR CONCLUSION ON WHAT NEEDS TO BE DONE NEXT.
+</thinking>
 ```json
 [
     {{
+        "step": 1,
         "method": "skill1",
         "params": {{
             "param1_of_skill1": "value",
@@ -1055,6 +1083,7 @@ Plan:
         }}
     }},
     {{
+        "step": 2,
         "method": "skill2",
         "params": {{}} 
     }}
@@ -1084,26 +1113,24 @@ Plan:
     ) -> str:
         """Format a prompt for Qwen VL monitoring."""
         prompt = f"""The robot are try to orchestrate skills to accomplish a task.
-You are monitoring robot's SKILL execution. Analyze the current situation and decide the next action.
-You should first consider the execution of skills rather than the completion of tasks, based on the skill description and criterion.
+You are monitoring robot's SKILL execution. Analyze the current situation and output the current execution result.
+You should only consider the execution of CURRENT SKILL rather than the completion of tasks.
 
-Original Task: {task.description}
 Current Skill: {current_skill["name"]}
-Skill Description: {current_skill["discription"]}
+Skill Description: {current_skill["description"]}
 Skill Parameters: {current_skill["parameters"]}
 Skill Criterion: {current_skill["criterion"]}
-Available Skills: {chr(10).join(f"- {skill}" for skill in self.skill_registry.list_skills())}
 
 For each round of conversation, you will receive the current observation in Image format, You should analyze the image and response with a JSON object containing:
-- action: One of the key in Skill Criterion
-- reason: Explanation for the decision, based on the rule described in Skill Criterion
+- result: The value for this field must be one of the options from `{current_skill["criterion"].keys()}`
+- reason: Explanation for the result.
 - current_scene_state: Description what happened in the scene, based on the observation
 - confidence: Float between 0 and 1
 
 Example response:
 ```json
 {{
-    "action": "failed",
+    "result": "failed",
     "reason": "The object was not grasped correctly",
     "current_scene_state", "The robot attempted to grasp the object but it slipped",
     "confidence": 0.9
@@ -1112,6 +1139,8 @@ Example response:
 
 Next, Let's start first monitoring round.
 """
+        # Available Skills: {chr(10).join(f"- {skill}" for skill in self.skill_registry.list_skills())}
+        # Original Task: {task.description}
         return prompt
 
     def _parse_plan_response(self, response_text: str, task: Task) -> SkillPlan:
@@ -1135,20 +1164,44 @@ Next, Let's start first monitoring round.
                     expected_duration=0.0,
                 )
 
+            try:
+                sorted_plan_data = sorted(
+                    plan_data, key=lambda item: item.get("step", sys.maxsize)
+                )
+            except TypeError:
+                # This handles cases where 'step' is not a number, etc.
+                print(
+                    "[QwenVLBrain] Error sorting plan steps due to invalid 'step' values. Falling back to empty plan."
+                )
+                return SkillPlan(
+                    task_id=task.id,
+                    skill_sequence=[],
+                    skill_params=[],
+                    skill_monitoring_interval=self.skill_monitoring_interval,
+                    expected_duration=0.0,
+                )
+
             # 从对象列表中构建 skill_sequence 和 skill_params
             skill_sequence = []
             skill_params = []
-            for skill_object in plan_data:
+            for skill_object in sorted_plan_data:
                 if isinstance(skill_object, dict):
-                    # 提取技能名称，如果找不到 'method' 键，可以给个默认值或跳过
+                    # Extract skill name, skip if 'method' key is missing
                     skill_name = skill_object.get("method")
                     if skill_name:
                         skill_sequence.append(skill_name)
-                        # 提取参数，如果找不到 'params' 键或为 None，则提供一个空字典
+                        # Extract params, defaulting to an empty dict if 'params' is missing or null
                         params = skill_object.get("params", {})
-                        if params is None:  # 额外处理模型可能返回 null 的情况
+                        if (
+                            params is None
+                        ):  # Handle cases where model outputs "params": null
                             params = {}
                         skill_params.append(params)
+                    else:
+                        # It's good practice to warn about malformed steps
+                        print(
+                            f"[QwenVLBrain] Warning: A step object is missing the 'method' key and will be ignored: {skill_object}"
+                        )
                 else:
                     print(
                         f"[QwenVLBrain] Warning: Found a non-dictionary item in the plan data: {skill_object}"
@@ -1176,3 +1229,30 @@ Next, Let's start first monitoring round.
                 skill_monitoring_interval=self.skill_monitoring_interval,
                 expected_duration=0.0,
             )
+
+    # def _parse_monitoring_text(self, response_text: str) -> Dict[str, Any]:
+    #     """Parse monitoring decision from text response."""
+    #     response_lower = response_text.lower()
+
+    #     # Simple keyword-based parsing
+    #     if any(
+    #         word in response_lower for word in ["stop", "interrupt", "halt", "abort"]
+    #     ):
+    #         return {
+    #             "action": "interrupt",
+    #             "reason": "Model suggested interruption",
+    #         }
+    #     elif any(word in response_lower for word in ["retry", "again", "restart"]):
+    #         return {"action": "retry", "reason": "Model suggested retry"}
+    #     elif any(word in response_lower for word in ["complete", "done", "finished"]):
+    #         return {
+    #             "action": "complete",
+    #             "reason": "Model indicated completion",
+    #         }
+    #     elif any(word in response_lower for word in ["error", "fail", "problem"]):
+    #         return {"action": "error", "reason": "Model detected error"}
+    #     else:
+    #         return {
+    #             "action": "continue",
+    #             "reason": "Model suggested continuation",
+    #         }

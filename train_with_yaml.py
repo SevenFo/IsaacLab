@@ -223,7 +223,8 @@ def override_config_with_cli_args(
             if hasattr(obj, k):
                 obj = getattr(obj, k)
             else:
-                logging.warning(f"Unknown config path: {key}")
+                logging.warning(f"Unknown config path: {k} of {key}")
+                logging.warning(f"Available attributes: {dir(obj)}")
                 break
         else:
             # Set the final attribute
@@ -260,6 +261,40 @@ def override_config_with_cli_args(
                     logging.info(f"Override: {key} = {value}")
             else:
                 logging.warning(f"Unknown config attribute: {key}")
+
+    return config
+
+
+def override_yaml_config_with_cli_args(
+    yaml_config: Dict[str, Any], cli_overrides: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Override YAML configuration with CLI arguments using dot notation."""
+    config = yaml_config.copy()  # Make a copy to avoid modifying original
+
+    for key, value in cli_overrides.items():
+        # Split the key by dots to navigate nested dictionaries
+        keys = key.split(".")
+        obj = config
+
+        # Navigate to the parent dictionary
+        for k in keys[:-1]:
+            if k not in obj:
+                # Create nested dictionary if it doesn't exist
+                obj[k] = {}
+            elif not isinstance(obj[k], dict):
+                logging.warning(f"Cannot override {key}: {k} is not a dictionary")
+                break
+            obj = obj[k]
+        else:
+            # Set the final value
+            final_key = keys[-1]
+            old_value = obj.get(final_key)
+            obj[final_key] = value
+
+            if old_value is not None:
+                logging.info(f"Override: {key} = {value} (was: {old_value})")
+            else:
+                logging.info(f"Override: {key} = {value} (new)")
 
     return config
 
@@ -329,15 +364,15 @@ def main():
     logging.info(f"Loading configuration from: {args.config}")
     yaml_config = load_yaml_config(args.config)
 
-    # Convert to TrainPipelineConfig
-    train_config = yaml_to_train_config(yaml_config)
-
-    # Parse and apply CLI overrides
+    # Parse and apply CLI overrides to YAML config
     if unknown_args:
         cli_overrides = parse_cli_overrides(unknown_args)
         if cli_overrides:
             logging.info(f"Applying CLI overrides: {cli_overrides}")
-            train_config = override_config_with_cli_args(train_config, cli_overrides)
+            yaml_config = override_yaml_config_with_cli_args(yaml_config, cli_overrides)
+
+    # Convert to TrainPipelineConfig
+    train_config = yaml_to_train_config(yaml_config)
 
     # Setup wandb offline mode if specified in config
     wandb_cfg = yaml_config.get("wandb", {})

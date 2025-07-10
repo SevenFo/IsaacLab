@@ -51,7 +51,6 @@ class UR5BoxMoveEnvCfg(move_joint_pos_env_cfg_rgb.UR5BoxMoveEnvCfg):
                 pos=[0.0, 0.0, 0.0]
             ),
         )
-        
-        self.terminations.success.params = {
-            "disable": True
-        }
+
+        self.terminations.success.params = {"disable": True}
+        self.max_episode_length = 1e6  # effectively infinite for this task

@@ -5,28 +5,23 @@ Basic skills for robot control.
 import time
 import numpy as np
 import torch  # Keep for type hinting / potential use by skills
-from typing import Dict, Any, Generator, Optional
+from typing import Dict, Any, Generator
 
 # Assuming Action and Observation types are primarily for IPC,
 # skills will now directly use env.step() and standard Isaac Lab obs/action formats.
-from ..core.types import (
-    SkillType,
-    ExecutionMode,
-)  # Action, Observation (these might become less relevant for in-skill use)
-from ..core.skill_manager import skill_register
 
 
-@skill_register(
-    name="reset_to_home",
-    skill_type=SkillType.FUNCTION,
-    execution_mode=ExecutionMode.GENERATOR,
-    description="Reset robot to home position, when robot stucked in some state, this skill may be helpful",
-    criterion={
-        "progress": "This is a baisc skill, no need to monitor, just return progress, let skill itself handle it."
-    },
-    timeout=10.0,
-    requires_env=True,  # This skill now needs the environment
-)
+# @skill_register(
+#     name="reset_to_home",
+#     skill_type=SkillType.FUNCTION,
+#     execution_mode=ExecutionMode.GENERATOR,
+#     description="Reset robot to home position, when robot stucked in some state, this skill may be helpful",
+#     criterion={
+#         "progress": "This is a baisc skill, no need to monitor, just return progress, let skill itself handle it."
+#     },
+#     timeout=10.0,
+#     requires_env=True,  # This skill now needs the environment
+# )
 def reset_to_home(env: Any) -> Generator[None, None, str]:
     """Reset robot to home position, when robot stucked in some state, this skill may be helpful.
     Param: NONE, NO NOT PASS PARAMS TO THIS SKILL, IT WOULD COUSE ERROR!
@@ -68,9 +63,7 @@ def reset_to_home(env: Any) -> Generator[None, None, str]:
 #     timeout=None,  # No timeout for wait skill
 #     requires_env=True,  # Needs env to potentially send no-op actions or just for consistency
 # )
-def wait_skill(
-    env: Any, params: Dict[str, Any]
-) -> Generator[None, None, bool]:
+def wait_skill(env: Any, params: Dict[str, Any]) -> Generator[None, None, bool]:
     """
     Wait for a specified duration.
     During the wait, the skill will yield, allowing the simulator to step.
@@ -158,9 +151,7 @@ def get_current_state(
     # This is highly dependent on the specific environment's action space.
     # As a generic approach for Isaac Lab envs, taking a zero action is common.
     # Example for a 7-DoF action space (e.g. delta EE pose + gripper)
-    no_op_action_np = np.zeros(
-        env.action_space.shape, dtype=env.action_space.dtype
-    )
+    no_op_action_np = np.zeros(env.action_space.shape, dtype=env.action_space.dtype)
     action_tensor = (
         torch.from_numpy(no_op_action_np).to(env.unwrapped.device).unsqueeze(0)
     )  # Batch for single env
@@ -189,7 +180,7 @@ def get_current_state(
         "info": info,  # This might contain sim-specific details
     }
 
-    print(f"[Skill] get_current_state: Retrieved state.")
+    print("[Skill] get_current_state: Retrieved state.")
     return state_info
 
 

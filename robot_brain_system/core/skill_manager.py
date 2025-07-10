@@ -36,6 +36,7 @@ class SkillRegistry:
         timeout: Optional[float] = None,
         requires_env: bool = False,
         criterion: Dict[str, str] | None = None,  # 新增参数
+        enable_monitoring: bool = True,  # 是否启用监控
     ):
         """Register a skill in the registry."""
         name = name or function.__name__
@@ -54,6 +55,7 @@ class SkillRegistry:
             timeout=timeout,
             requires_env=requires_env,
             criterion=criterion,
+            enable_monitoring=enable_monitoring,  # 是否启用监控
         )
 
         self.skills[name] = skill_def
@@ -91,6 +93,7 @@ class SkillRegistry:
             "timeout": skill.timeout,
             "requires_env": skill.requires_env,
             "criterion": skill.criterion,
+            "enable_monitoring": skill.enable_monitoring,
             "function_name": skill.function.__name__,  # function object itself is not easily serializable
         }
 
@@ -188,6 +191,7 @@ def skill_register(
     timeout: Optional[float] = None,
     requires_env: bool = False,
     criterion: Dict[str, str] | None = None,  # 新增参数
+    enable_monitoring: bool = True,  # 是否启用监控
 ):
     """Decorator to register a function as a skill."""
 
@@ -203,6 +207,7 @@ def skill_register(
             timeout=timeout,
             requires_env=requires_env,
             criterion=criterion,
+            enable_monitoring=enable_monitoring,  # 是否启用监控
         )
         return func
 
@@ -238,7 +243,11 @@ class SkillExecutor:
         self.env_device = env.unwrapped.device
 
     def start_skill(
-        self, skill_name: str, parameters: Dict[str, Any], env: Optional[Any], initial_obs: Optional[Any]
+        self,
+        skill_name: str,
+        parameters: Dict[str, Any],
+        env: Optional[Any],
+        initial_obs: Optional[Any],
     ) -> bool:
         """Start a skill execution (non-blocking for generator skills)."""
         if self.is_running():
@@ -270,7 +279,7 @@ class SkillExecutor:
             args_for_skill = dict()  # Use a dict to collect args
             if skill_def.requires_env:
                 args_for_skill["env"] = env  # Add environment if required
-                args_for_skill['initial_obs'] = initial_obs
+                args_for_skill["initial_obs"] = initial_obs
             args_for_skill.update(parameters)  # Add parameters
 
             if skill_def.execution_mode == ExecutionMode.GENERATOR:
@@ -307,7 +316,8 @@ class SkillExecutor:
     def initialize_skill(
         self, skill_name: str, parameters: Dict[str, Any], policy_device: None
     ):
-        if not policy_device: policy_device = self.env_device
+        if not policy_device:
+            policy_device = self.env_device
         if self.is_running():
             print(
                 f"[SkillExecutor] Another skill '{self.current_skill_name}' is already running. Terminating it."
@@ -324,13 +334,16 @@ class SkillExecutor:
 
         try:
             if skill_def.execution_mode == ExecutionMode.STEPACTION:
-                self.current_skill = skill_def.function(policy_device,**parameters)
+                self.current_skill = skill_def.function(policy_device, **parameters)
                 self.current_skill_name = skill_name
                 self.current_skill_params = parameters
                 self.status = SkillStatus.RUNNING
                 print(f"[SkillExecutor] Started policy skill: {skill_name}")
                 return True
-            elif skill_def.execution_mode == ExecutionMode.DIRECT or skill_def.execution_mode == ExecutionMode.GENERATOR:
+            elif (
+                skill_def.execution_mode == ExecutionMode.DIRECT
+                or skill_def.execution_mode == ExecutionMode.GENERATOR
+            ):
                 assert False, "Unsupported now!"
                 # Direct execution is inherently blocking, so it completes immediately
                 result = skill_def.function(*args_for_skill)
@@ -361,27 +374,34 @@ class SkillExecutor:
             state of each step
             None if no skill was running.
         """
-        action:Action = self.current_skill.select_action(obs)
-        action_info = action.metadata['info']
-        action_data = action.data.to(self.env_device)
-        if action_info == 'error':
-            print(
-                f"[SkillExecutor] Error stepping skill {self.current_skill_name}"
-            )
+        action: Action = self.current_skill.select_action(obs)
+        action_info = action.metadata["info"]
+        if action_info == "error":
+            print(f"[SkillExecutor] Error stepping skill {self.current_skill_name}")
             self.status = SkillStatus.FAILED
             self._reset_current_skill_state()
             return (None, None, None, None, None)
+        elif action_info == "finished":
+            print(
+                f"[SkillExecutor] Skill {self.current_skill_name} finished successfully."
+            )
+            self.status = SkillStatus.COMPLETED
+            self._reset_current_skill_state()
+            return (None, None, None, None, None)
+        elif action_info == "timeout":
+            print(f"[SkillExecutor] Skill {self.current_skill_name} timed out.")
+            self.status = SkillStatus.TIMEOUT
+            self._reset_current_skill_state()
+            return (None, None, None, None, None)
         else:
+            action_data = action.data.to(self.env_device)
             step_result = self.env.step(action_data)
             # TODO 或许需要判断step后的情况？按道理来说应该是大模型来判断的！至少应该加一个超时判断
         return step_result
 
     def is_running(self) -> bool:
         """Check if a non-blocking skill is currently running."""
-        return (
-            self.status == SkillStatus.RUNNING
-            and self.current_skill is not None
-        )
+        return self.status == SkillStatus.RUNNING and self.current_skill is not None
 
     def terminate_current_skill(
         self, skill_status: SkillStatus = SkillStatus.INTERRUPTED

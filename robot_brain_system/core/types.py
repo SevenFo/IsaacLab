@@ -3,11 +3,10 @@ Core types and enums for the robot brain system.
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional, List, Union, Generator, Callable, ClassVar
+from typing import Any, Dict, Optional, List, Union, Generator, Callable
 from dataclasses import dataclass, field
 import numpy as np
 import torch
-
 
 
 class SystemStatus(Enum):
@@ -39,7 +38,7 @@ class Action:
     """Action representation for the environment."""
 
     data: torch.tensor
-    metadata: Dict[str, Any] = field(default_factory=lambda:{})
+    metadata: Dict[str, Any] = field(default_factory=lambda: {})
 
     def to_numpy(self) -> np.ndarray:
         """Convert action to numpy array format."""
@@ -47,9 +46,7 @@ class Action:
             return self.data
         elif isinstance(self.data, dict):
             # Flatten dict to array based on some convention
-            return np.concatenate(
-                [np.array(v).flatten() for v in self.data.values()]
-            )
+            return np.concatenate([np.array(v).flatten() for v in self.data.values()])
         else:
             return np.array(self.data)
 
@@ -104,13 +101,12 @@ class ExecutionMode(Enum):
 
     DIRECT = "direct"  # Execute immediately without yielding
     GENERATOR = "generator"  # Execute with yield for env.step() calls
-    STEPACTION = 'stepaction'
+    STEPACTION = "stepaction"
+
 
 # Type aliases for better readability
-SkillGenerator = Callable[
-    [Dict[str, Any]], Generator[Action, Observation, Any]
-]
-PolicyFunction = object # TODO
+SkillGenerator = Callable[[Dict[str, Any]], Generator[Action, Observation, Any]]
+PolicyFunction = object  # TODO
 DirectFunction = Callable[[Dict[str, Any]], bool]
 
 
@@ -121,13 +117,12 @@ class SkillDefinition:
     name: str
     skill_type: SkillType
     execution_mode: ExecutionMode
-    function: any # TODO
+    function: any  # TODO
     description: str = ""
     timeout: Optional[float] = None
     requires_env: bool = False
-    criterion: Dict[str, str] | None = (
-        None  # 新增字段，用于描述技能状态判定条件
-    )
+    criterion: Dict[str, str] | None = None  # 新增字段，用于描述技能状态判定条件
+    enable_monitoring: bool = True  # 是否启用监控
 
     def __post_init__(self):
         if self.criterion is None:

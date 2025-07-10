@@ -3,14 +3,17 @@ Manipulation skills for robot arm control.
 Primarily features the 'assemble_object' skill using a pre-trained policy.
 """
 
-import time
 import numpy as np
 import torch
+from scipy.spatial.transform import Rotation as R
+
 # Ensure os module is imported if not already
 import os
-from typing import Dict, Any, Generator, Tuple, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
-from ..core.types import SkillType, ExecutionMode, PolicyFunction, Action
+import isaaclab.utils.math as math_utils
+
+from ..core.types import SkillType, ExecutionMode, Action
 from ..core.skill_manager import skill_register
 
 # Attempt to import Robomimic, make it optional
@@ -26,12 +29,10 @@ except ImportError:
         "[Skill] Warning: robomimic library not found. Assemble skill will not be functional."
     )
 
-
 # Type hinting for Isaac Lab environment if available
 if TYPE_CHECKING:
-    from omni.isaac.lab.envs import (
-        ManagerBasedRLEnv,
-    )  # Or the specific env type you use
+    pass  # Or the specific env type you use
+
 
 @skill_register(
     name="press_button",
@@ -39,27 +40,26 @@ if TYPE_CHECKING:
     execution_mode=ExecutionMode.STEPACTION,
     timeout=300.0,  # 5 minutes, adjust as needed
     criterion={
-        "successed": "The red box is opened",
-        "failed": "".join(["The gripper posisiton is far away from the box and yellow button, ",
-                           "or the gripper was pressed on areas other than the yellow button,"
-                   "or the gripper is lingering (not moving) for several monitoring rounds, ",
-                   "or any other gripper state that is not reasonable to execute the skill."]),
-        "progress": "The gripper is on a reasonable state to execute the skill, such as: moving towards the red box and yellow button, etc.",
+        "successed": "As long as the box is opened, it is a success.",
+        "failed": "".join(
+            ["gripper state that is not reasonable to execute the skill."]
+        ),  # The gripper posisiton is far away from the box and yellow button, ", "or the gripper was pressed on areas other than the yellow button," "or the gripper is lingering (not moving) for several monitoring rounds, ", "or any other
+        "progress": "The gripper is on a reasonable state to execute the skill",  # , such as: moving towards the red box and yellow button, etc.
     },
     requires_env=True,
 )
-class PressButton: 
+class PressButton:
     """
-    Press the yellow button on a red box using a pre-trained Robomimic policy.
-    This skill runs the policy step-by-step within the Isaac simulator.
+    This skill is used for openning a red box by pressing the yellow button on the red box.
 
     Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
-    """       
-    def __init__(self, policy_device: str = 'cuda', **running_params):
+    """
+
+    def __init__(self, policy_device: str = "cuda", **running_params):
         self.policy_device = policy_device
         self.running_params = running_params
         if not ROBOMIMIC_AVAILABLE:
-            print(  
+            print(
                 "[Skill: press_button] Robomimic library not available. Cannot execute."
             )
             return None
@@ -73,7 +73,6 @@ class PressButton:
             )
             return None
 
-
         print(f"[Skill: press_button] Using policy device: {policy_device}")
         print(f"[Skill: press_button] Loading policy from: {checkpoint_path}")
 
@@ -86,19 +85,22 @@ class PressButton:
             return None
 
         print("[Skill: press_button] Policy loaded")
-
+        self.num_steps = 0  # Initialize step counter
         self.policy = policy
         self.policy.start_episode()
 
     def select_action(self, obs_dict: dict) -> Action:
-        policy_obs_key = (
-            "policy"  # Common key in Isaac Lab tasks for policy inputs
-        )
+        if self.num_steps >= 100:
+            print(
+                "[Skill: PressButton] Maximum steps reached, stopping skill execution."
+            )
+            return Action([], metadata={"info": "timeout"})
+        policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
             print(
                 f"[Skill: PressButton] Error: Key '{policy_obs_key}' not found in initial observations."
             )
-            return Action([], metadata={"info":'error'})
+            return Action([], metadata={"info": "error"})
 
         policy_input_source = obs_dict[policy_obs_key]
 
@@ -120,11 +122,13 @@ class PressButton:
             print(
                 f"[Skill: PressButton] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
-            return Action([], metadata={"info":'error'})
-        
-        return Action(torch.from_numpy(action_np).unsqueeze(0), metadata={"info":'success'})
+            return Action([], metadata={"info": "error"})
+        self.num_steps += 1
+        return Action(
+            torch.from_numpy(action_np).unsqueeze(0), metadata={"info": "success"}
+        )
 
-        
+
 @skill_register(
     name="grasp_spanner",
     skill_type=SkillType.POLICY,  # Could be SkillType.POLICY if you have a separate handler
@@ -132,23 +136,26 @@ class PressButton:
     timeout=300.0,  # 5 minutes, adjust as needed
     criterion={
         "successed": "the spanner is graspped by the gripper and pleased on the desk",
-        "failed": "".join(["any gripper state that is not reasonable to execute the skill."]),
+        "failed": "".join(
+            ["any gripper state that is not reasonable to execute the skill."]
+        ),
         "progress": "The gripper is on a reasonable state to execute the skill",
     },
     requires_env=True,
 )
-class GraspSpanner: 
+class GraspSpanner:
     """
-    Grasp a spanner on the red box and move it to the desk surface using a pre-trained Robomimic policy.
-    This skill runs the policy step-by-step within the Isaac simulator.
+    Grasp a spanner on the red box and move it to the desk surface.
+    You must call `move_to_target` to the home position IMMEDIATELY before this skill.
 
     Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
-    """       
-    def __init__(self, policy_device: str = 'cuda', **running_params):
+    """
+
+    def __init__(self, policy_device: str = "cuda", **running_params):
         self.policy_device = policy_device
         self.running_params = running_params
         if not ROBOMIMIC_AVAILABLE:
-            print(  
+            print(
                 "[Skill: GraspSpanner] Robomimic library not available. Cannot execute."
             )
             return None
@@ -161,7 +168,6 @@ class GraspSpanner:
                 f"[Skill: GraspSpanner] Error: Checkpoint path '{checkpoint_path}' does not exist."
             )
             return None
-
 
         print(f"[Skill: GraspSpanner] Using policy device: {policy_device}")
         print(f"[Skill: GraspSpanner] Loading policy from: {checkpoint_path}")
@@ -178,19 +184,30 @@ class GraspSpanner:
 
         self.policy = policy
         self.policy.start_episode()
+        self.num_steps = 0  # Initialize step counter
 
     def select_action(self, obs_dict: dict) -> Action:
-        policy_obs_key = (
-            "policy"  # Common key in Isaac Lab tasks for policy inputs
-        )
+        if self.num_steps >= 150:
+            print(
+                "[Skill: GraspSpanner] Maximum steps reached, stopping skill execution."
+            )
+            return Action([], metadata={"info": "timeout"})
+        # 早期版本的 GraspSpanner 没有使用和 button 相关的特征，需要进行转化
+        policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
             print(
                 f"[Skill: GraspSpanner] Error: Key '{policy_obs_key}' not found in initial observations."
             )
-            return Action([], metadata={"info":'error'})
+            return Action([], metadata={"info": "error"})
 
         policy_input_source = obs_dict[policy_obs_key]
-
+        policy_input_source["object"] = torch.cat(
+            [
+                policy_input_source["object"][..., 0:7],
+                policy_input_source["object"][..., 14:33],
+            ],
+            dim=-1,
+        )
         current_policy_obs = OrderedDict()
         for key, tensor_val in policy_input_source.items():
             if not isinstance(tensor_val, torch.Tensor):
@@ -209,8 +226,213 @@ class GraspSpanner:
             print(
                 f"[Skill: GraspSpanner] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
-            return Action([], metadata={"info":'error'})
-        
-        return Action(torch.from_numpy(action_np).unsqueeze(0), metadata={"info":'success'})
+            return Action([], metadata={"info": "error"})
+        self.num_steps += 1
+        return Action(
+            torch.from_numpy(action_np).unsqueeze(0), metadata={"info": "success"}
+        )
 
-        
+
+# --- HELPER FUNCTION (quat_to_axis_angle_torch) from the previous answer ---
+# (This remains unchanged)
+def quat_to_axis_angle_torch(q: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
+    """
+    Convert a quaternion to an axis-angle representation using PyTorch.
+    ... (full implementation from previous response) ...
+    """
+    qw = q[..., 0]
+    qv = q[..., 1:4]
+    angle = 2 * torch.acos(torch.clamp(qw, -1.0, 1.0))
+    sin_half_angle = torch.sin(angle / 2)
+    is_not_zero_angle = sin_half_angle.abs() > epsilon
+    axis = torch.where(
+        is_not_zero_angle.unsqueeze(-1),
+        qv / sin_half_angle.unsqueeze(-1),
+        torch.tensor([1.0, 0.0, 0.0], device=q.device, dtype=q.dtype),
+    )
+    axis_angle_vec = axis * angle.unsqueeze(-1)
+    return axis_angle_vec
+
+
+@skill_register(
+    name="move_to_target",
+    skill_type=SkillType.POLICY,
+    execution_mode=ExecutionMode.STEPACTION,
+    timeout=300.0,
+    enable_monitoring=False,  # Disable monitoring for this skill
+    requires_env=True,
+)
+class MoveToTarget:
+    """Moves the robot's end-effector to a specified target pose.
+
+    This skill uses a P-controller to generate delta pose actions (linear and angular
+    velocity) to guide the end-effector.
+
+    Args:
+        target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
+    """
+
+    def __init__(
+        self,
+        policy_device: str = "cuda",
+        **running_params,
+    ):
+        if "target_pose" not in running_params:
+            raise ValueError("MoveToTarget skill requires 'target_pose' as param.")
+        target_pose: List[float] = running_params["target_pose"]
+        gripper_state: float = running_params.get(
+            "gripper_state", 1.0
+        )  # gripper_state (float, optional): Command for the gripper. Defaults to 0.0.
+        pos_gain: float = running_params.get(
+            "pos_gain", 1.0
+        )  # pos_gain (float, optional): Proportional gain for position control. Defaults to 1.0
+        rot_gain: float = running_params.get(
+            "rot_gain", 0.5
+        )  # rot_gain (float, optional): Proportional gain for rotation control. Defaults to 0.5
+        max_pos_vel: float = running_params.get(
+            "max_pos_vel", 0.2
+        )  # max_pos_vel (float, optional): Maximum linear velocity (m/s). Defaults to 0.2.
+        max_rot_vel: float = running_params.get(
+            "max_rot_vel", 0.5
+        )  # max_rot_vel (float, optional): Maximum angular velocity (rad/s). Defaults to 0.5.
+        enable_verification: bool = True
+        print("[Skill: MoveToTarget] Initializing...")
+        self.device = policy_device
+        self.enable_verification = enable_verification
+
+        if not isinstance(target_pose, list) or len(target_pose) != 7:
+            raise ValueError(
+                f"MoveToTarget requires 'target_pose' to be a list of 7 floats, but got {target_pose}"
+            )
+        self.target_pose = torch.tensor(
+            target_pose, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
+
+        self.target_pos = self.target_pose[:, :3]
+        self.target_quat = self.target_pose[:, 3:7]
+        self.gripper_state = torch.tensor(
+            [[gripper_state]], dtype=torch.float32, device=self.device
+        )
+        self.pos_gain = pos_gain
+        self.rot_gain = rot_gain
+        self.max_pos_vel = max_pos_vel
+        self.max_rot_vel = max_rot_vel
+        self.epsilon = 1e-6
+
+        if self.enable_verification:
+            print(
+                "[Skill: MoveToTarget] VERIFICATION MODE IS ENABLED. SciPy will be used to check torch results."
+            )
+
+        print(
+            f"[Skill: MoveToTarget] Target pose set to: {self.target_pose.cpu().numpy().tolist()}"
+        )
+        print("[Skill: MoveToTarget] Initialized successfully.")
+
+    def _verify_rotation_calculation(
+        self, torch_rot_vec: torch.Tensor, error_quat: torch.Tensor
+    ):
+        """
+        Calculates the rotation vector using SciPy and asserts its closeness to the torch version.
+        This is a slow, for-testing-only method.
+        """
+        # 1. Get data on CPU as NumPy arrays
+        error_quat_np = error_quat.cpu().numpy()
+
+        # 2. Convert from (w, x, y, z) to SciPy's (x, y, z, w) format
+        error_quat_np_xyzw = error_quat_np[:, [1, 2, 3, 0]]
+
+        # 3. Perform SciPy calculation
+        scipy_rot_vec_np = R.from_quat(error_quat_np_xyzw).as_rotvec()
+
+        # 4. Compare with the torch implementation's result
+        torch_rot_vec_np = torch_rot_vec.cpu().numpy()
+
+        # 5. Assert that they are close. atol (absolute tolerance) handles the near-zero case.
+        assert np.allclose(torch_rot_vec_np, scipy_rot_vec_np, atol=1e-2), (
+            f"Rotation mismatch!\nTorch: {torch_rot_vec_np}\nSciPy: {scipy_rot_vec_np}"
+        )
+
+    def select_action(self, obs_dict: dict) -> Action:
+        eef_pose_key = ["eef_pos", "eef_quat"]
+        if "policy" not in obs_dict or not all(
+            key in obs_dict["policy"] for key in eef_pose_key
+        ):
+            print(
+                f"[Skill: MoveToTarget] Error: Key '{eef_pose_key}' not found in observations."
+            )
+            return Action(
+                [],
+                metadata={
+                    "info": "error",
+                    "reason": f"Missing observation key: {eef_pose_key}",
+                },
+            )
+
+        # 直接获取位置和姿态，无需先拼接再分割
+        current_pos = obs_dict["policy"]["eef_pos"]
+        current_quat = obs_dict["policy"]["eef_quat"]
+
+        # 确保维度正确并移动到设备
+        if current_pos.dim() == 1:
+            current_pos = current_pos.unsqueeze(0)
+        if current_quat.dim() == 1:
+            current_quat = current_quat.unsqueeze(0)
+
+        current_pos = current_pos.to(self.device)
+        current_quat = current_quat.to(self.device)
+
+        # --- Position Control (unchanged) ---
+        pos_error = self.target_pos - current_pos
+        desired_pos_vel = pos_error * self.pos_gain
+        pos_vel_norm = torch.linalg.norm(desired_pos_vel, dim=1, keepdim=True)
+        scaled_pos_vel = desired_pos_vel * torch.min(
+            torch.ones_like(pos_vel_norm),
+            self.max_pos_vel / (pos_vel_norm + self.epsilon),
+        )
+        delta_pos = scaled_pos_vel
+
+        # --- Rotation Control (with verification logic) ---
+        # Calculate the error quaternion using PyTorch
+        error_quat = math_utils.quat_mul(
+            self.target_quat, math_utils.quat_conjugate(current_quat)
+        )
+        error_quat = torch.where(error_quat[:, 0:1] < 0, -error_quat, error_quat)
+
+        # Convert error quaternion to an axis-angle vector using our high-performance torch function
+        total_rot_vec = quat_to_axis_angle_torch(error_quat)
+
+        # -- VERIFICATION BLOCK --
+        if self.enable_verification:
+            # This function will throw an AssertionError if the results don't match
+            self._verify_rotation_calculation(total_rot_vec, error_quat)
+        # -- END VERIFICATION BLOCK --
+
+        # check if the delta is too small
+        if (
+            torch.linalg.norm(total_rot_vec, dim=-1) + torch.linalg.norm(delta_pos)
+            < 0.1
+        ):
+            print("[Skill: MoveToTarget] Delta is too small, skill finished.")
+            return Action([], metadata={"info": "finished"})
+
+        # Continue with the pure torch result
+        desired_rot_vel = total_rot_vec * self.rot_gain
+        rot_vel_norm = torch.linalg.norm(desired_rot_vel, dim=1, keepdim=True)
+        scaled_rot_vel = desired_rot_vel * torch.min(
+            torch.ones_like(rot_vel_norm),
+            self.max_rot_vel / (rot_vel_norm + self.epsilon),
+        )
+        delta_rot = scaled_rot_vel
+
+        # --- Combine and create final action ---
+        delta_pose_action = torch.cat([delta_pos, delta_rot], dim=1)
+        final_action = torch.cat(
+            [
+                delta_pose_action,
+                self.gripper_state.expand(delta_pose_action.shape[0], -1),
+            ],
+            dim=1,
+        )
+
+        return Action(final_action, metadata={"info": "success"})

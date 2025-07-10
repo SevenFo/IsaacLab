@@ -15,7 +15,12 @@ from typing import Any, ClassVar
 
 from isaacsim.core.version import get_version
 
-from isaaclab.managers import CommandManager, CurriculumManager, RewardManager, TerminationManager
+from isaaclab.managers import (
+    CommandManager,
+    CurriculumManager,
+    RewardManager,
+    TerminationManager,
+)
 from isaaclab.ui.widgets import ManagerLiveVisualizer
 
 from .common import VecEnvStepReturn
@@ -64,7 +69,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
     cfg: ManagerBasedRLEnvCfg
     """Configuration for the environment."""
 
-    def __init__(self, cfg: ManagerBasedRLEnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(
+        self, cfg: ManagerBasedRLEnvCfg, render_mode: str | None = None, **kwargs
+    ):
         """Initialize the environment.
 
         Args:
@@ -81,7 +88,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- counter for curriculum
         self.common_step_counter = 0
         # -- init buffers
-        self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+        self.episode_length_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.long
+        )
         # -- set the framerate of the gym video recorder wrapper so that the playback speed of the produced video matches the simulation
         self.metadata["render_fps"] = 1 / self.step_dt
 
@@ -138,11 +147,17 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
 
         self.manager_visualizers = {
             "action_manager": ManagerLiveVisualizer(manager=self.action_manager),
-            "observation_manager": ManagerLiveVisualizer(manager=self.observation_manager),
+            "observation_manager": ManagerLiveVisualizer(
+                manager=self.observation_manager
+            ),
             "command_manager": ManagerLiveVisualizer(manager=self.command_manager),
-            "termination_manager": ManagerLiveVisualizer(manager=self.termination_manager),
+            "termination_manager": ManagerLiveVisualizer(
+                manager=self.termination_manager
+            ),
             "reward_manager": ManagerLiveVisualizer(manager=self.reward_manager),
-            "curriculum_manager": ManagerLiveVisualizer(manager=self.curriculum_manager),
+            "curriculum_manager": ManagerLiveVisualizer(
+                manager=self.curriculum_manager
+            ),
         }
 
     """
@@ -189,7 +204,10 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             # render between steps only if the GUI or an RTX sensor needs it
             # note: we assume the render interval to be the shortest accepted rendering interval.
             #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
-            if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
+            if (
+                self._sim_step_counter % self.cfg.sim.render_interval == 0
+                and is_rendering
+            ):
                 self.sim.render()
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
@@ -233,12 +251,39 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- step interval events
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
+
+        if "press" in self.event_manager.available_modes:
+            # apply step events
+            pressed = self.observation_manager.compute_group("subtask_terms")["press"]
+
+            # 初始化上一步状态
+            if not hasattr(self, "_last_pressed"):
+                self._last_pressed = torch.zeros_like(
+                    pressed, dtype=torch.bool, device=pressed.device
+                )
+
+            # 检测 rising edge（从 False 变 True）
+            newly_pressed = (~self._last_pressed) & pressed
+
+            if newly_pressed.any():
+                env_ids = newly_pressed.nonzero(as_tuple=False).squeeze(-1)
+                self.event_manager.apply(mode="press", env_ids=env_ids)
+
+            # 更新上一步状态
+            self._last_pressed = pressed.clone()
+
         # -- compute observations
         # note: done after reset to get the correct observations for reset envs
         self.obs_buf = self.observation_manager.compute()
 
         # return observations, rewards, resets and extras
-        return self.obs_buf, self.reward_buf, self.reset_terminated, self.reset_time_outs, self.extras
+        return (
+            self.obs_buf,
+            self.reward_buf,
+            self.reset_terminated,
+            self.reset_time_outs,
+            self.extras,
+        )
 
     def render(self, recompute: bool = False) -> np.ndarray | None:
         """Run rendering without stepping through the physics.
@@ -287,7 +332,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
                     self.cfg.viewer.cam_prim_path, self.cfg.viewer.resolution
                 )
                 # create rgb annotator -- used to read data from the render product
-                self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
+                self._rgb_annotator = rep.AnnotatorRegistry.get_annotator(
+                    "rgb", device="cpu"
+                )
                 self._rgb_annotator.attach([self._render_product])
             # obtain the rgb data
             rgb_data = self._rgb_annotator.get_data()
@@ -296,7 +343,10 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
             # return the rgb data
             # note: initially the renerer is warming up and returns empty data
             if rgb_data.size == 0:
-                return np.zeros((self.cfg.viewer.resolution[1], self.cfg.viewer.resolution[0], 3), dtype=np.uint8)
+                return np.zeros(
+                    (self.cfg.viewer.resolution[1], self.cfg.viewer.resolution[0], 3),
+                    dtype=np.uint8,
+                )
             else:
                 return rgb_data[:, :, :3]
         else:
@@ -322,26 +372,43 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         """Configure the action and observation spaces for the Gym environment."""
         # observation space (unbounded since we don't impose any limits)
         self.single_observation_space = gym.spaces.Dict()
-        for group_name, group_term_names in self.observation_manager.active_terms.items():
+        for (
+            group_name,
+            group_term_names,
+        ) in self.observation_manager.active_terms.items():
             # extract quantities about the group
-            has_concatenated_obs = self.observation_manager.group_obs_concatenate[group_name]
+            has_concatenated_obs = self.observation_manager.group_obs_concatenate[
+                group_name
+            ]
             group_dim = self.observation_manager.group_obs_dim[group_name]
             # check if group is concatenated or not
             # if not concatenated, then we need to add each term separately as a dictionary
             if has_concatenated_obs:
-                self.single_observation_space[group_name] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=group_dim)
+                self.single_observation_space[group_name] = gym.spaces.Box(
+                    low=-np.inf, high=np.inf, shape=group_dim
+                )
             else:
-                self.single_observation_space[group_name] = gym.spaces.Dict({
-                    term_name: gym.spaces.Box(low=-np.inf, high=np.inf, shape=term_dim)
-                    for term_name, term_dim in zip(group_term_names, group_dim)
-                })
+                self.single_observation_space[group_name] = gym.spaces.Dict(
+                    {
+                        term_name: gym.spaces.Box(
+                            low=-np.inf, high=np.inf, shape=term_dim
+                        )
+                        for term_name, term_dim in zip(group_term_names, group_dim)
+                    }
+                )
         # action space (unbounded since we don't impose any limits)
         action_dim = sum(self.action_manager.action_term_dim)
-        self.single_action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(action_dim,))
+        self.single_action_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf, shape=(action_dim,)
+        )
 
         # batch the spaces for vectorized environments
-        self.observation_space = gym.vector.utils.batch_space(self.single_observation_space, self.num_envs)
-        self.action_space = gym.vector.utils.batch_space(self.single_action_space, self.num_envs)
+        self.observation_space = gym.vector.utils.batch_space(
+            self.single_observation_space, self.num_envs
+        )
+        self.action_space = gym.vector.utils.batch_space(
+            self.single_action_space, self.num_envs
+        )
 
     def _reset_idx(self, env_ids: Sequence[int]):
         """Reset environments based on specified indices.
@@ -356,7 +423,9 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # apply events such as randomizations for environments that need a reset
         if "reset" in self.event_manager.available_modes:
             env_step_count = self._sim_step_counter // self.cfg.decimation
-            self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=env_step_count)
+            self.event_manager.apply(
+                mode="reset", env_ids=env_ids, global_env_step_count=env_step_count
+            )
 
         # iterate over all managers and reset them
         # this returns a dictionary of information which is stored in the extras

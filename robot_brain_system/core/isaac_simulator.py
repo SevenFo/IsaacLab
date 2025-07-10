@@ -493,6 +493,39 @@ class IsaacSimulator:
 
             obs_queue = queue.Queue()
             obs, info = env.reset()
+
+            # -- WARM-UP CORRECTION START --
+            print("[IsaacSubprocess] Starting environment warm-up...")
+            # Check if the unwrapped environment has an action_manager and total_action_dim
+            # This is the robust way to get the action dimension for ManagerBasedRLEnv.
+            if hasattr(_env, "action_manager") and hasattr(
+                _env.action_manager, "total_action_dim"
+            ):
+                # Get the correct action dimension directly from the action manager.
+                action_dim = _env.action_manager.total_action_dim
+
+                # Create a zero action tensor with the correct shape: (num_envs, total_action_dim)
+                zero_action = torch.zeros(
+                    (env.num_envs, action_dim),
+                    device=_env.device,
+                    dtype=torch.float32,
+                )
+
+                warmup_steps = 10  # Number of warm-up steps
+                for i in range(warmup_steps):
+                    # Step the environment with the correctly shaped zero action
+                    obs, reward, terminated, truncated, info = env.step(zero_action)
+
+                print(
+                    f"[IsaacSubprocess] Warm-up complete after {warmup_steps} steps with action shape {zero_action.shape}."
+                )
+            else:
+                print(
+                    "[IsaacSubprocess] Skipping warm-up: could not determine action dimension from action_manager."
+                )
+            # The 'obs' variable now holds the observation from the final warm-up step.
+            # -- WARM-UP CORRECTION END --
+
             obs_payload = {
                 "data": obs,  # Assuming obs is already in a dict-like format
                 "metadata": "None",
@@ -517,7 +550,7 @@ class IsaacSimulator:
                 f"[IsaacSubprocess] Found {len(skill_registry.list_skills())} skills."
             )
 
-            skill_executor = SkillExecutor(skill_registry, env = env)
+            skill_executor = SkillExecutor(skill_registry, env=env)
             print("[IsaacSubprocess] SkillExecutor initialized.")
 
             # Send ready signal with env info
@@ -551,6 +584,7 @@ class IsaacSimulator:
                     raise TypeError(
                         f"Unsupport unwrapped enviroment type: {type(_env)}"
                     )
+
             obs_dict = obs
             while active:
                 try:
@@ -573,7 +607,9 @@ class IsaacSimulator:
                                 f"[IsaacSubprocess] Starting skill (non-blocking): {skill_name}"
                             )
                             success = skill_executor.initialize_skill(
-                                skill_name, params, _env.device,
+                                skill_name,
+                                params,
+                                _env.device,
                             )
                             child_conn.send(
                                 {
@@ -671,19 +707,22 @@ class IsaacSimulator:
 
                     # Step non-blocking skill if one is running
                     if skill_executor.is_running():
-                        skill_exec_result = (
-                            skill_executor.step(obs_dict)
+                        skill_exec_result = skill_executor.step(
+                            obs_dict
                         )  # env is passed during start_skill
                         obs_dict, reward, terminated, truncated, info = (
                             skill_exec_result
                         )
-                        obs_payload = {
-                            "data": obs_dict,
-                            "metadata": "None",
-                            "timestamp": time.time(),
-                        }
-                        obs_queue.put(obs_payload)
-                        latest_obs_payload = obs_payload  # Store latest obs
+                        if skill_executor.is_running():
+                            obs_payload = {
+                                "data": obs_dict,
+                                "metadata": "None",
+                                "timestamp": time.time(),
+                            }
+                            obs_queue.put(obs_payload)
+                            latest_obs_payload = obs_payload  # Store latest obs
+                        else:
+                            obs_dict = latest_obs_payload["data"]  # Use last obs
 
                     # Small delay to prevent tight loop if no commands and no active skill
                     if not child_conn.poll(0) and not skill_executor.is_running():

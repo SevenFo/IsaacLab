@@ -106,17 +106,17 @@ def object_obs(
 
     return torch.cat(
         (
-            box_pos_w - env.scene.env_origins,
-            box_quat_w,
-            spanner_pos_w - env.scene.env_origins,
-            spanner_quat_w,
-            button_pos_w - env.scene.env_origins,
-            button_quat_w,
-            gripper_to_box,
-            box_to_desk,
-            gripper_to_spanner,
-            spanner_to_desk,
-            gripper_to_button,
+            box_pos_w - env.scene.env_origins,  # 0,1,2
+            box_quat_w,  # 3,4,5,6
+            spanner_pos_w - env.scene.env_origins,  # 7,8,9
+            spanner_quat_w,  # 10,11,12,13
+            button_pos_w - env.scene.env_origins,  # 14,15,16
+            button_quat_w,  # 17,18,19,20
+            gripper_to_box,  # 21,22,23
+            box_to_desk,  # 24,25,26
+            gripper_to_spanner,  # 27,28,29
+            spanner_to_desk,  # 30,31,32
+            gripper_to_button,  # 33,34,35
             # box_joint,
         ),
         dim=1,

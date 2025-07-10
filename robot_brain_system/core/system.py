@@ -27,7 +27,6 @@ from .types import (
 from .isaac_simulator import IsaacSimulator
 from .skill_manager import (
     SkillRegistry,
-    SkillExecutor,
     get_skill_registry,
 )  # Local SkillExecutor might be for non-env skills
 from .brain import QwenVLBrain
@@ -480,16 +479,11 @@ class RobotBrainSystem:
                     if self.brain.should_monitor():  # Brain decides if it's time
                         print("[RobotBrainSystem] Brain monitoring execution...")
 
-                        decision = self.brain.monitor_skill_execution(
+                        monitoring_result = self.brain.monitor_skill_execution(
                             self.state.obs_history
                         )
 
-                        self._handle_monitoring_decision(decision)
-                        # if (
-                        #     self.brain.state.status == SystemStatus.IDLE
-                        # ):  # Monitoring decided task is complete/interrupted
-                        #     self.state.status = SystemStatus.IDLE
-                        #     self.state.current_task = None
+                        self._handle_monitoring_result(monitoring_result)
 
                 # 3. Manage skill execution based on brain's plan
                 if (
@@ -524,6 +518,13 @@ class RobotBrainSystem:
                             )
                             self.state.skill_history[-1]["result"] = (
                                 last_sim_skill_state
+                            )
+                            last_skill_info = self.state.skill_history[-1]
+                            last_skill_execution_summary = (
+                                self.brain.summary_skill_execution(last_skill_info)
+                            )
+                            self.state.skill_history[-1]["execution_summary"] = (
+                                last_skill_execution_summary
                             )
                             self.brain.advance_skill()  # Tell brain to move to next skill
                         elif (
@@ -677,8 +678,8 @@ class RobotBrainSystem:
 
         print("[RobotBrainSystem] Main loop stopped.")
 
-    def _handle_monitoring_decision(self, decision: Dict[str, Any]):
-        """Handle brain monitoring decisions.
+    def _handle_monitoring_result(self, monitoring_result: Dict[str, Any]):
+        """Handle brain monitoring result.
         Brain monitor may determine the status of a skill as succcessed, failed, progress , etc.,
             which are defined in the criterion property when regirstering one skill.
         It should be noticed that, when one skill function ended normally,
@@ -689,49 +690,23 @@ class RobotBrainSystem:
             skill to finish executing itself, this (or other) action may changed the status of one skill that return by
             the skill executor. (The original skill status also return to skill exector, and we only get statue status info from skill exectuor)
         """
-        action = decision.get("action", "continue")
-        reason = decision.get("reason", "")
-        print(
-            f"[RobotBrainSystem] Brain monitoring decision: {action}, Reason: {reason}"
-        )
+        result = monitoring_result.get("result", "progress")
+        reason = monitoring_result.get("reason", "")
+        print(f"[RobotBrainSystem] Brain monitoring result: {result}, Reason: {reason}")
 
-        if action == "failed":
+        if result == "failed":
             self.interrupt_skill(
                 f"Brain decision: {reason}", skill_status=SkillStatus.FAILED
             )
-        elif action == "retry":
-            assert False, "Unsuportted now!"
-            # Retry logic for a skill running in the subprocess is complex.
-            # The brain might decide to retry the *current skill in its plan*.
-            # This would mean:
-            # 1. Terminate current skill in sim: self.simulator.terminate_current_skill()
-            # 2. Brain's current_skill_index should NOT advance.
-            # 3. The main loop will then try to re-start the same skill.
-            print(
-                f"[RobotBrainSystem] Brain decided to retry current skill: {reason}. Terminating and re-queueing."
-            )
-            if self.simulator and self.simulator.is_initialized:
-                current_sim_skill = self.simulator.get_skill_executor_status().get(
-                    "current_skill"
-                )
-                if current_sim_skill:  # A skill is actually running
-                    self.simulator.terminate_current_skill()
-                # The brain's current_skill_index is NOT advanced by `interrupt_task`
-                # So the _main_loop should pick up the same skill again.
-                # We need to make sure brain.get_next_skill() returns the current one again.
-                # This might require a new method in brain, e.g., brain.retry_current_skill_in_plan()
-                # For now, we rely on the main loop to pick it up after termination.
-            else:
-                print("[RobotBrainSystem] Cannot retry, simulator not available.")
-        elif action == "successed":
-            print(f"[RobotBrainSystem] Brain decided skill is successed: {reason}")
+        elif result == "success" or result == "successed":
+            print(f"[RobotBrainSystem] Brain decided skill is success: {reason}")
             self.interrupt_skill(
                 f"Brain decision: {reason}", skill_status=SkillStatus.COMPLETED
             )
-        elif action == "not enough":
+        elif result == "not enough":
             # not enough observation to determine
             pass
-        elif action == "continue":
+        elif result == "grogress":
             pass
             self.state.obs_history = [self.state.obs_history[-1]]
             print(
@@ -748,8 +723,10 @@ if __name__ == "__main__":
     system = RobotBrainSystem(DEVELOPMENT_CONFIG)
     result = system.initialize()
     system.start()
+    # home tensor([[ 1.1291, -3.8319,  3.6731]], device='cuda:2') tensor([[-0.6167,  0.3308, -0.3199, -0.6386]], device='cuda:2')
+    # [1.1283, -3.8319,  3.6731, -0.6167,  0.3308, -0.3199, -0.6386]
     system.execute_task(
-        "press the yellow button"
+        "open the red box, move end-effector to home position, and than grasp the spanner in the red box, home position is [1.1283, -3.8319,  3.6731, -0.6167,  0.3308, -0.3199, -0.6386]"
     )
     try:
         while system.state.is_running:

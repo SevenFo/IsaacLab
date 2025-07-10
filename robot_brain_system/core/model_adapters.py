@@ -316,7 +316,7 @@ class LMDAdapter(BaseModelAdapter):
                                     "type": "image_data",
                                     "image_data": {
                                         "data": frame,
-                                        "max_dynamic_patch": 1,
+                                        "max_dynamic_patch": 12,
                                     },
                                 }
                             )
@@ -326,7 +326,7 @@ class LMDAdapter(BaseModelAdapter):
                         converted_content.append(
                             {
                                 "type": "image_data",
-                                "image_data": {"data": frame, "max_dynamic_patch": 1},
+                                "image_data": {"data": frame, "max_dynamic_patch": 12},
                             }
                         )
                     else:
@@ -349,7 +349,11 @@ class LMDAdapter(BaseModelAdapter):
         out = self.pipe(
             messages,
             gen_config=GenerationConfig(
-                top_k=40, top_p=0.8, temperature=0.1, max_new_tokens=max_tokens
+                top_k=0,
+                top_p=0.8,
+                temperature=0.8,
+                max_new_tokens=max_tokens,
+                do_sample=True,
             ),
         )
 
