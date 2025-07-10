@@ -81,13 +81,16 @@ class ObservationsCfg:
         eef_quat = ObsTerm(func=mdp.ee_frame_quat)  # 末端执行器的朝向
         gripper_pos = ObsTerm(func=mdp.gripper_pos)  # 夹爪的位置
         camera_top = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("topcamera"),"normalize": False}
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("topcamera"), "normalize": False},
         )  # RGB相机图像
         camera_side = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("sidecamera"),"normalize": False}
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("sidecamera"), "normalize": False},
         )  # RGB相机图像
         camera_wrist = ObsTerm(
-            func=mdp.image, params={"sensor_cfg": SceneEntityCfg("wristcamera"),"normalize": False}
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("wristcamera"), "normalize": False},
         )  # RGB相机图像
 
         def __post_init__(self):
@@ -169,7 +172,7 @@ class MoveEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 5
-        self.episode_length_s = 30.0
+        self.episode_length_s = 3000.0
         # simulation settings
         self.sim.dt = 0.01  # 100Hz
         self.sim.render_interval = self.decimation
