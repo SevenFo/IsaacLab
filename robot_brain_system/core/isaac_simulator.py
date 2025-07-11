@@ -506,7 +506,7 @@ class IsaacSimulator:
 
                 # Create a zero action tensor with the correct shape: (num_envs, total_action_dim)
                 zero_action = torch.zeros(
-                    (env.num_envs, action_dim),
+                    (_env.num_envs, action_dim),
                     device=_env.device,
                     dtype=torch.float32,
                 )

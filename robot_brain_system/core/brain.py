@@ -19,7 +19,7 @@ from robot_brain_system.core.types import (
 )
 from robot_brain_system.core.skill_manager import SkillRegistry
 from robot_brain_system.utils import extract_json_from_text
-
+from robot_brain_system.core.model_adapters_v2 import TransformersAdapter, LMDeployAdapter, VLLMAdapter, OpenAIAdapter
 
 @dataclass
 class BrainState:
@@ -173,49 +173,44 @@ class QwenVLBrain:
         print(f"[QwenVLBrain] Initialized with adapter: {self.adapter_type}")
 
     def _initialize_model_adapter(self):
-        """Initialize the appropriate model adapter based on configuration."""
-        if self.adapter_type == "qwen_vl":
-            if not self.model_path:
-                raise ValueError("model_path is required for QwenVL adapter")
-            from .model_adapters import QwenVLAdapter
+        """根据配置初始化新的、标准化的模型适配器。"""
+        adapter_type = self.adapter_type # e.g., "transformers", "vllm", "openai", "lmdeploy"
+        
+        # 从主配置中获取模型和API相关的通用配置
+        model_path = self.qwen_config.get("model_path")
+        device = self.qwen_config.get("device", "auto")
+        api_key = self.qwen_config.get("api_key")
+        base_url = self.qwen_config.get("base_url")
+        model_name = self.qwen_config.get("model") # for OpenAI
 
-            self.model_adapter = QwenVLAdapter(self.model_path, self.adapter_device)
-            print(
-                f"[QwenVLBrain] Initialized QwenVL adapter with model: {self.model_path}"
-            )
+        try:
+            if adapter_type == "transformers":
+                self.model_adapter = TransformersAdapter(model_path=model_path, device=device)
+            elif adapter_type == "vllm":
+                # vLLM的特定参数也可以从config传入
+                tp_size = self.qwen_config.get("tensor_parallel_size", 1)
+                self.model_adapter = VLLMAdapter(model_path=model_path, tensor_parallel_size=tp_size)
+            elif adapter_type == "lmdeploy":
+                # LMDeploy的特定参数
+                self.model_adapter = LMDeployAdapter(model_path=model_path)
+            elif adapter_type == "openai":
+                self.model_adapter = OpenAIAdapter(model_name=model_name, api_key=api_key, base_url=base_url)
+            else:
+                # 保留mock作为备用
+                print("[QwenVLBrain] 未知的 adapter_type，将使用 mock 实现。")
+                self.adapter_type = "mock"
+                self.model_adapter = None
 
-        elif self.adapter_type == "openai":
-            if not self.api_key:
-                raise ValueError("api_key is required for OpenAI adapter")
-            from .model_adapters import OpenAIAdapter
+            if self.model_adapter:
+                print(f"[QwenVLBrain] 成功初始化适配器: {self.adapter_type}")
 
-            model_name = self.model_name if self.model_name != "qwen-vl" else None
-            self.model_adapter = OpenAIAdapter(
-                api_key=str(self.api_key),
-                base_url=str(self.base_url) if self.base_url else None,
-                model_name=str(model_name) if model_name else None,
-            )
-            print(
-                f"[QwenVLBrain] Initialized OpenAI adapter with model: {model_name or 'default'}"
-            )
-        elif self.adapter_type == "lmd":
-            if not self.model_path:
-                raise ValueError("model_path is required for LMD adapter")
-            from .model_adapters import LMDAdapter
-
-            self.model_adapter = LMDAdapter(
-                model_path=self.model_path,
-            )
-            print(
-                f"[QwenVLBrain] Initialized LMD adapter with model: {self.model_path}"
-            )
-
-        elif self.adapter_type == "mock":
+        except Exception as e:
+            import traceback
+            print(f"[QwenVLBrain] 初始化模型适配器失败: {e}")
+            traceback.print_exc()
+            print("[QwenVLBrain] 回退到 mock 实现。")
+            self.adapter_type = "mock"
             self.model_adapter = None
-            print("[QwenVLBrain] Using mock implementation")
-
-        else:
-            raise ValueError(f"Unknown adapter type: {self.adapter_type}")
 
     def set_skill_registry(self, skill_registry: SkillRegistry):
         """Set the skill registry for planning."""
@@ -316,7 +311,7 @@ class QwenVLBrain:
         sum_memory = BrainMemory()
         sum_memory.add_system_prompt("You are a professional dialogue summarizer.")
         sum_memory.add_user_input(contents=content)
-        response_text, _ = self.model_adapter.generate_response(sum_memory.history)
+        response_text, _ = self.model_adapter.generate(sum_memory.history)
         return response_text
 
     # @retry
@@ -355,8 +350,9 @@ class QwenVLBrain:
                 print(text_prompt)
                 print("\n")
                 inspector_rgb = (
-                    observation.data["policy"]["camera_top"][0].cpu().numpy()
+                    observation.data["policy"]["camera_side"][0].cpu().numpy()
                 )
+                current_image = Image.fromarray(inspector_rgb)
                 if self.visualize:
                     import matplotlib.pyplot as plt
 
@@ -370,11 +366,12 @@ class QwenVLBrain:
                     )
                 # Generate response
                 self.replan_memory.add_user_input(
-                    contents=[text_prompt, Image.fromarray(inspector_rgb)]
+                    contents=[text_prompt, current_image]
                 )
-                print(f"[QwenVLBrain] Replanning task: {task.description}")
-                response_text, _ = self.model_adapter.generate_response(
-                    input_data=self.replan_memory.fetch_history(last_n=3)
+                print(f"[QwenVLBrain] 开始为任务进行再规划: {task.description}")
+                response_text, _ = self.model_adapter.generate(
+                    history=self.replan_memory.fetch_history(last_n=3), # 获取最近的对话历史
+                    max_tokens=self.max_tokens,
                 )
                 self.replan_memory.add_assistant_output(response_text)
                 # Parse the response to extract skill plan
@@ -624,46 +621,41 @@ class QwenVLBrain:
         return chat_content
 
     def _query_qwen_for_plan(self, task: Task, skill_descriptions: str) -> SkillPlan:
-        """
-        Query Qwen VL to create a skill execution plan.
-
-        Uses the configured model adapter to generate a skill execution plan
-        based on the task description and available skills.
-        """
         if self.model_adapter is None:
-            # Fallback to mock implementation
+            print("[QwenVLBrain] Mock模式：返回一个预设的计划。")
             return self._mock_plan_task(task, skill_descriptions)
+            
+        # 1. 准备一个临时的 BrainMemory 用于本次规划
+        planning_memory = BrainMemory()
+        
+        # 2. 格式化并添加系统提示
+        system_prompt = self._format_prompt_for_planning(task, skill_descriptions) # 这个格式化函数现在只生成文本
+        planning_memory.add_system_prompt(system_prompt)
+        
+        # 3. 添加用户输入（现在包括文本和图像）
+        # 注意：用户输入现在是一个内容列表
+        user_content = []
+        user_content.append("Please generate a plan based on my task and the provided image.")
+        if task.image:
+            user_content.append(task.image)
+        planning_memory.add_user_input(contents=user_content)
 
+        # 4. 使用新的单一接口调用模型
         try:
-            # Format prompt for planning
-            prompt = self._format_prompt_for_planning(task, skill_descriptions)
-
-            # Prepare input for the model adapter
-            input_data = self.model_adapter.prepare_input(
-                text=prompt,
-                image=task.image if task.image else None,  # Pass None if no image
+            response_text, _ = self.model_adapter.generate(
+                history=planning_memory.history,
+                max_tokens=self.max_tokens,
             )
-            # Generate response
-            print(
-                f"[QwenVLBrain] Query model to generate plan for [{task.description}]"
-            )
-            response_text, _ = self.model_adapter.generate_response(
-                input_data, max_tokens=self.max_tokens
-            )
-
-            # Parse the response to extract skill plan
             plan = self._parse_plan_response(response_text, task)
-
-            print(
-                f"[QwenVLBrain] Generated plan using {self.adapter_type}: {plan.skill_sequence}"
-            )
+            print(f"[QwenVLBrain] 使用 {self.adapter_type} 生成了计划，包含 {len(plan.skill_sequence)} 个技能。")
             return plan
-
         except Exception as e:
-            print(f"[QwenVLBrain] Error in planning: {e}")
-            print("[QwenVLBrain] Falling back to mock implementation")
+            import traceback
+            print(f"[QwenVLBrain] 规划时出错: {e}")
+            traceback.print_exc()
+            # 出错时回退
             return self._mock_plan_task(task, skill_descriptions)
-
+        
     def _mock_plan_task(self, task: Task, skill_descriptions: str) -> SkillPlan:
         """Mock implementation for planning when model adapter is not available."""
         # Simple heuristic planning based on task description
@@ -728,7 +720,7 @@ class QwenVLBrain:
         try:
             if self.visualize:
                 inspector_rgb = (
-                    obs_history[-1].data["policy"]["camera_top"][0].cpu().numpy()
+                    obs_history[-1].data["policy"]["camera_side"][0].cpu().numpy()
                 )
                 import matplotlib.pyplot as plt
 
@@ -778,7 +770,7 @@ class QwenVLBrain:
                 video_frames.append(
                     Image.fromarray(
                         obs_history[frame_index]
-                        .data["policy"]["camera_top"][0]
+                        .data["policy"]["camera_side"][0]
                         .cpu()
                         .numpy()
                     )
@@ -811,7 +803,7 @@ class QwenVLBrain:
             print(
                 f"[QwenVLBrain] Monitoring task: {task.description}, skill: {current_skill['name']}"
             )
-            response_text, _ = self.model_adapter.generate_response(
+            response_text, _ = self.model_adapter.generate(
                 self.monitor_memory.fetch_history(last_n=3),
                 max_tokens=self.max_tokens // 2,  # Use fewer tokens for monitoring
             )
@@ -884,13 +876,10 @@ class QwenVLBrain:
         )
 
         try:
-            input_data = self.model_adapter.prepare_input(
-                text=error_handling_prompt,
-                image=None,  # No image for error handling
-            )
-
-            new_llm_response_text, _ = self.model_adapter.generate_response(
-                input_data=input_data, max_tokens=self.max_tokens
+            temp_memory = BrainMemory()
+            temp_memory.add_user_input([error_handling_prompt])
+            new_llm_response_text, _ = self.model_adapter.generate(
+                temp_memory.fetch_history(), max_tokens=self.max_tokens
             )
         except Exception as e_generate:  # Catch potential errors during LLM call itself
             print(
