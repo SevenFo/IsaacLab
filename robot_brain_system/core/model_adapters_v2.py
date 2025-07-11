@@ -121,6 +121,7 @@ class TransformersAdapter(BaseModelAdapter):
             return_dict=True,
             return_tensors="pt",
             padding=True,
+            do_sample_frames=True
         ).to(self.model.device)
         generated_ids = self.model.generate(**inputs, **gen_kwargs)
         return generated_ids, inputs
