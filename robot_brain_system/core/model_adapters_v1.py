@@ -47,6 +47,15 @@ try:
 except ImportError:
     pass
 
+try:
+    from vllm import LLM, SamplingParams
+
+    VLLM_AVAILABLE = True
+except ImportError:
+    VLLM_AVAILABLE = False
+    print("Warning: vllm library not available")
+
+
 class BaseModelAdapter(ABC):
     """Base class for model adapters."""
 
@@ -75,7 +84,8 @@ class BaseModelAdapter(ABC):
         """
         pass
 
-def draw_bounding_box(img:Image.Image, box):
+
+def draw_bounding_box(img: Image.Image, box):
     # draw for glm4.1v
     width, height = img.size
     xmin, ymin, xmax, ymax = box
@@ -84,9 +94,12 @@ def draw_bounding_box(img:Image.Image, box):
     xmax_pixel = int(xmax / 999.0 * width)
     ymax_pixel = int(ymax / 999.0 * height)
     draw = ImageDraw.Draw(img)
-    draw.rectangle([xmin_pixel, ymin_pixel, xmax_pixel, ymax_pixel], outline="red", width=3)
+    draw.rectangle(
+        [xmin_pixel, ymin_pixel, xmax_pixel, ymax_pixel], outline="red", width=3
+    )
 
     return img
+
 
 class QwenVLAdapter(BaseModelAdapter):
     """Adapter for Qwen VL model."""
@@ -268,14 +281,13 @@ class LMDAdapter(BaseModelAdapter):
             if not isinstance(image, list):
                 image = [image]
             for frame_idx, img in enumerate(image):
-                # 对图像进行resize处理
                 messages[1]["content"][0]["text"] += (
                     f"Frame{frame_idx + 1}: {IMAGE_TOKEN}\n"
                 )
                 messages[1]["content"].append(
                     {
                         "type": "image_data",
-                        "image_data": {"data": img, "max_dynamic_patch": 1},
+                        "image_data": {"data": img, "max_dynamic_patch": 12},
                     }
                 )
 
@@ -322,7 +334,7 @@ class LMDAdapter(BaseModelAdapter):
                                     "type": "image_data",
                                     "image_data": {
                                         "data": frame,
-                                        "max_dynamic_patch": 1,
+                                        "max_dynamic_patch": 12,
                                     },
                                 }
                             )
@@ -332,7 +344,7 @@ class LMDAdapter(BaseModelAdapter):
                         converted_content.append(
                             {
                                 "type": "image_data",
-                                "image_data": {"data": frame, "max_dynamic_patch": 1},
+                                "image_data": {"data": frame, "max_dynamic_patch": 12},
                             }
                         )
                     else:
@@ -355,10 +367,13 @@ class LMDAdapter(BaseModelAdapter):
         out = self.pipe(
             messages,
             gen_config=GenerationConfig(
-                top_k=40, top_p=0.8, temperature=0.1, max_new_tokens=max_tokens
+                top_k=0,
+                top_p=0.8,
+                temperature=0.8,
+                max_new_tokens=max_tokens,
+                do_sample=True,
             ),
         )
-
         # 处理 lmdeploy 的返回结果
         if hasattr(out, "text"):
             response = out.text  # type: ignore
@@ -442,3 +457,130 @@ class OpenAIAdapter(BaseModelAdapter):
             **kwargs,
         )
         return response.choices[0].message.content, None
+
+
+class VLLMAdapter(BaseModelAdapter):
+    """
+    用于 VLLM 多模态推理的适配器，兼容对话历史。
+    """
+
+    def __init__(self, model_path: str, **kwargs):
+        """
+        初始化 VLLM 适配器。
+
+        Args:
+            model_path (str): 模型在 Hugging Face Hub 或本地的路径。
+            **kwargs: 传递给 vllm.LLM 构造函数的额外参数，
+                      例如 tensor_parallel_size=2, trust_remote_code=True。
+        """
+        if not VLLM_AVAILABLE:
+            raise ImportError("vllm library is required for VLLMAdapter")
+
+        # 允许通过 kwargs 传递 trust_remote_code 是一个好习惯
+        trust_remote_code = kwargs.pop("trust_remote_code", True)
+        self.llm = LLM(model=model_path, trust_remote_code=trust_remote_code, **kwargs)
+        # 获取分词器，用于后续的模板应用
+        self.tokenizer = self.llm.get_tokenizer()
+
+    def _convert_history_to_vllm_input(
+        self, history: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        将 BrainMemory 中的对话历史转换为 vLLM 的 generate 方法可以理解的格式。
+        """
+        # 使用 vLLM 的分词器 `apply_chat_template` 是格式化 prompt 最可靠的方法。
+        # 但我们需要先将图像数据分离出来。
+        images = []
+        processed_history = []
+
+        for message in history:
+            role = message["role"]
+            content = message["content"]
+
+            # 重建 content，用占位符替换图像
+            new_content_parts = []
+            for item in content:
+                if item["type"] == "text":
+                    new_content_parts.append(item["text"])
+                elif item["type"] == "image":
+                    # 为图像创建一个占位符，例如 <image_1>, <image_2>
+                    image_placeholder = f"<image_{len(images) + 1}>"
+                    new_content_parts.append(image_placeholder)
+                    images.append(item["image"])
+                elif item["type"] == "video":
+                    # 对于视频，将每一帧作为单独的图像处理
+                    for frame in item["video"]:
+                        image_placeholder = f"<image_{len(images) + 1}>"
+                        new_content_parts.append(image_placeholder)
+                        images.append(frame)
+
+            # 将该消息的所有文本部分连接起来
+            full_text_content = "\n".join(new_content_parts)
+            processed_history.append({"role": role, "content": full_text_content})
+
+        # 使用分词器应用聊天模板，生成最终的、包含所有特殊token的prompt
+        prompt = self.tokenizer.apply_chat_template(
+            conversation=processed_history,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        multi_modal_data = {"image": images} if images else None
+
+        return {"prompt": prompt, "multi_modal_data": multi_modal_data}
+
+    def prepare_input(
+        self,
+        text: str,
+        audio_path: Optional[str] = None,
+        image: Optional[List[Image.Image]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        以对话历史的格式准备单轮输入。
+        这确保了与 Brain 的内存结构兼容。
+        """
+        # 为单次查询创建一个简单的一轮对话历史
+        history = [{"role": "user", "content": []}]
+
+        # 首先添加图像
+        if image:
+            if not isinstance(image, list):
+                image = [image]
+            for img in image:
+                history[0]["content"].append({"type": "image", "image": img})
+
+        # 然后添加文本
+        history[0]["content"].append({"type": "text", "text": text})
+
+        return history
+
+    def generate_response(
+        self, input_data: List[Dict[str, Any]], max_tokens: int = 512, **kwargs
+    ) -> Tuple[str, Optional[str]]:
+        """
+        使用 vLLM 引擎从对话历史中生成响应。
+
+        Args:
+            input_data: 从 BrainMemory 获取的对话历史列表。
+            max_tokens: 最大生成 token 数。
+            **kwargs: 传递给 vllm.SamplingParams 的额外参数。
+        """
+        # 1. 将对话历史 (input_data) 转换为 vLLM 格式
+        vllm_input = self._convert_history_to_vllm_input(input_data)
+
+        # 2. 设置采样参数
+        sampling_params = SamplingParams(max_tokens=max_tokens, **kwargs)
+
+        # 3. 生成响应
+        # vLLM 的 generate 方法可以批量处理，但我们这里只处理单个 prompt
+        outputs = self.llm.generate(
+            prompts=vllm_input["prompt"],
+            sampling_params=sampling_params,
+            multi_modal_data=vllm_input.get("multi_modal_data"),
+        )
+
+        # 4. 提取并返回生成的文本
+        response = outputs[0].outputs[0].text.strip()
+        print(f"-------- Generated response --------\n{response}\n")
+
+        return response, None

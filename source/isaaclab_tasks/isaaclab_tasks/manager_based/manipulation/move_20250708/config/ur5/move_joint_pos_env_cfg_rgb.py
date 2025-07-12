@@ -230,10 +230,10 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
         # add sidecamera
         self.scene.sidecamera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/SideCamera",
-            spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=12.5),
+            spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=23),
             offset=CameraCfg.OffsetCfg(
-                pos=(0.07763, -3.7, 3.63566),
-                rot=(0.57923, 0.40558, -0.40558, -0.57923),
+                pos=(0.07763, -3.91718, 3.77474),
+                rot=(0.65996, 0.4312, -0.33461, -0.51629),
                 convention="opengl",
             ),
             width=256,
