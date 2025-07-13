@@ -6,14 +6,14 @@ Default configuration for the robot brain system.
 SYSTEM_CONFIG = {
     # Simulator configuration
     "simulator": {
-        "env_name": "Isaac-Move-Box-Frank-IK-Rel",
+        "env_name": "Isaac-Move-Box-UR5-IK-Rel-RGB-20250707-disable_termination",
         "device": "cuda:2",
         "num_envs": 1,
         "headless": True,
         "enable_cameras": True,
         "disable_fabric": False,
         "livestream": False,
-        "sim_device": "cuda:1",
+        "sim_device": "cuda:2",
         "cpu": False,
         "physics_gpu": -1,
         "graphics_gpu": -1,
@@ -28,9 +28,16 @@ SYSTEM_CONFIG = {
             "api_key": "",  # Set your API key here for OpenAI adapter
             "base_url": "",  # Set your API base URL here for OpenAI adapter
             "model_path": "/quick_data/model--OpenGVLab-InternVL3-8B",  # "/quick_data/model_qwen2.5_vl_32b_instruct",  # Set your local model path for Qwen VL adapter
-            "adapter_type": "lmd",  # "qwen_vl", "openai", or "mock"
-            "max_tokens": 512,
+            "adapter_type": "lmdeploy",  # "transformers", "vllm", or "openai"
+            "max_tokens": 4096,
             "device": "auto",
+            "lmd_adapter_args": {
+                "model_format": "awq",
+            },
+            "vllm_adapter_args": {
+                "tensor_parallel_size": "2",
+                "max_model_len": 4096,
+            },
         },
         "skill_monitoring_interval": 1.0,  # seconds
         "max_retries": 3,

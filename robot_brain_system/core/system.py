@@ -12,11 +12,6 @@ from typing import (
 )  # Generator might not be needed at this level anymore
 import traceback  # For debugging
 from PIL import Image
-import matplotlib
-import multiprocessing
-
-matplotlib.use("Agg")
-multiprocessing.set_start_method("spawn", force=True)  # Ensure compatibility
 
 from .types import (
     SystemStatus,

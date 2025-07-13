@@ -8,7 +8,6 @@ import multiprocessing as mp
 import threading
 import time
 import functools
-import torch  # Keep for type hinting if skills use it, though actions are numpy
 from typing import (
     Dict,
     Any,
@@ -19,18 +18,15 @@ from typing import (
 )
 from multiprocessing.connection import Pipe, Connection
 import traceback
-import numpy as np
+import pickle  # For pickle.UnpicklingError
 
 # robot_brain_system imports
-from .skill_manager import SkillExecutor, get_skill_registry
-from .types import (
+from robot_brain_system.core.types import (
     Action,
     Observation,
     SkillStatus,
 )  # Assuming these are used for IPC if needed
-from robot_brain_system.utils import dynamic_set_attr
 
-import pickle  # For pickle.UnpicklingError
 
 mp.set_start_method("spawn", force=True)  # Ensure spawn method for subprocesses
 
@@ -161,12 +157,14 @@ class IsaacSimulator:
             return True
 
         try:
+            from robot_brain_system.utils.isaac_launcher import isaac_process_entry
+
             # Create communication pipe
             self.parent_conn, child_conn = Pipe()
 
             # Start subprocess
             self.process = mp.Process(
-                target=self._isaac_simulation_entry,
+                target=isaac_process_entry,
                 args=(
                     child_conn,
                     self.sim_config,
@@ -412,59 +410,35 @@ class IsaacSimulator:
     @staticmethod
     def _isaac_simulation_entry(
         child_conn: Connection,
-        sim_config: Dict[str, Any],
+        app_launcher: Any,
+        app_launcher_params,
     ):
         """Entry point for Isaac simulation subprocess with direct environment access."""
         env = None
         skill_executor = None
+        simulation_app = app_launcher.app
+
         try:
-            from isaaclab.app import AppLauncher
             import gymnasium as gym
-
-            app_launcher_params = {
-                "task": sim_config.get("env_name", "Isaac-Move-Box-Frank-IK-Rel"),
-                "device": sim_config.get(
-                    "device", "cuda:0"
-                ),  # AppLauncher might use this for 'sim_device' default
-                "num_envs": sim_config.get("num_envs", 1),
-                "disable_fabric": sim_config.get("disable_fabric", False),
-                "mode": sim_config.get(
-                    "mode", 1
-                ),  # Make sure this value matches AppLauncher expectations
-                "env_config_file": sim_config.get("env_config_file"),
-                # Arguments AppLauncher specifically uses/pops (add more as needed):
-                "enable_cameras": sim_config.get("enable_cameras", True),
-                "headless": sim_config.get("headless", False),
-                # "livestream": sim_config.get(
-                #     "livestream", False
-                # ),  # This was the one causing the error
-                # "sim_device": sim_config.get(
-                #     "sim_device", sim_config.get("device", "cuda:0")
-                # ),  # AppLauncher often uses 'sim_device'
-                # "cpu": sim_config.get("cpu", False),
-                # "physics_gpu": sim_config.get("physics_gpu", -1),
-                # "graphics_gpu": sim_config.get("graphics_gpu", -1),
-                # "pipeline": sim_config.get("pipeline", "gpu"),
-                # "fabric_gpu": sim_config.get("fabric_gpu", -1),
-                # "kit_app": sim_config.get("kit_app", None),
-                # "enable_ros": sim_config.get("enable_ros", False),
-                # "ros_domain_id": sim_config.get("ros_domain_id", 0),
-                # "verbosity": sim_config.get("verbosity", "info"),
-                # "build_path": sim_config.get("build_path", None),
-                # # Add any other arguments AppLauncher defines in its command-line parsing
-            }
-
-            # Launch Isaac
-            app_launcher = AppLauncher(app_launcher_params)
-            simulation_app = app_launcher.app
-
-            # Import remaining modules after AppLauncher
             from isaaclab_tasks.utils import parse_env_cfg
             from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
             from argparse import Namespace
             import yaml
+            import torch  # We can import torch here again if we want to be strict
+            import numpy as np
+            import queue
+            import time
+            import traceback
 
-            print("[IsaacSubprocess] Isaac App launched.")
+            from robot_brain_system.core.skill_manager import (
+                SkillExecutor,
+                get_skill_registry,
+            )
+            from robot_brain_system.utils import dynamic_set_attr
+
+            print(
+                "[IsaacSubprocess] Isaac App was launched by launcher. Continuing initialization."
+            )
             cli_args = Namespace(
                 **app_launcher_params
             )  # Create Namespace from the same comprehensive dict
@@ -489,7 +463,6 @@ class IsaacSimulator:
                 (-2.08, -1.12, 3.95),
                 (0.6, -2.0, 2.818),
             )
-            import queue
 
             obs_queue = queue.Queue()
             obs, info = env.reset()

@@ -201,13 +201,13 @@ class GraspSpanner:
             return Action([], metadata={"info": "error"})
 
         policy_input_source = obs_dict[policy_obs_key]
-        policy_input_source["object"] = torch.cat(
-            [
-                policy_input_source["object"][..., 0:7],
-                policy_input_source["object"][..., 14:33],
-            ],
-            dim=-1,
-        )
+        # policy_input_source["object"] = torch.cat(
+        #     [
+        #         policy_input_source["object"][..., 0:7],
+        #         policy_input_source["object"][..., 14:33],
+        #     ],
+        #     dim=-1,
+        # )
         current_policy_obs = OrderedDict()
         for key, tensor_val in policy_input_source.items():
             if not isinstance(tensor_val, torch.Tensor):
