@@ -4,7 +4,6 @@ import time
 import torch
 
 
-# --- 新增：多GPU感知的辅助函数 ---
 def get_total_gpu_memory_allocated_mb() -> float:
     """计算并返回所有可用CUDA设备上已分配显存的总和（单位MB）。"""
     if not torch.cuda.is_available():
@@ -19,7 +18,6 @@ def get_total_gpu_memory_allocated_mb() -> float:
 class with_metrics:
     """
     一个用于测量函数性能指标（如执行时间、GPU显存消耗）的装饰器。
-    此版本已升级，可以正确处理多GPU场景。
     """
 
     def __init__(self, metrics: List[str]):
@@ -29,12 +27,16 @@ class with_metrics:
         self.metrics = metrics
 
     def __call__(self, func):
+        decorator_self = self
+
         @functools.wraps(func)
-        def wrapper(instance, *args, **kwargs):
+        def wrapper(self, *args, **kwargs):
             start_time = None
             initial_gpu_mems = []
-            use_time = "time" in self.metrics
-            use_gpu = "gpu_memory" in self.metrics and torch.cuda.is_available()
+            use_time = "time" in decorator_self.metrics
+            use_gpu = (
+                "gpu_memory" in decorator_self.metrics and torch.cuda.is_available()
+            )
 
             # --- 准备指标收集 ---
             if use_time:
@@ -47,7 +49,7 @@ class with_metrics:
                     initial_gpu_mems.append(torch.cuda.memory_allocated(device=i))
 
             # --- 执行原始函数 ---
-            result = func(instance, *args, **kwargs)
+            result = func(self, *args, **kwargs)
 
             # --- 收集并打印指标 ---
             print(f"\n--- 📊 Metrics for '{func.__name__}' ---")
@@ -74,7 +76,6 @@ class with_metrics:
                     f"    (Initial Total: {total_initial_mem / 1024**2:.2f} MB -> Peak Total: {total_peak_mem / 1024**2:.2f} MB)"
                 )
 
-                # 可选：打印每张卡的详细信息
                 if torch.cuda.device_count() > 1:
                     print("    Per-GPU Breakdown (Initial -> Peak) MB:")
                     for i in range(torch.cuda.device_count()):

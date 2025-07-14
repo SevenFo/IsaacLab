@@ -2,9 +2,10 @@
 Brain component that uses Qwen VL for task planning and monitoring.
 """
 
-import sys
+import copy
 import time
 import json
+import numpy as np
 import os
 from PIL import Image
 from typing import Dict, List, Optional, Any
@@ -16,6 +17,7 @@ from robot_brain_system.core.types import (
     SystemStatus,
     Observation,
     SystemState,
+    SkillStatus,
 )
 from robot_brain_system.core.skill_manager import SkillRegistry
 from robot_brain_system.utils import extract_json_from_text
@@ -89,32 +91,71 @@ class BrainMemory:
             }
         )
 
-    def fetch_history(self, last_n: int = 5) -> List[Dict[str, Any]]:
+    def fetch_history(
+        self, last_n: int = 5, prune_multimedia: bool = True
+    ) -> List[Dict[str, Any]]:
         """
-        获取系统提示（第一个条目）以及最后N轮对话。
-        这个方法能正确处理历史记录较短的情况，不会产生重复条目。
-        一轮对话包含一个用户输入和一个助手输出。
+        获取系统提示以及最后N轮对话。
+
+        新增了一个参数 `prune_multimedia` 来优化多模态历史记录的处理，减少token消耗。
+
+        Args:
+            last_n (int): 获取的对话轮数。一轮包含一个用户输入和一个助手输出。
+            prune_multimedia (bool): 是否启用历史多媒体信息消除功能。
+                - 如果为 True，则历史对话中的所有多媒体内容（图片、视频）将被
+                  替换为文本占位符（如 '<image>'），但保留最新的用户输入中的
+                  所有多媒体内容。
+                - 如果为 False（默认），则返回原始的、包含所有多媒体信息的历史记录。
+
+        Returns:
+            List[Dict[str, Any]]: 格式化后的历史记录，可供模型使用。
         """
-        # 如果历史记录为空，直接返回空列表
         if not self.history:
             return []
 
-        # 1. 系统提示总是被包含在内
-        system_prompt = self.history[0:1]  # 使用切片[0:1]确保结果是列表
-
-        # 2. 对话历史是除了系统提示外的所有内容
+        # 1. 分离系统提示和对话历史
+        system_prompt = self.history[0:1]
         conversation_history = self.history[1:]
-        assert len(conversation_history) % 2 == 1, (
-            f"len of conversation_history must be odd, while get: {len(conversation_history)}, may need add user input firstly"
-        )
 
-        # 3. 从对话历史中获取最后 n 轮 (n * 2 个条目)
-        # Python的负索引切片很安全，如果条目数不足，它会返回所有可用的条目
-        num_entries_to_fetch = last_n * 2 + 1  # 最后一条为当前的输入
-        last_n_rounds = conversation_history[-num_entries_to_fetch:]
+        # 你的断言逻辑稍作调整，以处理偶数长度（例如刚添加完助手回复）
+        if len(conversation_history) > 0 and len(conversation_history) % 2 == 0:
+            num_entries_to_fetch = last_n * 2
+        else:  # 奇数长度，最后一条是当前用户输入
+            num_entries_to_fetch = last_n * 2 + 1
 
-        # 4. 将系统提示和最近的对话历史合并返回
-        return system_prompt + last_n_rounds
+        history_slice = conversation_history[-num_entries_to_fetch:]
+
+        # 2. 如果不启用剪枝，或者历史记录不足以进行剪枝，则按原样返回
+        if not prune_multimedia or not history_slice:
+            return system_prompt + history_slice
+
+        # 3. 如果启用剪枝，处理历史记录
+        # 使用深拷贝(deepcopy)来确保不会修改原始的 self.history
+        processed_history = copy.deepcopy(history_slice)
+
+        # 遍历除最后一个条目（即最新的用户输入）之外的所有历史记录
+        for item in processed_history[:-1]:
+            if "content" not in item:
+                continue
+
+            new_content_list = []
+            text_buffer = []
+
+            for content_part in item["content"]:
+                if content_part["type"] == "text":
+                    text_buffer.append(content_part["text"])
+                else:
+                    # 对于非文本类型，添加占位符
+                    text_buffer.append(f"<{content_part['type']}>")
+
+            # 将所有文本和占位符合并成一个单一的文本条目，进一步节省空间
+            if text_buffer:
+                new_content_list.append({"type": "text", "text": " ".join(text_buffer)})
+
+            item["content"] = new_content_list
+
+        # 4. 合并系统提示、处理过的历史以及（可能存在的）未经处理的最新用户输入
+        return system_prompt + processed_history
 
     def clear(self):
         """Clear the memory."""
@@ -152,7 +193,7 @@ class BrainMemory:
             chat_content.append("\n---\n")
         return chat_content
 
-    def extract_images(self):
+    def extract_images(self, n_max=-1):
         print(
             f"[QwenVLBrain] Extract images from memory with {len(self.history)} entries"
         )
@@ -170,7 +211,15 @@ class BrainMemory:
                     content_images.append(content["image"])
                 else:
                     continue
-        return content_images
+        if n_max <= 0 or len(content_images) <= n_max:
+            return content_images
+        last_image = content_images[-1]
+        remaining_images = content_images[:-1]
+        if n_max == 1:
+            return [last_image]
+        indices = np.linspace(0, len(remaining_images) - 1, n_max - 1, dtype=int)
+        resampled_images = [remaining_images[i] for i in indices] + [last_image]
+        return resampled_images
 
 
 class QwenVLBrain:
@@ -213,8 +262,8 @@ class QwenVLBrain:
         self.replan_memory = BrainMemory()
         self.replan_memory.add_system_prompt()
 
-        self.FRAME_JUMP = 3
-        self.FRAME_TOTAL = 2
+        self.FRAME_JUMP = 4
+        self.FRAME_TOTAL = 3
 
     def initialize(self):
         """Initialize the brain component."""
@@ -278,6 +327,11 @@ class QwenVLBrain:
 
             if self.model_adapter:
                 print(f"[QwenVLBrain] 成功初始化适配器: {self.adapter_type}")
+                self.deepseek_model_adapter = OpenAIAdapter(
+                    model_name="deepseek-chat",
+                    api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+                    base_url="https://api.deepseek.com",
+                )
 
         except Exception as e:
             import traceback
@@ -345,9 +399,6 @@ class QwenVLBrain:
                 task, self.skill_registry.get_skill_descriptions()
             )
 
-            print(
-                f"[QwenVLBrain] Created plan for task {task.id}: {len(plan.skill_sequence)} skills"
-            )
             return plan
 
         except Exception as e:
@@ -360,7 +411,7 @@ class QwenVLBrain:
         # )
         content = []
         if only_image:
-            memory_content = self.monitor_memory.extract_images()
+            memory_content = self.monitor_memory.extract_images(n_max=8)
         else:
             memory_content = self.monitor_memory.format_memory_content()
         content.append(
@@ -378,19 +429,20 @@ class QwenVLBrain:
         content.extend(memory_content)
         content.append(
             (
-                "## Summary memory content as follows:\n"
-                "Extract key information as bullet points.\n"
-                "Your focus may include the following points: \n"
-                # "(timeout not means failed, timeout only means the skill is finished while whather successed or not is unkown! you need juedge by yourself from those Image, especially last Image)"
-                f"0. Did the task finished? Please Recheck the skill execution result! Did '{skill_info['criterion']['successed']}' is real happened nor not?\n"
-                "1. Did the execution of the skill achieve the intended goal?\n"
-                "2. How does the scene change as the skill is executed?\n"
-                "3. Reflection skills execution process.\n"
-                "4. What does the scene look like now?\n"
-                "5. Any other points you think could be mentioned?\n\n"
-                "## Output template:\n"
-                "[focus 1] Specific summary content 1\n"
-                "[focus 2] Specific summary content 2\n..."
+                "## Your Task: Analyze and Summarize the Execution\n"
+                "Your primary goal is to determine the TRUE outcome of the last skill by analyzing the visual evidence (memory content), "
+                "even if it contradicts the self-reported 'Skill Execution Result'.\n\n"
+                "## Focus Points:\n"
+                # The re-check question is now the primary instruction.
+                "1. **Verdict on the Last Skill:** Based *only* on the images, did the skill truly succeed or fail? Compare what you see against the goal: '{skill_info['criterion']['successed']}'. State your conclusion clearly (e.g., 'Verdict: The skill succeeded despite the timeout report.').\n"
+                "2. **Scene Transformation:** How did the scene change from the beginning to the end of the skill execution?\n"
+                "3. **Current State:** Describe the final state of the relevant objects in the scene.\n"
+                "4. **Reflections:** Were there any unexpected movements or issues during the execution?\n"
+                "\n## Output Template:\n"
+                "[Verdict] Your explicit conclusion on the skill's true outcome.\n"
+                "[Scene Change] Your description of the changes.\n"
+                "[Current State] Your description of the final scene.\n"
+                "[Reflections] Any other relevant observations."
             )
         )
 
@@ -404,7 +456,7 @@ class QwenVLBrain:
     def replan_task(
         self,
         task: Task,
-        last_plan_info: SkillPlan,
+        current_plan: SkillPlan,
         skill_history: list[dict],
         observation: Observation,
     ):
@@ -430,19 +482,18 @@ class QwenVLBrain:
             try:
                 self.state.status = SystemStatus.THINKING
                 text_prompt = self._format_prompt_for_replanning(
-                    task, last_plan_info, skill_history
+                    task, current_plan, skill_history, observation
                 )
                 print("--- Replan Prompt ---")
                 print(text_prompt)
                 print("\n")
-                inspector_rgb = (
+                current_image = Image.fromarray(
                     observation.data["policy"]["camera_side"][0].cpu().numpy()
                 )
-                current_image = Image.fromarray(inspector_rgb)
                 if self.visualize:
                     import matplotlib.pyplot as plt
 
-                    plt.imshow(inspector_rgb)
+                    plt.imshow(current_image)
                     plt.axis("off")
                     plt.savefig(
                         os.path.join(
@@ -455,27 +506,77 @@ class QwenVLBrain:
                 print(f"[QwenVLBrain] 开始为任务进行再规划: {task.description}")
                 response_text, _ = self.model_adapter.generate(
                     history=self.replan_memory.fetch_history(
-                        last_n=3
+                        last_n=1, prune_multimedia=True
                     ),  # 获取最近的对话历史
                     max_tokens=self.max_tokens,
-                )
+                )  # type: ignore
                 self.replan_memory.add_assistant_output(response_text)
                 # Parse the response to extract skill plan
-                plan = self._parse_plan_response(response_text, task)
-                if not plan.skill_sequence:
-                    # no plan was created, mean task finished successed
-                    self.interrupt_task(
-                        "[QwenVLBrain] No plan is created, mean task finished successed!"
-                    )
-                    return plan
-                self.state.current_plan = plan
-                self.state.current_skill_index = 0
-                self.state.status = SystemStatus.EXECUTING
-                self.initial_monitor()
-                print(
-                    f"[QwenVLBrain] Generated plan using {self.adapter_type}: {plan.skill_sequence}"
+                operations = self._parse_json_response(response_text)
+                for op in operations:
+                    try:
+                        op_type = op.get("operation")
+                        index = op.get("index")
+
+                        if op_type == "insert":
+                            current_plan.insert_skill(
+                                index, op["method"], op.get("params", {})
+                            )
+                        elif op_type == "delete":
+                            current_plan.delete_skill(index)
+                        elif op_type == "modify":
+                            current_plan.modify_skill(
+                                index, op.get("new_method"), op.get("new_params")
+                            )
+                        elif op_type == "retry":
+                            current_plan.mark_status(index, SkillStatus.PENDING)
+                            print(
+                                f"[QwenVLBrain] Brain marked skill at index {index} as PENDING for retry."
+                            )
+                        elif op_type == "update_status":
+                            new_status_str = op.get("new_status")
+                            if not new_status_str:
+                                print(
+                                    "[QwenVLBrain] Warning: 'update_status' operation is missing 'new_status'. Skipping."
+                                )
+                                continue
+
+                            try:
+                                # Convert string from LLM to a valid SkillStatus enum member
+                                new_status_enum = SkillStatus[new_status_str.upper()]
+                                current_plan.mark_status(index, new_status_enum)
+                                print(
+                                    f"[QwenVLBrain] Brain corrected status for skill at index {index} to {new_status_enum.name}"
+                                )
+                            except (KeyError, AttributeError):
+                                print(
+                                    f"[QwenVLBrain] Warning: Invalid status '{new_status_str}' provided by LLM. Skipping."
+                                )
+
+                        else:
+                            print(
+                                f"[QwenVLBrain] Warning: Unknown replan operation '{op_type}'"
+                            )
+
+                    except (KeyError, IndexError, TypeError) as e:
+                        print(
+                            f"[QwenVLBrain] Error applying operation {op}: {e}. Skipping."
+                        )
+
+                # The plan is now modified in-place
+                self.state.current_plan = current_plan
+                # You might need to reset the skill index or find the next pending skill
+                next_skill_info = current_plan.get_next_pending_skill_with_index()
+                self.state.current_skill_index = (
+                    next_skill_info[0] if next_skill_info else len(current_plan.steps)
                 )
-                return plan
+
+                self.state.status = SystemStatus.EXECUTING
+                self.initial_monitor()  # Re-initialize monitoring for the current/new skill
+
+                print("[QwenVLBrain] Successfully replanned task. New plan state:")
+                print(current_plan.pretty_print())
+                return current_plan
 
             except Exception as e:
                 import traceback
@@ -543,55 +644,66 @@ class QwenVLBrain:
         Returns:
             Dict with skill name and parameters, or None if plan complete
         """
-        if not self.state.current_plan or self.state.current_skill_index >= len(
-            self.state.current_plan.skill_sequence
-        ):
+        if not self.state.current_plan:
             return None
 
-        skill_name = self.state.current_plan.skill_sequence[
-            self.state.current_skill_index
-        ]
-        skill_params = self.state.current_plan.skill_params[
-            self.state.current_skill_index
-        ]
-        skill_info = self.skill_registry.get_skill_info(skill_name)
-        assert skill_info is not None
+        next_skill_info = self.state.current_plan.get_next_pending_skill_with_index()
 
-        # skill info:
-        # return {
-        #     "name": skill.name,
-        #     "type": skill.skill_type.value,
-        #     "execution_mode": skill.execution_mode.value,
-        #     "description": skill.description,
-        #     "timeout": skill.timeout,
-        #     "requires_env": skill.requires_env,
-        #     "criterion": skill.criterion,
-        #     "enable_monitoring": skill.enable_monitoring,
-        #     "function_name": skill.function.__name__,  # function object itself is not easily serializable
-        # }
-        skill_info.update(
+        if not next_skill_info:
+            # No pending skills left in the plan
+            return None
+
+        index, skill_step = next_skill_info
+
+        # Update the brain's internal index tracker
+        self.state.current_skill_index = index
+
+        # Now, get the full skill definition from the registry
+        full_skill_info = self.skill_registry.get_skill_info(skill_step.name)
+        if not full_skill_info:
+            print(
+                f"[QwenVLBrain] Warning: Skill '{skill_step.name}' found in plan but not in registry."
+            )
+            return None
+
+        # Combine registry info with plan-specific params and return
+        full_skill_info.update(
             {
-                "parameters": skill_params,
-                "index": self.state.current_skill_index,
+                "parameters": skill_step.params,
+                "index": index,
             }
         )
-        return skill_info
+        return full_skill_info
 
     def advance_skill(self):
-        """Advance to the next skill in the plan."""
+        """
+        Marks the current skill as COMPLETED and advances the index to the next pending skill.
+        Note: The main loop's replan-on-complete logic is now the primary way of advancing.
+        """
+        assert False, (
+            "[QwenVLBrain] advance_skill is no longer used. Use replan-on-complete logic instead."
+        )
         if self.state.current_plan:
-            self.state.current_skill_index += 1
-            if self.state.current_skill_index >= len(
-                self.state.current_plan.skill_sequence
-            ):
+            # Mark the current skill as completed
+            current_index = self.state.current_skill_index
+            self.state.current_plan.mark_status(current_index, SkillStatus.COMPLETED)
+
+            # Find the next pending skill
+            next_skill_info = (
+                self.state.current_plan.get_next_pending_skill_with_index()
+            )
+
+            if next_skill_info:
+                new_index, _ = next_skill_info
+                self.state.current_skill_index = new_index
+                self.initial_monitor()  # Reset monitor for the new skill
+            else:
                 # Plan completed
+                print("[QwenVLBrain] Task execution completed")
                 self.state.status = SystemStatus.IDLE
                 self.state.current_task = None
                 self.state.current_plan = None
                 self.state.current_skill_index = 0
-                print("[QwenVLBrain] Task execution completed")
-                return
-            self.initial_monitor()
 
     def should_monitor(self, obs_history) -> bool:
         """Check if it's time to monitor the current skill execution."""
@@ -672,7 +784,7 @@ class QwenVLBrain:
             if self.state.current_task
             else None,
             "current_skill_index": self.state.current_skill_index,
-            "total_skills": len(self.state.current_plan.skill_sequence)
+            "total_skills": len(self.state.current_plan.steps)
             if self.state.current_plan
             else 0,
             "error_message": self.state.error_message,
@@ -708,10 +820,10 @@ class QwenVLBrain:
             response_text, _ = self.model_adapter.generate(
                 history=planning_memory.history,
                 max_tokens=self.max_tokens,
-            )
+            )  # type: ignore
             plan = self._parse_plan_response(response_text, task)
             print(
-                f"[QwenVLBrain] 使用 {self.adapter_type} 生成了计划，包含 {len(plan.skill_sequence)} 个技能。"
+                f"[QwenVLBrain] 使用 {self.adapter_type} 生成了计划:\n{plan.pretty_print()}"
             )
             return plan
         except Exception as e:
@@ -720,7 +832,7 @@ class QwenVLBrain:
             print(f"[QwenVLBrain] 规划时出错: {e}")
             traceback.print_exc()
             # 出错时回退
-            return self._mock_plan_task(task, skill_descriptions)
+            raise RuntimeError("Failed to create plan")
 
     def _mock_plan_task(self, task: Task, skill_descriptions: str) -> SkillPlan:
         """Mock implementation for planning when model adapter is not available."""
@@ -1144,86 +1256,95 @@ Here I will describe my thought process.
         return prompt
 
     def _format_prompt_for_replanning(
-        self, task: Task, last_plan_info: SkillPlan, skill_history: list[dict]
+        self,
+        task: Task,
+        current_plan: SkillPlan,
+        skill_history: list[dict],
+        observation: Observation,
     ) -> str:
         """Format a prompt for Qwen VL planning."""
         skills_execution_info = "\n\n".join(
             [
-                f"""
+                f"""Skill Index: {skill_info["index"]}
 Skill Name: {skill_info["name"]}
-Skill Parameters: {skill_info["parameters"]}
-Skill Criterion: {skill_info["criterion"]}
 Skill Execution Result (skill reported): {skill_info["result"] if skill_info["result"] != "timeout" else "unkown"}
-Execution Summary: {skill_info.get("execution_summary", "No summary as it compelete success")}
+Execution Summary (Your expert analysis of the visual evidence): {skill_info.get("execution_summary", "No summary as it compelete success")}
 """
                 for skill_info in skill_history
             ]
         )
+        current_plan_state = current_plan.pretty_print()
+        last_summary = (
+            skill_history[-1].get("execution_summary", "No summary available.")
+            if skill_history
+            else "No execution yet."
+        )
+        last_skill_info = skill_history[-1]
+        last_execution_info = f"""Skill Index: {last_skill_info["index"]}
+Skill Name: {last_skill_info["name"]}
+Skill Execution Result (skill reported): {last_skill_info["result"] if last_skill_info["result"] != "timeout" else "unkown"}
+Execution Summary (Your expert analysis of the visual evidence): {last_skill_info.get("execution_summary", "No summary as it compelete success")}"""
 
         prompt = f"""
-You are a helpful robot task planner. Your goal is to create a JSON execution plan based on a task description, the result of a previous attempt, and available skills.
+You are an expert robot task supervisor. Your goal is to analyze the previous execution attempt, determine the true outcome, correct the plan's state if necessary, and decide on the next actions.
 
-Task: {task.description}
+**Original Task:** {task.description}
 
-## Available Skills:
+**Available Skills:**
 {self.skill_registry.get_skill_descriptions()}
 
-## Last Planning Info:
-Skill Sequence: {last_plan_info.skill_sequence}
-Skill Params: {last_plan_info.skill_params}
+**Current Plan State:**
+{current_plan_state}
 
-## Skills Execution Info from Last Attempt:
-{skills_execution_info}
+**Execution Info of last skill:**
+{last_execution_info}
 
-## Instructions for Your Response
-First, think step-by-step about the previous execution results and the current situation shown in the image. Your thinking process should include:
-1.  **Reflection:** What was the outcome of the last plan? Did it succeed, fail, or result in an unexpected state?
-2.  **Analysis:** Based on your reflection and the current visual evidence, what needs to happen next? Is the task finished? Does a step need to be retried? Or is a new approach required?
-Enclose your entire thinking process within `<thinking>` and `</thinking>` tags.
+**Current Robot Low-dimensional State:**
+- pose: {np.array2string(observation.data["policy"]["eef_pos"].cpu().numpy(), precision=3, separator=", ")}, {np.array2string(observation.data["policy"]["eef_quat"].cpu().numpy(), precision=3, separator=", ")}
 
-After your thinking process, provide the final execution plan as a JSON array.
--   Each object in the array represents one step in the plan.
--   Each object must include a `step` key (a sequential integer starting from 1), a `method` key (the skill name), and a `params` key.
--   If you determine the task is finished, output an empty JSON array `[]`.
+**Instructions for Your Response:**
+Your first and most important job is to compare the self-reported 'Execution Result' with the visual 'Execution Summary' of last skill. If they conflict, the visual summary is the truth.
+
+First, think step-by-step in `<thinking>` tags. Then, generate a JSON array of operations to modify the plan.
+
+**Available Operations:**
+1.  **update_status**: Corrects the status of a completed skill. THIS IS YOUR MOST IMPORTANT CORRECTION TOOL.
+    - `operation`: "update_status"
+    - `index`: The index of the skill whose status needs correction.
+    - `new_status`: The TRUE status ("COMPLETED", "FAILED", etc.).
+2.  **insert**: Adds a new skill.
+    - `operation`: "insert"
+    - `index`: new skill well be inserted after this index
+    - `method`: The name of the skill to insert.
+    - `params`: The parameters for the skill.
+3.  **delete**: Removes an unnecessary skill.
+    - `operation`: "delete", 
+    - `index`: The index of the skill to delete.
+4. **retry**: Retry a skill that failed.
+    - `operation`: "retry"
+    - `index`: The index of the skill to retry.
+    
+-   If, after your corrections, no more operations should be did, provide an empty array `[]`.
 -   The JSON should be the only thing after the closing `</thinking>` tag.
 
-### Example Response Format:
+### Example Response (Correcting a False Failure and Finishing):
 <thinking>
-1.  **Reflection:** YOUR REFLECTION ON THE PREVIOUS EXECUTION AND CURRENT STATE.
-2.  **Analysis:** YOUR ANALYSIS FOR WHY YOU ARE CREATING THE NEW PLAN.
-3.  **Conclusion:** YOUR CONCLUSION ON WHAT NEEDS TO BE DONE NEXT.
+1. **Reflection:** The skill `place_in_box` at index 3 self-reported `TIMEOUT`. However, my visual summary says: 'The spanner is clearly visible inside the red box.'
+2. **Analysis:** The timeout was incorrect; the skill actually succeeded. I must first update the status of skill 3 to `COMPLETED`. Since this was the final skill in the plan, the entire task is now complete.
+3. **Conclusion:** I will perform an `update_status` operation. Because the task is now finished, the subsequent plan of operations is empty.
 </thinking>
 ```json
 [
-    {{
-        "step": 1,
-        "method": "skill1",
-        "params": {{
-            "param1_of_skill1": "value",
-            "param2_of_skill1": "value"
-        }}
-    }},
-    {{
-        "step": 2,
-        "method": "skill2",
-        "params": {{}} 
-    }}
+{{
+    "operation": "update_status",
+    "index": 3,
+    "new_status": "COMPLETED"
+}}
 ]
 ```
-"""
 
-        # Example response:
-        # Refection: The previous assemble_object skill execution result was timeout. However, the execution summary indicates that the task was completed successfully and the red object is completely wrapped around the black pillar. This suggests a discrepancy between the skill's internal timeout mechanism and the actual state of the environment. The skill was successfully executed and the task is finished.
-        # Plan:
-        # ```json
-        # {{
-        #     "skill_sequence": [],
-        #     "skill_params": [],
-        #     "skill_monitoring_interval": 1.0,
-        #     "analysis": "The previous skill 'assemble_object' reported a 'timeout', but the detailed execution summary clearly states that 'The red object is completely wrapped around the black pillar.' and 'The task was completed successfully'. This indicates that despite the timeout, the desired outcome of the task has been achieved. Therefore, no further actions are needed."
-        # }}
-        # ```
-        # """
+
+"""
         return prompt
 
     def _format_system_prompt_for_monitoring(
@@ -1277,79 +1398,16 @@ Next, Let's start first monitoring round.
                 print(
                     "[QwenVLBrain] No valid JSON array found in response, return empty plan."
                 )
-                return SkillPlan(
-                    task_id=task.id,
-                    skill_sequence=[],
-                    skill_params=[],
-                    skill_monitoring_interval=self.skill_monitoring_interval,
-                    expected_duration=0.0,
-                )
-
-            try:
-                sorted_plan_data = sorted(
-                    plan_data, key=lambda item: item.get("step", sys.maxsize)
-                )
-            except TypeError:
-                # This handles cases where 'step' is not a number, etc.
-                print(
-                    "[QwenVLBrain] Error sorting plan steps due to invalid 'step' values. Falling back to empty plan."
-                )
-                return SkillPlan(
-                    task_id=task.id,
-                    skill_sequence=[],
-                    skill_params=[],
-                    skill_monitoring_interval=self.skill_monitoring_interval,
-                    expected_duration=0.0,
-                )
-
-            # 从对象列表中构建 skill_sequence 和 skill_params
-            skill_sequence = []
-            skill_params = []
-            for skill_object in sorted_plan_data:
-                if isinstance(skill_object, dict):
-                    # Extract skill name, skip if 'method' key is missing
-                    skill_name = skill_object.get("method")
-                    if skill_name:
-                        skill_sequence.append(skill_name)
-                        # Extract params, defaulting to an empty dict if 'params' is missing or null
-                        params = skill_object.get("params", {})
-                        if (
-                            params is None
-                        ):  # Handle cases where model outputs "params": null
-                            params = {}
-                        skill_params.append(params)
-                    else:
-                        # It's good practice to warn about malformed steps
-                        print(
-                            f"[QwenVLBrain] Warning: A step object is missing the 'method' key and will be ignored: {skill_object}"
-                        )
-                else:
-                    print(
-                        f"[QwenVLBrain] Warning: Found a non-dictionary item in the plan data: {skill_object}"
-                    )
-
-            skill_monitoring_interval = self.skill_monitoring_interval
+                return SkillPlan(task_id=task.id, skill_list=[])
 
             return SkillPlan(
                 task_id=task.id,
-                skill_sequence=skill_sequence,
-                skill_params=skill_params,
-                skill_monitoring_interval=skill_monitoring_interval,
-                expected_duration=len(skill_sequence) * 10.0,
-            )
-
-        except Exception as e:
-            # 保持强大的异常处理
-            print(f"[QwenVLBrain] Error parsing plan response: {e}")
-            print(f"[QwenVLBrain] Original response was: {response_text[:500]}...")
-            print("[QwenVLBrain] Falling back to empty plan")
-            return SkillPlan(
-                task_id=task.id,
-                skill_sequence=[],
-                skill_params=[],
+                skill_list=plan_data,
                 skill_monitoring_interval=self.skill_monitoring_interval,
-                expected_duration=0.0,
             )
+        except Exception as e:
+            print(f"[QwenVLBrain] Error parsing initial plan response: {e}")
+            return SkillPlan(task_id=task.id, skill_list=[])
 
     # def _parse_monitoring_text(self, response_text: str) -> Dict[str, Any]:
     #     """Parse monitoring decision from text response."""

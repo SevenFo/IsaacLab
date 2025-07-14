@@ -17,6 +17,11 @@ def main():
     # 如果不在，你可能需要先 `import sys; sys.path.append('src')`
     from robot_brain_system.core.system import RobotBrainSystem
     from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
+    from robot_brain_system.utils.logging_utils import setup_logging
+
+    logger = setup_logging(
+        log_level="INFO", log_file=f"{DEVELOPMENT_CONFIG['monitoring']['log_file']}"
+    )
 
     print("--- TEST ROBOT BRAIN SYSTEM ---")
 

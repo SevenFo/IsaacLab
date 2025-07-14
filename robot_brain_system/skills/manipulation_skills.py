@@ -135,18 +135,18 @@ class PressButton:
     execution_mode=ExecutionMode.STEPACTION,
     timeout=300.0,  # 5 minutes, adjust as needed
     criterion={
-        "successed": "the spanner is graspped by the gripper and pleased on the desk",
-        "failed": "".join(
-            ["any gripper state that is not reasonable to execute the skill."]
-        ),
-        "progress": "The gripper is on a reasonable state to execute the skill",
+        "successed": "the spanner is graspped by the gripper and moving above the box, the spanner must be high enough to avoid collision with the box.",
+        # "failed": "".join(
+        #     ["any gripper state that is not reasonable to execute the skill."]
+        # ),
+        "progress": "The gripper is on a reasonable state to execute the skill, such as: grasping the spanner etc.",
     },
     requires_env=True,
 )
 class GraspSpanner:
     """
     Grasp a spanner on the red box and move it to the desk surface.
-    You must call `move_to_target` to the home position IMMEDIATELY before this skill.
+    You move to the home position IMMEDIATELY before this skill.
 
     Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
     """
@@ -187,7 +187,7 @@ class GraspSpanner:
         self.num_steps = 0  # Initialize step counter
 
     def select_action(self, obs_dict: dict) -> Action:
-        if self.num_steps >= 150:
+        if self.num_steps >= 200:
             print(
                 "[Skill: GraspSpanner] Maximum steps reached, stopping skill execution."
             )
@@ -263,10 +263,7 @@ def quat_to_axis_angle_torch(q: torch.Tensor, epsilon: float = 1e-8) -> torch.Te
     requires_env=True,
 )
 class MoveToTarget:
-    """Moves the robot's end-effector to a specified target pose.
-
-    This skill uses a P-controller to generate delta pose actions (linear and angular
-    velocity) to guide the end-effector.
+    """Moves the robot's end-effector to a specified target pose. in samecase, this skill can be helpful for trying a failed skill.
 
     Args:
         target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].

@@ -5,7 +5,9 @@
 
 import base64
 from abc import ABC, abstractmethod
+import copy
 from io import BytesIO
+import json
 from typing import Any, Dict, List, Optional, Tuple
 import argparse
 
@@ -17,6 +19,7 @@ from robot_brain_system.utils.metric_utils import (
     with_metrics,
     get_total_gpu_memory_allocated_mb,
 )
+from robot_brain_system.utils.retry_utils import retry
 
 # --- 依赖导入，带错误处理 ---
 try:
@@ -37,6 +40,7 @@ except ImportError:
 
 try:
     import openai
+    from openai import APIError, RateLimitError, AuthenticationError
 
     OPENAI_AVAILABLE = True
 except ImportError:
@@ -591,19 +595,71 @@ class OpenAIAdapter(BaseModelAdapter):
 
         return openai_messages
 
+    # --- NEW: 日志净化工具方法 ---
+    def _sanitize_payload_for_logging(
+        self, payload: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        创建一个payload的深拷贝，并用占位符替换其中大的多媒体数据，以便清晰地打印日志。
+        """
+        # 使用深拷贝以确保不修改原始payload
+        sanitized_payload = copy.deepcopy(payload)
+
+        for message in sanitized_payload:
+            if isinstance(message.get("content"), list):
+                # 统计图像帧数量
+                new_content = []
+                muilt_frames_begin = False
+                nframes = 0
+                for part in message["content"]:
+                    # 如果是图像URL，替换其内容
+                    if part.get("type") == "image_url" and "url" in part.get(
+                        "image_url", {}
+                    ):
+                        muilt_frames_begin = True
+                        nframes += 1
+                    # 保持文本内容不变，但跳过视频帧的描述文本
+                    else:
+                        if part.get("type") == "text":
+                            new_content.append(part)
+                        else:
+                            new_content.append(part)  # 保留其他所有部分
+
+                        if muilt_frames_begin:
+                            muilt_frames_begin = False
+                            new_content.append(
+                                {
+                                    "type": "text",
+                                    "text": f"<image: {nframes} frames>",
+                                }
+                            )
+                            nframes = 0
+                if nframes > 0:
+                    new_content.append(
+                        {
+                            "type": "text",
+                            "text": f"<image: {nframes} frames>",
+                        }
+                    )
+                message["content"] = new_content
+        return sanitized_payload
+
+    @retry(
+        max_attempts=3,
+        delay_seconds=1.0,
+        exceptions_to_retry=(APIError, RateLimitError, AuthenticationError),
+    )
     @with_metrics(metrics=["time"])
     def generate(
         self, history: List[Dict[str, Any]], max_tokens: int = 2048, **kwargs
     ) -> Tuple[str, Any]:
-        # ... (这部分逻辑不变)
         messages = self._convert_history_to_openai_input(history)
+        sanitized_messages_for_log = self._sanitize_payload_for_logging(messages)
         print("\n--- [OpenAIAdapter] Sending Payload ---")
-        import json
-
         try:
-            print(json.dumps(messages, indent=2))
+            print(json.dumps(sanitized_messages_for_log, indent=2, ensure_ascii=False))
         except TypeError:
-            print(messages)
+            print(sanitized_messages_for_log)
         print("-------------------------------------\n")
         completion = self.client.chat.completions.create(
             model=self.model_name, messages=messages, max_tokens=max_tokens, **kwargs

@@ -51,9 +51,9 @@ def isaac_process_entry(child_conn, sim_config):
         # "livestream": sim_config.get(
         #     "livestream", False
         # ),  # This was the one causing the error
-        # "sim_device": sim_config.get(
-        #     "sim_device", sim_config.get("device", "cuda:0")
-        # ),  # AppLauncher often uses 'sim_device'
+        "sim_device": sim_config.get(
+            "sim_device", sim_config.get("device", "cuda:0")
+        ),  # AppLauncher often uses 'sim_device'
         # "cpu": sim_config.get("cpu", False),
         # "physics_gpu": sim_config.get("physics_gpu", -1),
         # "graphics_gpu": sim_config.get("graphics_gpu", -1),
