@@ -184,7 +184,7 @@ class TransformersAdapter(BaseModelAdapter):
             "max_new_tokens": max_tokens,
             "top_k": 2,
             "repetition_penalty": 1.0,
-            "temperature": 1.0,
+            "temperature": 0.5,
             "do_sample": True,
         }
         gen_kwargs.update(kwargs)

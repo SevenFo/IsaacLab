@@ -359,6 +359,30 @@ class IsaacSimulator:
         )
         return response.get("success", False) if response else False
 
+    def pause_current_skill(
+        self
+    ) -> bool:
+        """Terminate current skill execution in the subprocess."""
+        response = self._send_command_and_recv(
+            {
+                "command": "change_current_skill_status",
+                "status": SkillStatus.PAUSED
+            }
+        )
+        return response.get("success", False) if response else False
+
+    def recovery_current_skill(
+        self
+    ) -> bool:
+        """Terminate current skill execution in the subprocess."""
+        response = self._send_command_and_recv(
+            {
+                "command": "change_current_skill_status",
+                "status": SkillStatus.RUNNING
+            }
+        )
+        return response.get("success", False) if response else False
+
     def get_observation(self) -> Optional[list[Observation]]:
         """Requests and retrieves the current observation from the simulator subprocess."""
         response = self._send_command_and_recv({"command": "get_observation"})
@@ -597,6 +621,10 @@ class IsaacSimulator:
                             success = skill_executor.terminate_current_skill(
                                 skill_status
                             )
+                            child_conn.send({"success": success})
+                        elif cmd =='change_current_skill_status':
+                            skill_status = command_data["status"]
+                            success = skill_executor.change_current_skill_status(skill_status=skill_status)
                             child_conn.send({"success": success})
                         elif cmd == "get_observation":
                             # This should get the latest observation from the environment

@@ -312,7 +312,7 @@ class SkillExecutor:
             traceback.print_exc()
             self.status = SkillStatus.FAILED
             return False
-
+    
     def initialize_skill(
         self, skill_name: str, parameters: Dict[str, Any], policy_device: None
     ):
@@ -399,9 +399,26 @@ class SkillExecutor:
             # TODO 或许需要判断step后的情况？按道理来说应该是大模型来判断的！至少应该加一个超时判断
         return step_result
 
+    def change_current_skill_status(
+        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
+    ) -> bool:
+        """Terminate the current non-blocking skill execution."""
+        if self.current_skill is not None and (self.status == SkillStatus.RUNNING or self.status == SkillStatus.PAUSED):
+            self.status = skill_status
+            print(
+                f"[SkillExecutor] Change current skill status: {self.current_skill_name} with status: {skill_status}"
+            )
+            return True
+        else:
+            # this skill is already finished
+            print(
+                f"[SkillExecutor] Change current skill status no skill runing, unable to change"
+            )
+        return False
+
     def is_running(self) -> bool:
         """Check if a non-blocking skill is currently running."""
-        return self.status == SkillStatus.RUNNING and self.current_skill is not None
+        return self.current_skill is not None and (self.status == SkillStatus.RUNNING) 
 
     def terminate_current_skill(
         self, skill_status: SkillStatus = SkillStatus.INTERRUPTED

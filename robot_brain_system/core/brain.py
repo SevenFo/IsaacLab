@@ -104,10 +104,11 @@ class BrainMemory:
 
         # 2. 对话历史是除了系统提示外的所有内容
         conversation_history = self.history[1:]
+        assert len(conversation_history) % 2 == 1, f"len of conversation_history must be odd, while get: {len(conversation_history)}, may need add user input firstly"
 
         # 3. 从对话历史中获取最后 n 轮 (n * 2 个条目)
         # Python的负索引切片很安全，如果条目数不足，它会返回所有可用的条目
-        num_entries_to_fetch = last_n * 2
+        num_entries_to_fetch = last_n * 2 + 1 # 最后一条为当前的输入
         last_n_rounds = conversation_history[-num_entries_to_fetch:]
 
         # 4. 将系统提示和最近的对话历史合并返回
@@ -118,7 +119,56 @@ class BrainMemory:
         self.history = []
         print("[BrainMemory] Memory cleared.")
 
-
+    def format_memory_content(self) -> List:
+        print(f"[QwenVLBrain] Formatting memory with {len(self.history)} entries")
+        chat_content = []
+        chat_content.append("## memory content:\n\n")
+        for item in self.history:
+            # take only one image from video to reduce GPU memory useage
+            if item["role"] == "system":
+                continue
+            chat_content.append(f"### {item['role']}:\n")
+            text_segment = ""
+            for content in item["content"]:
+                if content["type"] == "text":
+                    text_segment = text_segment + content["text"]
+                else:
+                    if text_segment:
+                        chat_content.append(text_segment)
+                        text_segment = ""  # clear
+                    if content["type"] == "video":
+                        chat_content.append(content["video"][-1])
+                    elif content["type"] == "image":
+                        chat_content.append(content["image"])
+                    else:
+                        print(
+                            f"[QwenVLBrain] format memory content encounted with unsupported content type: {content}"
+                        )
+            if text_segment:
+                chat_content.append(text_segment)
+                text_segment = ""  # clear
+            chat_content.append("\n---\n")
+        return chat_content
+    
+    def extract_images(self):
+        print(f"[QwenVLBrain] Extract images from memory with {len(self.history)} entries")
+        content_images = []
+        for item in self.history:
+            # take only one image from video to reduce GPU memory useage
+            if item["role"] == "system":
+                continue
+            for content in item["content"]:
+                if content["type"] == "text":
+                    continue
+                elif content["type"] == "video":
+                    content_images.append(content["video"][-1])
+                elif content["type"] == "image":
+                    content_images.append(content["image"])
+                else:
+                    continue
+        return content_images
+    
+    
 class QwenVLBrain:
     """
     Brain component that uses Qwen VL for high-level task planning and monitoring.
@@ -296,12 +346,16 @@ class QwenVLBrain:
         except Exception as e:
             raise RuntimeError(f"Failed to create plan: {e}")
 
-    def summary_skill_execution(self, skill_info: dict):
+    def summary_skill_execution(self, skill_info: dict, only_image = True):
         # TODO 只提供image不提供text试试！
-        self.monitor_memory.add_user_input(
-            contents=[f"skill execution result: {skill_info['result']}"]
-        )
-        content = self._format_memory_content(memory=self.monitor_memory)
+        # self.monitor_memory.add_user_input(
+        #     contents=[f"skill execution result: {skill_info['result']}"]
+        # )
+        content = []
+        if only_image:
+            memory_content = self.monitor_memory.extract_images()
+        else:
+            memory_content = self.monitor_memory.format_memory_content()
         content.append(
             (
                 "The robot are try to orchestrate skills to accomplish a task.\n\n"
@@ -311,11 +365,16 @@ class QwenVLBrain:
                 f"Skill Description: {skill_info['description']}\n"
                 f"Skill Parameters: {skill_info['parameters']}\n"
                 f"Skill Criterion: {skill_info['criterion']}\n\n"
+                f"Skill Execution Result (reported by skill itself): {skill_info['result']}\n\n"
+            ))
+        content.extend(memory_content)
+        content.append(
+            (
                 "## Summary memory content as follows:\n"
                 "Extract key information as bullet points.\n"
                 "Your focus may include the following points: \n"
-                "(timeout not means failed, timeout only means the skill is finished while whather successed or not is unkown! you need juedge by yourself from those Image, especially last Image)"
-                "0. Did the task finished? Based on the Orignal Task and those scene image.\n"
+                # "(timeout not means failed, timeout only means the skill is finished while whather successed or not is unkown! you need juedge by yourself from those Image, especially last Image)"
+                f"0. Did the task finished? Please Recheck the skill execution result! Did \'{skill_info['criterion']['successed']}\' is real happened nor not?\n"
                 "1. Did the execution of the skill achieve the intended goal?\n"
                 "2. How does the scene change as the skill is executed?\n"
                 "3. Reflection skills execution process.\n"
@@ -608,36 +667,7 @@ class QwenVLBrain:
             "last_monitoring": self.state.last_monitoring_time,
         }
 
-    def _format_memory_content(self, memory: BrainMemory) -> List:
-        print(f"[QwenVLBrain] Formatting memory with {len(memory.history)} entries")
-        chat_content = []
-        chat_content.append("## memory content:\n\n")
-        for item in memory.history:
-            # take only one image from video to reduce GPU memory useage
-            if item["role"] == "system":
-                continue
-            chat_content.append(f"### {item['role']}:\n")
-            text_segment = ""
-            for content in item["content"]:
-                if content["type"] == "text":
-                    text_segment = text_segment + content["text"]
-                else:
-                    if text_segment:
-                        chat_content.append(text_segment)
-                        text_segment = ""  # clear
-                    if content["type"] == "video":
-                        chat_content.append(content["video"][-1])
-                    elif content["type"] == "image":
-                        chat_content.append(content["image"])
-                    else:
-                        print(
-                            f"[QwenVLBrain] format memory content encounted with unsupported content type: {content}"
-                        )
-            if text_segment:
-                chat_content.append(text_segment)
-                text_segment = ""  # clear
-            chat_content.append("\n---\n")
-        return chat_content
+
 
     def _query_qwen_for_plan(self, task: Task, skill_descriptions: str) -> SkillPlan:
         if self.model_adapter is None:
@@ -745,20 +775,27 @@ class QwenVLBrain:
         assert type(obs_history) is list
         try:
             if self.visualize:
-                inspector_rgb = (
-                    obs_history[-1].data["policy"]["camera_side"][0].cpu().numpy()
-                )
+                inspector_rgb = (obs_history[-1].data["policy"]["camera_side"][0].cpu().numpy())
+                front_rgb = obs_history[-1].data["policy"]["camera_top"][0].cpu().numpy()
                 import matplotlib.pyplot as plt
-
-                plt.imshow(inspector_rgb)
-                plt.axis("off")
+                fig, axs = plt.subplots(1, 2, figsize=(10, 5))  # 创建1行2列的子图
+                axs[0].imshow(inspector_rgb)
+                axs[0].axis("off")
+                axs[0].set_title("Inspector View")
+                axs[1].imshow(front_rgb)
+                axs[1].axis("off")
+                axs[1].set_title("Front View")
+                plt.tight_layout()
                 plt.savefig(
                     os.path.join(
                         self.log_path,
                         f"{len(self.system_state.plan_history)}_{self.state.current_skill_index}_monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.png",
                     )
                 )
-            video_frames = []
+                plt.close()
+
+            video_frames_inspect = []
+            video_frames_front = []
 
             def calculate_indices(jump, total, available):
                 if available >= total * jump + 1:
@@ -779,7 +816,7 @@ class QwenVLBrain:
             # 计算可用的观察帧数
             available_frames = len(obs_history)
             jump = 3
-            total = 4
+            total = 2
             indices = []
             if not (
                 indices := calculate_indicesv2(total, available_frames, jump * total)
@@ -793,7 +830,7 @@ class QwenVLBrain:
             indices.sort()
             # 提取帧
             for frame_index in indices:
-                video_frames.append(
+                video_frames_inspect.append(
                     Image.fromarray(
                         obs_history[frame_index]
                         .data["policy"]["camera_side"][0]
@@ -801,36 +838,79 @@ class QwenVLBrain:
                         .numpy()
                     )
                 )
+                video_frames_front.append(
+                    Image.fromarray(
+                        obs_history[frame_index]
+                        .data["policy"]["camera_top"][0]
+                        .cpu()
+                        .numpy()
+                    )
+                )
             if self.visualize:
-                gif_path = os.path.join(
-                    self.log_path,
-                    f"{len(self.system_state.plan_history)}_{self.state.current_skill_index}_monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.gif",
-                )
-                video_frames[0].save(
-                    gif_path,
-                    save_all=True,
-                    append_images=video_frames[1:],
-                    duration=500,
-                    loop=0,
-                    optimize=True,  # 优化文件大小
-                    quality=85,  # 质量参数（0-100）
-                )
+
+                # 获取原始视频帧率（示例值，需根据实际情况替换）
+                original_fps = 30
+                duration = 1000 // original_fps  # 每帧持续时间（毫秒）
+
+                all_frames = []
+                max_length = max(len(video_frames_inspect), len(video_frames_front))
+                last_inspect = video_frames_inspect[-1] if video_frames_inspect else None
+                last_front = video_frames_front[-1] if video_frames_front else None
+
+                for i in range(max_length):
+                    frame_inspect = video_frames_inspect[i] if i < len(video_frames_inspect) else last_inspect
+                    frame_front = video_frames_front[i] if i < len(video_frames_front) else last_front
+
+                    if frame_inspect and frame_front:
+                        # 保持宽高比对齐
+                        target_height = frame_inspect.size[1]
+                        inspect_ratio = frame_inspect.size[0] / target_height
+                        front_ratio = frame_front.size[0] / target_height
+
+                        inspect_width = int(target_height * inspect_ratio)
+                        front_width = int(target_height * front_ratio)
+
+                        combined = Image.new('RGB', (inspect_width + front_width, target_height), (0, 0, 0))
+                        combined.paste(frame_inspect.resize((inspect_width, target_height)), (0, 0))
+                        combined.paste(frame_front.resize((front_width, target_height)), (inspect_width, 0))
+                        all_frames.append(combined)
+                    elif frame_inspect:
+                        all_frames.append(frame_inspect)
+                    elif frame_front:
+                        all_frames.append(frame_front)
+
+                if all_frames:
+                    gif_path = os.path.join(
+                        self.log_path,
+                        f"{len(self.system_state.plan_history)}_{self.state.current_skill_index}_monitor_{current_skill['name']}_input_{len(self.monitor_memory.history)}.gif",
+                    )
+                    all_frames[0].save(
+                        gif_path,
+                        save_all=True,
+                        append_images=all_frames[1:],
+                        duration=duration,
+                        loop=0,
+                        optimize=False  # 保留图像质量
+                    )
             image_data = Image.fromarray(
                 inspector_rgb
-            )  # Prepare input for the model adapter
-            self.monitor_memory.add_user_input(
-                contents=[
-                    "belowing is current scene video observation",
-                    video_frames,
-                ]
             )
             task.image = image_data  # Update task with image
+            # Prepare input for the model adapte
+            self.monitor_memory.add_user_input(
+                contents=[
+                    "belowing is current scene observation from side camera",
+                    video_frames_inspect,
+                    "belowing is current scene observation from front camera",
+                    video_frames_front,
+                ]
+            )
             # Generate response
             print(
                 f"[QwenVLBrain] Monitoring task: {task.description}, skill: {current_skill['name']}"
             )
             response_text, _ = self.model_adapter.generate(
-                self.monitor_memory.fetch_history(last_n=3),
+                self.monitor_memory.fetch_history(last_n=0),
                 max_tokens=self.max_tokens // 2,  # Use fewer tokens for monitoring
             )
             self.monitor_memory.add_assistant_output(response_text)
@@ -840,7 +920,7 @@ class QwenVLBrain:
                 f"[QwenVLBrain] Monitoring result using {self.adapter_type}: {decision['result']}"
             )
             # !!!---!!!
-            obs_history.clear()  # Clear obs_history after monitoring
+            # obs_history.clear()  # 在 handle 完 obs result 后再 clean
             return decision
 
         except Exception as e:
@@ -1047,7 +1127,7 @@ Here I will describe my thought process.
 Skill Name: {skill_info["name"]}
 Skill Parameters: {skill_info["parameters"]}
 Skill Criterion: {skill_info["criterion"]}
-Skill Execution Result: {skill_info["result"] if skill_info["result"] != "timeout" else "unkown"}
+Skill Execution Result (skill reported): {skill_info["result"] if skill_info["result"] != "timeout" else "unkown"}
 Execution Summary: {skill_info.get("execution_summary", "No summary as it compelete success")}
 """
                 for skill_info in skill_history

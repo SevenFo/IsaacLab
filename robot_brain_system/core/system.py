@@ -473,11 +473,11 @@ class RobotBrainSystem:
                 ):
                     if self.brain.should_monitor():  # Brain decides if it's time
                         print("[RobotBrainSystem] Brain monitoring execution...")
-
+                        self.simulator.pause_current_skill()
                         monitoring_result = self.brain.monitor_skill_execution(
                             self.state.obs_history
                         )
-
+                        self.simulator.recovery_current_skill()
                         self._handle_monitoring_result(monitoring_result)
 
                 # 3. Manage skill execution based on brain's plan
@@ -491,7 +491,7 @@ class RobotBrainSystem:
                         if self.simulator
                         else {}
                     )
-                    self.state.sub_skill_status = sim_skill_exec_status
+                    self.state.sub_skill_status = sim_skill_exec_status # TODO useless
                     print(
                         f"[RobotBrainSystem] Current skill execution status: {sim_skill_exec_status['status']}"
                     )
@@ -514,6 +514,7 @@ class RobotBrainSystem:
                             self.state.skill_history[-1]["result"] = (
                                 last_sim_skill_state
                             )
+                            last_plan_info = self.state.plan_history[-1]
                             last_skill_info = self.state.skill_history[-1]
                             last_skill_execution_summary = (
                                 self.brain.summary_skill_execution(last_skill_info)
@@ -521,7 +522,27 @@ class RobotBrainSystem:
                             self.state.skill_history[-1]["execution_summary"] = (
                                 last_skill_execution_summary
                             )
-                            self.brain.advance_skill()  # Tell brain to move to next skill
+                            # TODO ADD thinking
+                            # self.brain.advance_skill()  # Tell brain to move to next skill
+                            # clear obs history for next skill
+                            obss = self.simulator.get_observation()
+                            if obss:
+                                self.state.obs_history.extend(obss)
+                            else:
+                                self.state.obs_history = self.state.obs_history[-1:]
+                            obs = self.state.obs_history[-1]
+                            assert self.state.current_task
+                            new_plan = self.brain.replan_task(
+                                self.state.current_task,
+                                last_plan_info,
+                                self.state.skill_history,
+                                obs,
+                            )
+                            if new_plan:
+                                self.state.plan_history.append(new_plan)
+                                self.state.skill_history = []
+                                
+                            self.state.obs_history.clear()
                         elif (
                             last_sim_skill_state == "failed"
                             or last_sim_skill_state == "timeout"
@@ -534,17 +555,6 @@ class RobotBrainSystem:
                             self.state.skill_history[-1]["result"] = (
                                 last_sim_skill_state
                             )
-                            # Brain needs to handle this failure (e.g. replan, abort)
-                            # For now, we'll tell brain to advance, and monitoring should catch it or brain handles error.
-                            # Or, directly set brain to error or make it replan.
-                            # This interaction needs refinement.
-                            # A simple approach: if skill fails, task fails.
-                            # self.brain.interrupt_task(
-                            #     f"Skill {sim_skill_exec_status.get('current_skill')} failed in subprocess."
-                            # )
-                            # self.state.status = SystemStatus.IDLE  # Or ERROR
-                            # self.state.error_message = f"Skill {sim_skill_exec_status.get('current_skill')} failed."
-                            # continue to next loop iteration to stop further processing of this plan
                             last_plan_info = self.state.plan_history[-1]
                             last_skill_info = self.state.skill_history[-1]
                             last_skill_execution_summary = (
@@ -569,6 +579,7 @@ class RobotBrainSystem:
                             if new_plan:
                                 self.state.plan_history.append(new_plan)
                                 self.state.skill_history = []
+                            self.state.obs_history.clear()
                         elif last_sim_skill_state == "interrupted":
                             assert False, "unsupported now"
                             print(
