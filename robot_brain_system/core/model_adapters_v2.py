@@ -609,6 +609,7 @@ class OpenAIAdapter(BaseModelAdapter):
             model=self.model_name, messages=messages, max_tokens=max_tokens, **kwargs
         )
         response = completion.choices[0].message.content or ""
+        print(f"\n--- [OpenAIAdapter] Received Response ---\n{response.strip()}\n")
         return response.strip(), completion
 
 

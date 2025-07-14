@@ -44,7 +44,7 @@ if TYPE_CHECKING:
         # "failed": "".join(
         #     ["gripper state that is not reasonable to execute the skill."]
         # ),  # The gripper posisiton is far away from the box and yellow button, ", "or the gripper was pressed on areas other than the yellow button," "or the gripper is lingering (not moving) for several monitoring rounds, ", "or any other
-        "progress": "", # "The gripper is on a reasonable state to execute the skill",  # , such as: moving towards the red box and yellow button, etc.
+        "progress": "",  # "The gripper is on a reasonable state to execute the skill",  # , such as: moving towards the red box and yellow button, etc.
     },
     requires_env=True,
 )

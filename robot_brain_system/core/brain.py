@@ -104,11 +104,13 @@ class BrainMemory:
 
         # 2. 对话历史是除了系统提示外的所有内容
         conversation_history = self.history[1:]
-        assert len(conversation_history) % 2 == 1, f"len of conversation_history must be odd, while get: {len(conversation_history)}, may need add user input firstly"
+        assert len(conversation_history) % 2 == 1, (
+            f"len of conversation_history must be odd, while get: {len(conversation_history)}, may need add user input firstly"
+        )
 
         # 3. 从对话历史中获取最后 n 轮 (n * 2 个条目)
         # Python的负索引切片很安全，如果条目数不足，它会返回所有可用的条目
-        num_entries_to_fetch = last_n * 2 + 1 # 最后一条为当前的输入
+        num_entries_to_fetch = last_n * 2 + 1  # 最后一条为当前的输入
         last_n_rounds = conversation_history[-num_entries_to_fetch:]
 
         # 4. 将系统提示和最近的对话历史合并返回
@@ -149,9 +151,11 @@ class BrainMemory:
                 text_segment = ""  # clear
             chat_content.append("\n---\n")
         return chat_content
-    
+
     def extract_images(self):
-        print(f"[QwenVLBrain] Extract images from memory with {len(self.history)} entries")
+        print(
+            f"[QwenVLBrain] Extract images from memory with {len(self.history)} entries"
+        )
         content_images = []
         for item in self.history:
             # take only one image from video to reduce GPU memory useage
@@ -167,8 +171,8 @@ class BrainMemory:
                 else:
                     continue
         return content_images
-    
-    
+
+
 class QwenVLBrain:
     """
     Brain component that uses Qwen VL for high-level task planning and monitoring.
@@ -208,7 +212,7 @@ class QwenVLBrain:
         self.monitor_memory = BrainMemory()
         self.replan_memory = BrainMemory()
         self.replan_memory.add_system_prompt()
-        
+
         self.FRAME_JUMP = 3
         self.FRAME_TOTAL = 2
 
@@ -349,7 +353,7 @@ class QwenVLBrain:
         except Exception as e:
             raise RuntimeError(f"Failed to create plan: {e}")
 
-    def summary_skill_execution(self, skill_info: dict, only_image = True):
+    def summary_skill_execution(self, skill_info: dict, only_image=True):
         # TODO 只提供image不提供text试试！
         # self.monitor_memory.add_user_input(
         #     contents=[f"skill execution result: {skill_info['result']}"]
@@ -369,7 +373,8 @@ class QwenVLBrain:
                 f"Skill Parameters: {skill_info['parameters']}\n"
                 f"Skill Criterion: {skill_info['criterion']}\n\n"
                 f"Skill Execution Result (reported by skill itself): {skill_info['result']}\n\n"
-            ))
+            )
+        )
         content.extend(memory_content)
         content.append(
             (
@@ -377,7 +382,7 @@ class QwenVLBrain:
                 "Extract key information as bullet points.\n"
                 "Your focus may include the following points: \n"
                 # "(timeout not means failed, timeout only means the skill is finished while whather successed or not is unkown! you need juedge by yourself from those Image, especially last Image)"
-                f"0. Did the task finished? Please Recheck the skill execution result! Did \'{skill_info['criterion']['successed']}\' is real happened nor not?\n"
+                f"0. Did the task finished? Please Recheck the skill execution result! Did '{skill_info['criterion']['successed']}' is real happened nor not?\n"
                 "1. Did the execution of the skill achieve the intended goal?\n"
                 "2. How does the scene change as the skill is executed?\n"
                 "3. Reflection skills execution process.\n"
@@ -588,7 +593,7 @@ class QwenVLBrain:
                 return
             self.initial_monitor()
 
-    def should_monitor(self,obs_history) -> bool:
+    def should_monitor(self, obs_history) -> bool:
         """Check if it's time to monitor the current skill execution."""
         if self.state.status != SystemStatus.EXECUTING or not self.state.current_plan:
             return False
@@ -596,17 +601,23 @@ class QwenVLBrain:
         if not current_skill_info["enable_monitoring"]:
             return False
         if not self.state.current_plan or not self.state.current_task:
-            print(f"[QwenVLBrain] should_monitor: No active task")
+            print("[QwenVLBrain] should_monitor: No active task")
             return False
         if len(obs_history) == 0:
-            print("[QwenVLBrain] should_monitor: No observation data available for monitoring")
+            print(
+                "[QwenVLBrain] should_monitor: No observation data available for monitoring"
+            )
             return False
         if not (
-            self.calculate_indicesv2(self.FRAME_TOTAL, len(obs_history), self.FRAME_JUMP * self.FRAME_TOTAL)
+            self.calculate_indicesv2(
+                self.FRAME_TOTAL, len(obs_history), self.FRAME_JUMP * self.FRAME_TOTAL
+            )
         ):
-            print("[QwenVLBrain] should_monitor: No observation data available for monitoring")
+            print(
+                "[QwenVLBrain] should_monitor: No observation data available for monitoring"
+            )
             return False
-        
+
         current_time = time.time()
         return (
             current_time - self.state.last_monitoring_time
@@ -624,7 +635,6 @@ class QwenVLBrain:
         """
         try:
             self.state.last_monitoring_time = time.time()
-
 
             # Get current skill info
             current_skill = self.get_next_skill()
@@ -668,8 +678,6 @@ class QwenVLBrain:
             "error_message": self.state.error_message,
             "last_monitoring": self.state.last_monitoring_time,
         }
-
-
 
     def _query_qwen_for_plan(self, task: Task, skill_descriptions: str) -> SkillPlan:
         if self.model_adapter is None:
@@ -758,6 +766,7 @@ class QwenVLBrain:
             skill_monitoring_interval=self.skill_monitoring_interval,
             expected_duration=len(skill_sequence) * 10.0,  # Rough estimate
         )
+
     @staticmethod
     def calculate_indicesv2(total, available, mini_available):
         if available < mini_available or total > available or total < 2:
@@ -767,6 +776,7 @@ class QwenVLBrain:
         indices = [round(i * step) for i in range(total)]
         indices[-1] = available - 1  # Ensure the last index is correct
         return indices
+
     def _query_qwen_for_monitoring(
         self,
         task: Task,
@@ -785,9 +795,14 @@ class QwenVLBrain:
         assert type(obs_history) is list
         try:
             if self.visualize:
-                inspector_rgb = (obs_history[-1].data["policy"]["camera_side"][0].cpu().numpy())
-                front_rgb = obs_history[-1].data["policy"]["camera_top"][0].cpu().numpy()
+                inspector_rgb = (
+                    obs_history[-1].data["policy"]["camera_side"][0].cpu().numpy()
+                )
+                front_rgb = (
+                    obs_history[-1].data["policy"]["camera_top"][0].cpu().numpy()
+                )
                 import matplotlib.pyplot as plt
+
                 fig, axs = plt.subplots(1, 2, figsize=(10, 5))  # 创建1行2列的子图
                 axs[0].imshow(inspector_rgb)
                 axs[0].axis("off")
@@ -813,13 +828,13 @@ class QwenVLBrain:
                 else:
                     return None
 
-
-
             # TODO 提取 obs 这部分应该要放在外面才对，这里面只进行query_qwen的逻辑
             # 计算可用的观察帧数
             available_frames = len(obs_history)
 
-            indices = self.calculate_indicesv2(self.FRAME_TOTAL, available_frames, self.FRAME_JUMP * self.FRAME_TOTAL)
+            indices = self.calculate_indicesv2(
+                self.FRAME_TOTAL, available_frames, self.FRAME_JUMP * self.FRAME_TOTAL
+            )
 
             # 按索引顺序排序（从旧到新）
             indices.sort()
@@ -842,19 +857,28 @@ class QwenVLBrain:
                     )
                 )
             if self.visualize:
-
                 # 获取原始视频帧率（示例值，需根据实际情况替换）
                 original_fps = 30
                 duration = 1000 // original_fps  # 每帧持续时间（毫秒）
 
                 all_frames = []
                 max_length = max(len(video_frames_inspect), len(video_frames_front))
-                last_inspect = video_frames_inspect[-1] if video_frames_inspect else None
+                last_inspect = (
+                    video_frames_inspect[-1] if video_frames_inspect else None
+                )
                 last_front = video_frames_front[-1] if video_frames_front else None
 
                 for i in range(max_length):
-                    frame_inspect = video_frames_inspect[i] if i < len(video_frames_inspect) else last_inspect
-                    frame_front = video_frames_front[i] if i < len(video_frames_front) else last_front
+                    frame_inspect = (
+                        video_frames_inspect[i]
+                        if i < len(video_frames_inspect)
+                        else last_inspect
+                    )
+                    frame_front = (
+                        video_frames_front[i]
+                        if i < len(video_frames_front)
+                        else last_front
+                    )
 
                     if frame_inspect and frame_front:
                         # 保持宽高比对齐
@@ -865,9 +889,18 @@ class QwenVLBrain:
                         inspect_width = int(target_height * inspect_ratio)
                         front_width = int(target_height * front_ratio)
 
-                        combined = Image.new('RGB', (inspect_width + front_width, target_height), (0, 0, 0))
-                        combined.paste(frame_inspect.resize((inspect_width, target_height)), (0, 0))
-                        combined.paste(frame_front.resize((front_width, target_height)), (inspect_width, 0))
+                        combined = Image.new(
+                            "RGB",
+                            (inspect_width + front_width, target_height),
+                            (0, 0, 0),
+                        )
+                        combined.paste(
+                            frame_inspect.resize((inspect_width, target_height)), (0, 0)
+                        )
+                        combined.paste(
+                            frame_front.resize((front_width, target_height)),
+                            (inspect_width, 0),
+                        )
                         all_frames.append(combined)
                     elif frame_inspect:
                         all_frames.append(frame_inspect)
@@ -885,11 +918,9 @@ class QwenVLBrain:
                         append_images=all_frames[1:],
                         duration=duration,
                         loop=0,
-                        optimize=False  # 保留图像质量
+                        optimize=False,  # 保留图像质量
                     )
-            image_data = Image.fromarray(
-                inspector_rgb
-            )
+            image_data = Image.fromarray(inspector_rgb)
             task.image = image_data  # Update task with image
             # Prepare input for the model adapte
             self.monitor_memory.add_user_input(
