@@ -395,6 +395,13 @@ class IsaacSimulator:
             return obss
         return None
 
+    def get_current_observation(self) -> Optional[Observation]:
+        response = self._send_command_and_recv({"command": "get_current_observation"})
+        if response and response.get("success"):
+            obs_data = response.get("observation_data")
+            return Observation(**obs_data)
+        return None
+
     def step_env(
         self, action: Action
     ) -> Optional[Tuple[Observation, float, bool, bool, Dict[str, Any]]]:
@@ -627,13 +634,6 @@ class IsaacSimulator:
                             success = skill_executor.change_current_skill_status(skill_status=skill_status)
                             child_conn.send({"success": success})
                         elif cmd == "get_observation":
-                            # This should get the latest observation from the environment
-                            # env.get_observations() or similar if available, or from last step
-                            # For now, let's assume env.reset() or env.step() populates an obs property
-                            # This part needs to align with how your Isaac Lab env exposes observations
-                            # A common pattern is that step() returns it. We might need to store it.
-                            # For now, we'll simulate getting it via a direct call if possible
-                            # This needs careful implementation based on Isaac Lab Env specifics
                             obss = []
                             try:
                                 while True:
@@ -645,6 +645,14 @@ class IsaacSimulator:
                                 {
                                     "success": True,
                                     "observation_data": obss,
+                                }
+                            )
+                        elif cmd == 'get_current_observation':
+                            child_conn.send(
+                                {
+                                    "success": True,
+                                    "observation_data": latest_obs_payload,
+                                    "info": info,
                                 }
                             )
 

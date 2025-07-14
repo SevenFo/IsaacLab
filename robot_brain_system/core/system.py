@@ -471,13 +471,14 @@ class RobotBrainSystem:
                     self.brain.state.status == SystemStatus.EXECUTING
                     or self.brain.state.status == SystemStatus.MONITORING
                 ):
-                    if self.brain.should_monitor():  # Brain decides if it's time
+                    if self.brain.should_monitor(self.state.obs_history):  # Brain decides if it's time
                         print("[RobotBrainSystem] Brain monitoring execution...")
                         self.simulator.pause_current_skill()
                         monitoring_result = self.brain.monitor_skill_execution(
                             self.state.obs_history
                         )
                         self.simulator.recovery_current_skill()
+                        self.state.obs_history.clear()
                         self._handle_monitoring_result(monitoring_result)
 
                 # 3. Manage skill execution based on brain's plan
@@ -528,10 +529,11 @@ class RobotBrainSystem:
                             obss = self.simulator.get_observation()
                             if obss:
                                 self.state.obs_history.extend(obss)
+                            if len(self.state.obs_history):
+                                obs = self.state.obs_history[-1]
                             else:
-                                self.state.obs_history = self.state.obs_history[-1:]
-                            obs = self.state.obs_history[-1]
-                            assert self.state.current_task
+                                obs = self.simulator.get_current_observation()
+                            assert self.state.current_task and obs
                             new_plan = self.brain.replan_task(
                                 self.state.current_task,
                                 last_plan_info,
@@ -566,10 +568,11 @@ class RobotBrainSystem:
                             obss = self.simulator.get_observation()
                             if obss:
                                 self.state.obs_history.extend(obss)
+                            if len(self.state.obs_history):
+                                obs = self.state.obs_history[-1]
                             else:
-                                self.state.obs_history = self.state.obs_history[-1:]
-                            obs = self.state.obs_history[-1]
-                            assert self.state.current_task
+                                obs = self.simulator.get_current_observation()
+                            assert self.state.current_task and obs
                             new_plan = self.brain.replan_task(
                                 self.state.current_task,
                                 last_plan_info,

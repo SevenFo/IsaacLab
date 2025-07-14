@@ -208,6 +208,9 @@ class QwenVLBrain:
         self.monitor_memory = BrainMemory()
         self.replan_memory = BrainMemory()
         self.replan_memory.add_system_prompt()
+        
+        self.FRAME_JUMP = 3
+        self.FRAME_TOTAL = 2
 
     def initialize(self):
         """Initialize the brain component."""
@@ -585,13 +588,25 @@ class QwenVLBrain:
                 return
             self.initial_monitor()
 
-    def should_monitor(self) -> bool:
+    def should_monitor(self,obs_history) -> bool:
         """Check if it's time to monitor the current skill execution."""
         if self.state.status != SystemStatus.EXECUTING or not self.state.current_plan:
             return False
         current_skill_info = self.get_next_skill()
         if not current_skill_info["enable_monitoring"]:
             return False
+        if not self.state.current_plan or not self.state.current_task:
+            print(f"[QwenVLBrain] should_monitor: No active task")
+            return False
+        if len(obs_history) == 0:
+            print("[QwenVLBrain] should_monitor: No observation data available for monitoring")
+            return False
+        if not (
+            self.calculate_indicesv2(self.FRAME_TOTAL, len(obs_history), self.FRAME_JUMP * self.FRAME_TOTAL)
+        ):
+            print("[QwenVLBrain] should_monitor: No observation data available for monitoring")
+            return False
+        
         current_time = time.time()
         return (
             current_time - self.state.last_monitoring_time
@@ -610,19 +625,6 @@ class QwenVLBrain:
         try:
             self.state.last_monitoring_time = time.time()
 
-            if not self.state.current_plan or not self.state.current_task:
-                return {"result": "progress", "reason": "No active task"}
-
-            if self.current_skill_monitor_time < self.monitor_waiting_times:
-                self.current_skill_monitor_time += 1
-                return {
-                    "result": "progress",
-                    "reason": f"current_skill_monitor_time: {self.current_skill_monitor_time}",
-                }
-
-            if len(obs_history) == 0:
-                print("[QwenVLBrain] No observation data available for monitoring")
-                return {"result": "progress", "reason": "No observation data"}
 
             # Get current skill info
             current_skill = self.get_next_skill()
@@ -756,7 +758,15 @@ class QwenVLBrain:
             skill_monitoring_interval=self.skill_monitoring_interval,
             expected_duration=len(skill_sequence) * 10.0,  # Rough estimate
         )
+    @staticmethod
+    def calculate_indicesv2(total, available, mini_available):
+        if available < mini_available or total > available or total < 2:
+            return []
 
+        step = (available - 1) / (total - 1)
+        indices = [round(i * step) for i in range(total)]
+        indices[-1] = available - 1  # Ensure the last index is correct
+        return indices
     def _query_qwen_for_monitoring(
         self,
         task: Task,
@@ -803,28 +813,13 @@ class QwenVLBrain:
                 else:
                     return None
 
-            def calculate_indicesv2(total, available, mini_available):
-                if available < mini_available or total > available or total < 2:
-                    return None
 
-                step = (available - 1) / (total - 1)
-                indices = [round(i * step) for i in range(total)]
-                indices[-1] = available - 1  # Ensure the last index is correct
-                return indices
 
             # TODO 提取 obs 这部分应该要放在外面才对，这里面只进行query_qwen的逻辑
             # 计算可用的观察帧数
             available_frames = len(obs_history)
-            jump = 3
-            total = 2
-            indices = []
-            if not (
-                indices := calculate_indicesv2(total, available_frames, jump * total)
-            ):
-                return {
-                    "action": "not enough",
-                    "reason": "not enough availabel frames",
-                }
+
+            indices = self.calculate_indicesv2(self.FRAME_TOTAL, available_frames, self.FRAME_JUMP * self.FRAME_TOTAL)
 
             # 按索引顺序排序（从旧到新）
             indices.sort()
