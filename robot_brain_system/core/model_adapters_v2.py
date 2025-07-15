@@ -186,10 +186,10 @@ class TransformersAdapter(BaseModelAdapter):
         _initial_memory = torch.cuda.memory_allocated()
         gen_kwargs = {
             "max_new_tokens": max_tokens,
-            "top_k": 2,
-            "repetition_penalty": 1.0,
-            "temperature": 0.5,
-            "do_sample": True,
+            # "top_k": 2,
+            # "repetition_penalty": 1.0,
+            # "temperature": 0.1,
+            # "do_sample": True,
         }
         gen_kwargs.update(kwargs)
 

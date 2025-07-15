@@ -356,6 +356,7 @@ class IsaacSimulator:
                 get_skill_registry,
             )
             from robot_brain_system.utils import dynamic_set_attr
+            import robot_brain_system.skills # noqa: F401
 
             print(
                 "[IsaacSubprocess] Isaac App was launched by launcher. Continuing initialization."
