@@ -1,5 +1,6 @@
 # robot_brain_system/isaac_launcher.py
 import sys
+from omegaconf import OmegaConf, DictConfig
 
 
 def _print_imports(context_message):
@@ -11,7 +12,7 @@ def _print_imports(context_message):
     print(f"--- END DEBUG ({len(sys.modules)} total modules) ---\n")
 
 
-def isaac_process_entry(child_conn, sim_config):
+def isaac_process_entry(child_conn, sim_config:DictConfig):
     """
     This is the minimal entry point for the Isaac Sim subprocess.
     Its only job is to initialize Isaac Sim and then hand over control
@@ -34,39 +35,9 @@ def isaac_process_entry(child_conn, sim_config):
         child_conn.close()
         return
 
-    app_launcher_params = {
-        "task": sim_config.get("env_name", "Isaac-Move-Box-Frank-IK-Rel"),
-        "device": sim_config.get(
-            "device", "cuda:0"
-        ),  # AppLauncher might use this for 'sim_device' default
-        "num_envs": sim_config.get("num_envs", 1),
-        "disable_fabric": sim_config.get("disable_fabric", False),
-        "mode": sim_config.get(
-            "mode", 1
-        ),  # Make sure this value matches AppLauncher expectations
-        "env_config_file": sim_config.get("env_config_file"),
-        # Arguments AppLauncher specifically uses/pops (add more as needed):
-        "enable_cameras": sim_config.get("enable_cameras", True),
-        "headless": sim_config.get("headless", False),
-        # "livestream": sim_config.get(
-        #     "livestream", False
-        # ),  # This was the one causing the error
-        "sim_device": sim_config.get(
-            "sim_device", sim_config.get("device", "cuda:0")
-        ),  # AppLauncher often uses 'sim_device'
-        # "cpu": sim_config.get("cpu", False),
-        # "physics_gpu": sim_config.get("physics_gpu", -1),
-        # "graphics_gpu": sim_config.get("graphics_gpu", -1),
-        # "pipeline": sim_config.get("pipeline", "gpu"),
-        # "fabric_gpu": sim_config.get("fabric_gpu", -1),
-        # "kit_app": sim_config.get("kit_app", None),
-        # "enable_ros": sim_config.get("enable_ros", False),
-        # "ros_domain_id": sim_config.get("ros_domain_id", 0),
-        # "verbosity": sim_config.get("verbosity", "info"),
-        # "build_path": sim_config.get("build_path", None),
-        # # Add any other arguments AppLauncher defines in its command-line parsing
-    }
-
+    app_launcher_params = OmegaConf.to_container(sim_config, resolve=True)
+    assert type(app_launcher_params) == dict
+    
     # 2. Launch the simulation app
     # We pass the entire sim_config here, AppLauncher will pick what it needs.
     app_launcher = AppLauncher(app_launcher_params)

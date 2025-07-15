@@ -112,48 +112,6 @@ class SkillRegistry:
 
         return "".join(formated_descriptions)
 
-    def discover_skills(self, skills_directory: str = "../skills"):
-        """Automatically discover and register skills from a directory."""
-        try:
-            # Get the skills directory path relative to this file
-            current_dir = os.path.dirname(
-                os.path.abspath(__file__)
-            )  # Use abspath for reliability
-            skills_path = os.path.join(current_dir, skills_directory)
-
-            if not os.path.exists(skills_path):
-                print(f"[SkillRegistry] Skills directory not found: {skills_path}")
-                return
-
-            # Import all Python files in the skills directory
-            for filename in os.listdir(skills_path):
-                if filename.endswith(".py") and not filename.startswith("__"):
-                    module_name = f"robot_brain_system.skills.{filename[:-3]}"  # Make module name unique
-                    file_path = os.path.join(skills_path, filename)
-                    try:
-                        spec = importlib.util.spec_from_file_location(
-                            module_name, file_path
-                        )
-                        if spec and spec.loader:
-                            module = importlib.util.module_from_spec(spec)
-                            # Add to sys.modules to handle relative imports within skills if any
-                            sys.modules[module_name] = module
-                            spec.loader.exec_module(module)
-
-                            # Skills are registered by @skill_register decorator now
-                            # self._register_skills_from_module(module) # No longer needed if decorator handles it
-
-                    except Exception as e:
-                        print(f"[SkillRegistry] Failed to import {file_path}: {e}")
-                        import traceback
-
-                        traceback.print_exc()
-
-        except Exception as e:
-            print(f"[SkillRegistry] Error discovering skills: {e}")
-            import traceback
-
-            traceback.print_exc()
 
     # _register_skills_from_module is effectively replaced by the decorator's direct registration
 

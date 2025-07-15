@@ -4,9 +4,11 @@ import time
 import traceback
 import multiprocessing
 import matplotlib
+from omegaconf import DictConfig, OmegaConf
+import hydra
 
-
-def main():
+@hydra.main(version_base=None, config_path="../robot_brain_system/conf", config_name='config')
+def main(cfg: DictConfig):
     """
     Main execution function for the Robot Brain System.
     This function initializes and runs the entire application.
@@ -16,17 +18,18 @@ def main():
     # 假设 run_brain_system.py 在项目根目录，并且 src 在 python path 中
     # 如果不在，你可能需要先 `import sys; sys.path.append('src')`
     from robot_brain_system.core.system import RobotBrainSystem
-    from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
     from robot_brain_system.utils.logging_utils import setup_logging
-
+    
+    print(OmegaConf.to_yaml(cfg))
+    
     logger = setup_logging(
-        log_level="INFO", log_file=f"{DEVELOPMENT_CONFIG['monitoring']['log_file']}"
+        log_level="INFO", log_file=f"{cfg['monitoring']['log_file']}"
     )
 
     print("--- TEST ROBOT BRAIN SYSTEM ---")
 
     # 2. 创建系统实例
-    system = RobotBrainSystem(DEVELOPMENT_CONFIG)
+    system = RobotBrainSystem(cfg)
 
     # 3. 初始化系统
     print("\n--- Initializing System Components... ---")

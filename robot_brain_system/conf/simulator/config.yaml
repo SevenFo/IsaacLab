@@ -1,0 +1,23 @@
+defaults:
+  - default_simulation_app # isaacsim simulation app defuault config
+  - _self_
+
+# task env config
+task: "Isaac-Move-Box-UR5-IK-Rel-RGB-20250707-disable_termination"
+num_envs: 1
+disable_fabric: false
+
+# isaaclab config
+# 启用无头模式（无 GUI）
+headless: true
+# 启用实时流媒体
+# 0: 禁用, 1: 原生流媒体（已弃用）, 2: WebRTC 流媒体
+livestream: -1  # -1 表示使用环境变量
+# 启用摄像头传感器
+enable_cameras: true
+# 指定运行模拟的设备
+device: "cuda:0"  # 可选: "cpu", "cuda", "cuda:N"
+# 指定启动时加载的体验文件
+experience: ""  # 留空时根据 headless 和 enable_cameras 自动选择
+# 传递给 Omniverse Kit 的额外参数（以空格分隔的字符串）
+kit_args: ""

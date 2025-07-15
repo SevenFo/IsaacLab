@@ -1,13 +1,14 @@
 """
 Default configuration for the robot brain system.
 """
+import time
 
 # System configuration
 SYSTEM_CONFIG = {
     # Simulator configuration
     "simulator": {
         "env_name": "Isaac-Move-Box-UR5-IK-Rel-RGB-20250707-disable_termination",
-        "device": "cuda:2",
+        "device": "cuda:0",
         "num_envs": 1,
         "headless": True,
         "enable_cameras": True,
@@ -53,6 +54,7 @@ SYSTEM_CONFIG = {
     # System monitoring
     "monitoring": {
         "log_level": "INFO",
+        "log_dir": f"logs/robot_brain_system_{time.strftime('%Y%m%d-%H%M%S')}",
         "log_file": "logs/robot_brain_system.log",
         "performance_monitoring": True,
         "skill_execution_logging": True,
@@ -82,7 +84,7 @@ DEVELOPMENT_CONFIG = {
         "headless": False,  # Show GUI for development
         "num_envs": 1,
         "verbosity": "debug",
-        "env_config_file": "configs/ur5_lunar_base.yaml",
+        "env_config_file": "configs/ur5_lunar_base_press_and_grasp.yaml",
     },
     "brain": {
         **SYSTEM_CONFIG["brain"],
@@ -94,7 +96,9 @@ DEVELOPMENT_CONFIG = {
         "performance_monitoring": True,
     },
 }
-
+DEVELOPMENT_CONFIG["brain"]['qwen']['model'] =  "qwen-vl"
+DEVELOPMENT_CONFIG["brain"]['qwen']['model_path'] = "/data/model/Qwen/Qwen2.5-VL-32B-Instruct-AWQ" #"/data/model/ZhipuAI/GLM-4.1V-9B-Thinking"
+DEVELOPMENT_CONFIG["brain"]['qwen']['adapter_type'] = "transformers"
 
 # Production configuration
 PRODUCTION_CONFIG = {

@@ -372,7 +372,7 @@ class IsaacSimulator:
                 use_fabric=not cli_args.disable_fabric,
             )
             # Load custom config if provided
-            if cli_args.env_config_file:
+            if hasattr(cli_args, 'env_config_file'):
                 with open(cli_args.env_config_file, "r") as f:
                     env_new_cfg = yaml.safe_load(f)
                     dynamic_set_attr(env_cfg, env_new_cfg, path=["env_cfg"])
@@ -439,7 +439,6 @@ class IsaacSimulator:
             skill_registry = (
                 get_skill_registry()
             )  # Gets the global one, populated by decorators
-            skill_registry.discover_skills()  # Not needed if decorators auto-register and skills are imported
             print(
                 f"[IsaacSubprocess] Found {len(skill_registry.list_skills())} skills."
             )

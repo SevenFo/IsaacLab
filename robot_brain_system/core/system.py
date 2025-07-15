@@ -12,6 +12,7 @@ from typing import (
 )  # Generator might not be needed at this level anymore
 import traceback  # For debugging
 from PIL import Image
+from omegaconf import DictConfig
 
 from .types import (
     SystemStatus,
@@ -32,10 +33,10 @@ class RobotBrainSystem:
     Main system that orchestrates the Isaac simulator, skills, and brain.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: DictConfig):
         self.config = config
         self.visualize = True
-        self.log_path = config.get("log_path", "logs")
+        self.log_path = config.get("log_dir", "logs")
         self.state = SystemState()
 
         # Core components
@@ -94,7 +95,6 @@ class RobotBrainSystem:
             self.state.status = SystemStatus.IDLE
             print("[RobotBrainSystem] Initialization complete")
 
-            self.log_path = os.path.join(self.log_path, time.strftime("%Y%m%d_%H%M%S"))
             os.makedirs(self.log_path, exist_ok=True)
             self.brain.log_path = self.log_path  # Set log path for brain
             self.brain.visualize = self.visualize  # Set visualization flag

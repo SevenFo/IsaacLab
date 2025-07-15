@@ -239,7 +239,7 @@ class QwenVLBrain:
         self.state = BrainState()
 
         # Qwen VL configuration
-        self.qwen_config = config.get("qwen", {})
+        self.qwen_config = config.get("adapter", {})
         self.model_name = self.qwen_config.get("model", "qwen-vl")
         self.api_key = self.qwen_config.get("api_key", "")
         self.base_url = self.qwen_config.get("base_url", "")
@@ -327,11 +327,11 @@ class QwenVLBrain:
 
             if self.model_adapter:
                 print(f"[QwenVLBrain] 成功初始化适配器: {self.adapter_type}")
-                self.deepseek_model_adapter = OpenAIAdapter(
-                    model_name="deepseek-chat",
-                    api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-                    base_url="https://api.deepseek.com",
-                )
+                # self.deepseek_model_adapter = OpenAIAdapter(
+                #     model_name="deepseek-chat",
+                #     api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+                #     base_url="https://api.deepseek.com",
+                # )
 
         except Exception as e:
             import traceback

@@ -1,0 +1,12 @@
+# conf/config.yaml
+defaults:
+  - simulator: config
+  - brain: config
+  - _self_
+  - override: buaa
+
+monitoring:
+  log_level: "INFO"
+  log_dir: "logs/robot_brain_system_${now:%Y%m%d-%H%M%S}"
+  log_file: "${monitoring.log_dir}/robot_brain_system.log"
+
