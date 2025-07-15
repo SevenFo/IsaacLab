@@ -50,9 +50,9 @@ if TYPE_CHECKING:
 )
 class PressButton:
     """
-    This skill is used for openning a box.
+This skill is used for openning a box by moving the end-effector.
 
-    Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
+Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
     """
 
     def __init__(self, policy_device: str = "cuda", **running_params):
@@ -145,11 +145,15 @@ class PressButton:
 )
 class GraspSpanner:
     """
-    Grasp a spanner on the red box and move it to the desk surface.
-    You move to the home position IMMEDIATELY before this skill, which means the previous skill of grasp_spanner should make gripper move the end-effector to the home position.
-    For example, if you have execute `open_box` skill, you should move the end-effector to the home position before executing this skill.
+GRAB & LIFT SPANNER: Grasp tool from red box and lift it
 
-    Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
+[HARD RULE] REQUIRED BEFORE EXECUTION:
+MUST HAVE `move end effector to home` TO THIS SPOT AS LAST STEP!
+Which means cant insert anyother skill between `move_to_home` and `grasp_spanner`, anyother skill only canbe inserted before `move_to_home` or after `grasp_spanner`.
+Right example: open_box -> move_to_home -> grasp_spanner -> other skill -> move_to_home -> grasp_spanner
+Wrong example: move_to_home -> open_box -> grasp_spanner -> other skill -> grasp_spanner
+Once you want to execute grasp_spanner, you must have `move_to_home` as last step, otherwise it will fail.
+PARAMETERS: None
     """
 
     def __init__(self, policy_device: str = "cuda", **running_params):
