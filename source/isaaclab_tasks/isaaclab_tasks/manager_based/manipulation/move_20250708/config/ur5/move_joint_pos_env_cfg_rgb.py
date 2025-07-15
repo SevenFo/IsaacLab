@@ -215,14 +215,16 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
         # add frontcemaera
         self.scene.topcamera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/TopCamera",
-            spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=12.5),
+            spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=28),
             offset=CameraCfg.OffsetCfg(
-                pos=(1.175, -3.7, 4.04),
-                rot=(0.99027, 0.13917, 0, 0),
+                pos=(1.7, -3.95, 3.5),
+                rot=(0.85009, 0.35166, 0.17222, 0.35216),
                 convention="opengl",
             ),
-            width=256,
-            height=256,
+            # width=256,
+            # height=256,
+            width=480,
+            height=480,
             data_types=["rgb"],
             debug_vis=True,
         )
@@ -236,12 +238,11 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
                 rot=(0.65996, 0.4312, -0.33461, -0.51629),
                 convention="opengl",
             ),
-            width=256,
-            height=256,
+            width=480,
+            height=480,
             data_types=["rgb"],
             debug_vis=True,
         )
-
         # add wristcamera
         self.scene.wristcamera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/ur5/wrist_3_link/WristCamera",
@@ -251,12 +252,11 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
                 rot=(0, 0.70711, -0.70711, 0),
                 convention="opengl",
             ),
-            width=256,
-            height=256,
+            width=480,
+            height=480,
             data_types=["rgb"],
             debug_vis=True,
         )
-
         # add contact_sensor
         self.scene.contact_sensor = ContactSensorCfg(
             track_air_time=True,

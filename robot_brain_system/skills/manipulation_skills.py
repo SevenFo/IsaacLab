@@ -146,7 +146,8 @@ class PressButton:
 class GraspSpanner:
     """
     Grasp a spanner on the red box and move it to the desk surface.
-    You move to the home position IMMEDIATELY before this skill.
+    You move to the home position IMMEDIATELY before this skill, which means the previous skill of grasp_spanner should make gripper move the end-effector to the home position.
+    For example, if you have execute `open_box` skill, you should move the end-effector to the home position before executing this skill.
 
     Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
     """
