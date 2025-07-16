@@ -504,6 +504,7 @@ class IsaacSimulator:
                                 skill_name,
                                 params,
                                 _env.device,
+                                obs_dict
                             )
                             child_conn.send(
                                 {

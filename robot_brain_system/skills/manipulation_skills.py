@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, List
 import isaaclab.utils.math as math_utils
 
 from ..core.types import SkillType, ExecutionMode, Action
-from ..core.skill_manager import skill_register
+from ..core.skill_manager import skill_register, get_skill_registry
 
 # Attempt to import Robomimic, make it optional
 ROBOMIMIC_AVAILABLE = False
@@ -260,7 +260,7 @@ def quat_to_axis_angle_torch(q: torch.Tensor, epsilon: float = 1e-8) -> torch.Te
 
 
 @skill_register(
-    name="move_to_target",
+    name="move_to_target_pose",
     skill_type=SkillType.POLICY,
     execution_mode=ExecutionMode.STEPACTION,
     timeout=300.0,
@@ -270,8 +270,8 @@ def quat_to_axis_angle_torch(q: torch.Tensor, epsilon: float = 1e-8) -> torch.Te
 class MoveToTarget:
     """Moves the robot's end-effector to a specified target pose. in samecase, this skill can be helpful for trying a failed skill.
 
-    Args:
-        target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
+Args:
+    target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
     """
 
     def __init__(
@@ -280,9 +280,9 @@ class MoveToTarget:
         **running_params,
     ):
         if "target_pose" not in running_params:
-            raise ValueError("MoveToTarget skill requires 'target_pose' as param.")
-        target_pose: List[float] = running_params["target_pose"]
-        gripper_state: float = running_params.get(
+            assert 'target_object' in running_params, "No moving target is specified."
+        target_object = running_params.get("target_object", None)
+        self.gripper_state: float = running_params.get(
             "gripper_state", 1.0
         )  # gripper_state (float, optional): Command for the gripper. Defaults to 0.0.
         pos_gain: float = running_params.get(
@@ -301,20 +301,22 @@ class MoveToTarget:
         print("[Skill: MoveToTarget] Initializing...")
         self.device = policy_device
         self.enable_verification = enable_verification
+        if target_object is None:    
+            target_pose: List[float] = running_params["target_pose"]
+            if not isinstance(target_pose, list) or len(target_pose) != 7:
+                raise ValueError(
+                    f"MoveToTarget requires 'target_pose' to be a list of 7 floats, but got {target_pose}"
+                )
+            self.target_pose = torch.tensor(
+                target_pose, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
 
-        if not isinstance(target_pose, list) or len(target_pose) != 7:
-            raise ValueError(
-                f"MoveToTarget requires 'target_pose' to be a list of 7 floats, but got {target_pose}"
-            )
-        self.target_pose = torch.tensor(
-            target_pose, dtype=torch.float32, device=self.device
-        ).unsqueeze(0)
+            self.target_pos = self.target_pose[:, :3]
+            self.target_quat = self.target_pose[:, 3:7]
+        else:
+            self.target_pose = None
+            self.target_object = target_object
 
-        self.target_pos = self.target_pose[:, :3]
-        self.target_quat = self.target_pose[:, 3:7]
-        self.gripper_state = torch.tensor(
-            [[gripper_state]], dtype=torch.float32, device=self.device
-        )
         self.pos_gain = pos_gain
         self.rot_gain = rot_gain
         self.max_pos_vel = max_pos_vel
@@ -374,6 +376,7 @@ class MoveToTarget:
         # 直接获取位置和姿态，无需先拼接再分割
         current_pos = obs_dict["policy"]["eef_pos"]
         current_quat = obs_dict["policy"]["eef_quat"]
+        last_action = obs_dict["policy"]["action"].clone()
 
         # 确保维度正确并移动到设备
         if current_pos.dim() == 1:
@@ -385,7 +388,14 @@ class MoveToTarget:
         current_quat = current_quat.to(self.device)
 
         # --- Position Control (unchanged) ---
-        pos_error = self.target_pos - current_pos
+        if self.target_pose is None:
+            target_aabb = obs_dict["policy"][f"{self.target_object}_aabb"]
+            target_pos=  torch.tensor(target_aabb.center(), device=self.device).unsqueeze(0) # [x, y, z] 
+            target_quat = current_quat.clone(0)
+        else:
+            target_pos = self.target_pos.clone()
+            target_quat = self.target_quat.clone()
+        pos_error = target_pos - current_pos
         desired_pos_vel = pos_error * self.pos_gain
         pos_vel_norm = torch.linalg.norm(desired_pos_vel, dim=1, keepdim=True)
         scaled_pos_vel = desired_pos_vel * torch.min(
@@ -397,7 +407,7 @@ class MoveToTarget:
         # --- Rotation Control (with verification logic) ---
         # Calculate the error quaternion using PyTorch
         error_quat = math_utils.quat_mul(
-            self.target_quat, math_utils.quat_conjugate(current_quat)
+            target_quat, math_utils.quat_conjugate(current_quat)
         )
         error_quat = torch.where(error_quat[:, 0:1] < 0, -error_quat, error_quat)
 
@@ -415,8 +425,9 @@ class MoveToTarget:
             torch.linalg.norm(total_rot_vec, dim=-1) + torch.linalg.norm(delta_pos)
             < 0.1
         ):
+            last_action[...,-1] = self.gripper_state
             print("[Skill: MoveToTarget] Delta is too small, skill finished.")
-            return Action([], metadata={"info": "finished"})
+            return Action(last_action, metadata={"info": "finished"})
 
         # Continue with the pure torch result
         desired_rot_vel = total_rot_vec * self.rot_gain
@@ -429,12 +440,21 @@ class MoveToTarget:
 
         # --- Combine and create final action ---
         delta_pose_action = torch.cat([delta_pos, delta_rot], dim=1)
-        final_action = torch.cat(
-            [
-                delta_pose_action,
-                self.gripper_state.expand(delta_pose_action.shape[0], -1),
-            ],
-            dim=1,
-        )
+        last_action[...,:-1] = delta_pose_action
+        return Action(last_action, metadata={"info": "success"})
 
-        return Action(final_action, metadata={"info": "success"})
+registry = get_skill_registry()
+registry.register_skill(
+    skill_type=SkillType.POLICY,
+    execution_mode=ExecutionMode.STEPACTION,
+    name="move_to_target_object",
+    function=MoveToTarget,
+    description="""Moves the robot's end-effector to the center pose of the target object.
+This skill will automatically get the target object's center from the environment obs by the specified target object name.
+Args:
+    target_object (str): The name of the target object.
+    gripper_state (float, optional): Command for the gripper after arrivival. 1 means open, 0 means close. default is 1.""",
+    timeout=300,
+    enable_monitoring=False,  # Disable monitoring for this skill
+    requires_env=True,
+)

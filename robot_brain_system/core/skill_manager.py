@@ -7,7 +7,7 @@ import importlib
 import importlib.util
 import os
 import sys
-from typing import Dict, List, Optional, Any, Callable, Generator, Tuple
+from typing import Dict, List, Optional, Any, Callable, Tuple
 from dataclasses import dataclass
 
 from .types import (
@@ -192,87 +192,16 @@ class SkillExecutor:
 
     def __init__(self, skill_registry: SkillRegistry, env):
         self.registry = skill_registry
-        self.current_skill_generator: Optional[Generator] = None
-        self.current_skill = None
+        self.current_skill: Optional[Callable] = None
         self.current_skill_name: Optional[str] = None
         self.current_skill_params: Optional[Dict[str, Any]] = None
+        self.preaction_skills = list[Callable] = []
         self.status: SkillStatus = SkillStatus.IDLE  # Using SkillStatus enum
         self.env = env
         self.env_device = env.unwrapped.device
-
-    def start_skill(
-        self,
-        skill_name: str,
-        parameters: Dict[str, Any],
-        env: Optional[Any],
-        initial_obs: Optional[Any],
-    ) -> bool:
-        """Start a skill execution (non-blocking for generator skills)."""
-        if self.is_running():
-            print(
-                f"[SkillExecutor] Another skill '{self.current_skill_name}' is already running. Terminating it."
-            )
-            self.terminate_current_skill()
-
-        skill_def = self.registry.get_skill(skill_name)
-        if not skill_def:
-            print(
-                f"[SkillExecutor] Skill '{skill_name}' not found, available skills: {self.registry.list_skills()}"
-            )
-            self.status = SkillStatus.FAILED
-            return False
-
-        if skill_def.requires_env and (env is None or initial_obs is None):
-            print(
-                f"[SkillExecutor] Skill '{skill_name}' requires an environment but none env or none initial_obs was provided."
-            )
-            self.status = SkillStatus.FAILED
-            return False
-
-        print(
-            f"[SkillExecutor] Starting skill (non-blocking): {skill_name} with params {parameters}"
-        )
-
-        try:
-            args_for_skill = dict()  # Use a dict to collect args
-            if skill_def.requires_env:
-                args_for_skill["env"] = env  # Add environment if required
-                args_for_skill["initial_obs"] = initial_obs
-            args_for_skill.update(parameters)  # Add parameters
-
-            if skill_def.execution_mode == ExecutionMode.GENERATOR:
-                self.current_skill_generator = skill_def.function(**args_for_skill)
-                self.current_skill_name = skill_name
-                self.current_skill_params = parameters
-                self.status = SkillStatus.RUNNING
-                print(f"[SkillExecutor] Started generator skill: {skill_name}")
-                return True
-            elif skill_def.execution_mode == ExecutionMode.DIRECT:
-                assert False, "Unsupported now!"
-                # Direct execution is inherently blocking, so it completes immediately
-                result = skill_def.function(*args_for_skill)
-                print(
-                    f"[SkillExecutor] Direct skill {skill_name} executed. Result: {result}"
-                )
-                self.status = SkillStatus.COMPLETED if result else SkillStatus.FAILED
-                # No ongoing generator for direct skills
-                self.current_skill_name = None
-                self.current_skill_params = None
-                return bool(result)
-            else:
-                print(f"[SkillExecutor] Unknown execution mode for skill {skill_name}")
-                self.status = SkillStatus.FAILED
-                return False
-        except Exception as e:
-            print(f"[SkillExecutor] Error starting skill {skill_name}: {e}")
-            import traceback
-
-            traceback.print_exc()
-            self.status = SkillStatus.FAILED
-            return False
     
     def initialize_skill(
-        self, skill_name: str, parameters: Dict[str, Any], policy_device: None
+        self, skill_name: str, parameters: Dict[str, Any], policy_device: None,obs_dict:dict = {}
     ):
         if not policy_device:
             policy_device = self.env_device
@@ -298,9 +227,10 @@ class SkillExecutor:
                 self.status = SkillStatus.RUNNING
                 print(f"[SkillExecutor] Started policy skill: {skill_name}")
                 return True
+            elif skill_def.execution_mode == ExecutionMode.PREACTION:
+                self.preaction_skills.append(skill_def.function(policy_device, obs_dict, **parameters))
             elif (
                 skill_def.execution_mode == ExecutionMode.DIRECT
-                or skill_def.execution_mode == ExecutionMode.GENERATOR
             ):
                 assert False, "Unsupported now!"
                 # Direct execution is inherently blocking, so it completes immediately
@@ -332,20 +262,32 @@ class SkillExecutor:
             state of each step
             None if no skill was running.
         """
+        # preaction preprocess for obs
+        for preaction_skill in self.preaction_skills:
+            obs = preaction_skill(obs)
+        
         action: Action = self.current_skill.select_action(obs)
         action_info = action.metadata["info"]
         if action_info == "error":
+            step_result = (None, None, None, None, None)
+            if action.data:
+                action_data = action.data.to(self.env_device)
+                step_result = self.env.step(action_data)
             print(f"[SkillExecutor] Error stepping skill {self.current_skill_name}")
             self.status = SkillStatus.FAILED
             self._reset_current_skill_state()
-            return (None, None, None, None, None)
+            return step_result
         elif action_info == "finished":
             print(
                 f"[SkillExecutor] Skill {self.current_skill_name} finished successfully."
             )
+            step_result = (None, None, None, None, None)
+            if action.data:
+                action_data = action.data.to(self.env_device)
+                step_result = self.env.step(action_data)
             self.status = SkillStatus.COMPLETED
             self._reset_current_skill_state()
-            return (None, None, None, None, None)
+            return step_result
         elif action_info == "timeout":
             print(f"[SkillExecutor] Skill {self.current_skill_name} timed out.")
             self.status = SkillStatus.TIMEOUT

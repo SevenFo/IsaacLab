@@ -207,18 +207,18 @@ class SkillType(Enum):
 
     FUNCTION = "function"  # Simple Python function (fixed logic)
     POLICY = "policy"  # Trained RL policy
+    OBSERVATION = 'observation'
 
 
 class ExecutionMode(Enum):
     """Execution modes for skills."""
 
     DIRECT = "direct"  # Execute immediately without yielding
-    GENERATOR = "generator"  # Execute with yield for env.step() calls
     STEPACTION = "stepaction"
+    PREACTION = 'preaction'
 
 
 # Type aliases for better readability
-SkillGenerator = Callable[[Dict[str, Any]], Generator[Action, Observation, Any]]
 PolicyFunction = object  # TODO
 DirectFunction = Callable[[Dict[str, Any]], bool]
 

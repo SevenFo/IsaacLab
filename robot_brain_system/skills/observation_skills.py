@@ -1,0 +1,89 @@
+# from thirdparty.ImagePipeline.imagepipeline import imagepipeline
+from typing import Any
+import torch
+import open3d as o3d
+from hydra import conf
+from omegaconf import OmegaConf
+
+from robot_brain_system.core.skill_manager import skill_register
+from robot_brain_system.core.types import SkillType, ExecutionMode
+from robot_brain_system.core.model_adapters_v2 import OpenAIAdapter
+from robot_brain_system.skills.imagepipleline import ImagePipeline
+
+from cutie.utils.get_default_model import get_default_model
+
+@skill_register(
+    name="object_tracking",
+    skill_type=SkillType.OBSERVATION,
+    execution_mode=ExecutionMode.PREACTION,
+    enable_monitoring=False,  # Disable monitoring for this skill
+    requires_env=True,
+)
+class ObjectTracking:
+    """Adding a object tracker to enviroment, which can add a target object mask to the enviroment observation after each step.
+
+Args:
+    target_objcet (str): The target object name.
+    """
+    def __init__(
+        self,
+        policy_device: str = "cuda",
+        obs_dict: dict = {},
+        **running_params,
+    ) -> None:
+        print(f'[SKILL: ObjectTracking: {running_params}')
+        self.target_object = running_params.get("target_object", None)
+        if self.target_object is None:
+            raise ValueError("target_object must be specified.")
+        self.pipeline_instance:dict[str, ImagePipeline] = {}
+        cameras_data = {
+            camera_name:data[0].cpu().numpy() for camera_name, data in obs_dict["policy"].items() if camera_name.startwith("camera_")
+        }
+        self.vlm = OpenAIAdapter(
+            "qwen2.5-vl-32b-awq",
+            api_key="123",
+            base_url="http://127.0.0.1:8000/v1",
+        )
+        sam_checkpoint = "thirdparty/sam2/checkpoints/sam2.1_hiera_large.pt"
+        sam_model_config = "configs/sam2.1/sam2.1_hiera_l.yaml"
+        for key in cameras_data:
+            self.pipeline_instance[key] = ImagePipeline(
+                policy_device,
+                sam_checkpoint,
+                sam_model_config,
+                get_default_model(),
+                self.vlm
+                )
+            try:
+                self.pipeline_instance[key].initialize_with_instruction(cameras_data[key], self.target_object, visualize=True)
+            except ValueError:
+                # NO OBJECT IS DETECTED
+                # TODO 如果所有视角都没看到就要抛出错误进行处理
+                pass
+        
+    def __call__(self, obs_dict: dict) -> Any:
+        points_list = []
+        for instance_key in self.pipeline_instance:
+            all_mask, mask_list = self.pipeline_instance[instance_key].update_masks(obs_dict["policy"][instance_key])
+            assert len(mask_list) == 1, "Only one mask is expected."
+            pointcloud: torch.tensor = obs_dict["policy"][f"pointcloud_{instance_key}"][0]
+            points_list.append(pointcloud[all_mask])
+        
+        # 合并点云并转换为 numpy 数组
+        points_np = torch.cat(points_list, dim=0).cpu().numpy()
+        
+        # 创建 Open3D 点云对象
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points_np)
+        
+        # 异常值去除和下采样
+        pcd_filtered, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2)
+        pcd_downsampled = pcd_filtered.voxel_down_sample(voxel_size=0.01)
+        
+        # 获取 AABB
+        aabb = pcd_downsampled.get_axis_aligned_bounding_box()
+        obs_dict["policy"][f"{self.target_object}_aabb"] = aabb
+        return obs_dict
+        
+            
+           
