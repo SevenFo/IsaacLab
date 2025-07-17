@@ -195,7 +195,7 @@ class SkillExecutor:
         self.current_skill: Optional[Callable] = None
         self.current_skill_name: Optional[str] = None
         self.current_skill_params: Optional[Dict[str, Any]] = None
-        self.preaction_skills = list[Callable] = []
+        self.preaction_skills: list[Callable] = []
         self.status: SkillStatus = SkillStatus.IDLE  # Using SkillStatus enum
         self.env = env
         self.env_device = env.unwrapped.device

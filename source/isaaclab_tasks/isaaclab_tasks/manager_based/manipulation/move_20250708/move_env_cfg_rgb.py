@@ -92,7 +92,18 @@ class ObservationsCfg:
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("wristcamera"), "normalize": False},
         )  # RGB相机图像
-
+        pointcloud_camera_top = ObsTerm(
+            func=mdp.camera_pointcloud,
+            params={"sensor_cfg": SceneEntityCfg("topcamera"), "normalize": True},
+    )  # 点云
+        pointcloud_camera_side = ObsTerm(
+            func=mdp.camera_pointcloud,
+            params={"sensor_cfg": SceneEntityCfg("sidecamera"), "normalize": True},
+        )  # 点云
+        pointcloud_camera_wrist = ObsTerm(
+            func=mdp.camera_pointcloud,
+            params={"sensor_cfg": SceneEntityCfg("wristcamera"), "normalize": True},
+        )  # 点云
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = False

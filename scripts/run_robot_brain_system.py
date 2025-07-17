@@ -47,6 +47,7 @@ def main(cfg: DictConfig):
     # 5. 执行一个高级任务指令
     print("\n--- System is running, executing high-level task... ---")
     task_instruction = "grasp the spanner in the red box, home position is [1.1283, -3.8319,  3.6731, -0.6167,  0.3308, -0.3199, -0.6386]"
+    task_instruction = "move to the red box"
     if not system.execute_task(task_instruction):
         print(
             f"\nFailed to start task: '{task_instruction}'. System might be busy or an error occurred."
