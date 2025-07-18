@@ -1,7 +1,7 @@
 [submodule "thirdparty/Cutie"]
 	path = thirdparty/Cutie
-	url = https://github.com/hkchengrex/Cutie.git
-	branch = main
+	url = https://github.com/SevenFo/Cutie.git
+	branch = dev
 [submodule "thirdparty/ImagePipeline"]
 	path = thirdparty/ImagePipeline
 	url = https://github.com/SevenFo/ImagePipeline.git
