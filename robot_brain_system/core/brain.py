@@ -404,11 +404,19 @@ class QwenVLBrain:
         except Exception as e:
             raise RuntimeError(f"Failed to create plan: {e}")
 
-    def summary_skill_execution(self, skill_info: dict, only_image=True):
+    def summary_skill_execution(
+        self, skill_info: dict, obs: Observation, only_image=True
+    ):
         # TODO 只提供image不提供text试试！
         # self.monitor_memory.add_user_input(
         #     contents=[f"skill execution result: {skill_info['result']}"]
         # )
+        camera_side_image = Image.fromarray(
+            obs.data["policy"]["camera_side"][0].cpu().numpy()
+        )
+        camera_front_image = Image.fromarray(
+            obs.data["policy"]["camera_top"][0].cpu().numpy()
+        )
         content = []
         if only_image:
             memory_content = self.monitor_memory.extract_images(n_max=8)
@@ -423,21 +431,34 @@ class QwenVLBrain:
                 f"Skill Description: {skill_info['description']}\n"
                 f"Skill Parameters: {skill_info['parameters']}\n"
                 f"Skill Criterion: {skill_info['criterion']}\n\n"
-                f"Skill Execution Result (reported by skill itself): {skill_info['result']}\n\n"
+                f"Skill Execution Result (reported by skill itself): {skill_info['result']}, Reason: {skill_info['status_info']}\n\n"
             )
         )
-        content.extend(memory_content)
+        content.append(
+            "## Visual Evidence of Skill Execution:\n"
+            "The following images are captured during the skill execution. "
+            "Please analyze them to determine the true outcome of the skill.\n\n"
+        )
+        content.extend(
+            memory_content if len(memory_content) else ["No visual evidence available."]
+        )
+        content.append("## Current Scene Images:\n")
+        content.append("### side view:\n")
+        content.append(camera_side_image)
+        content.append("### front view:\n")
+        content.append(camera_front_image)
         content.append(
             (
                 "## Your Task: Analyze and Summarize the Execution\n"
                 "Your primary goal is to determine the TRUE outcome of the last skill by analyzing the visual evidence (memory content), "
-                "even if it contradicts the self-reported 'Skill Execution Result'.\n\n"
+                "even if it contradicts the self-reported 'Skill Execution Result'. And give a detailed analysis of the skill execution.\n\n"
                 "## Focus Points:\n"
                 # The re-check question is now the primary instruction.
-                "1. **Verdict on the Last Skill:** Based *only* on the images, did the skill truly succeed or fail? Compare what you see against the goal: '{skill_info['criterion']['successed']}'. State your conclusion clearly (e.g., 'Verdict: The skill succeeded despite the timeout report.').\n"
-                "2. **Scene Transformation:** How did the scene change from the beginning to the end of the skill execution?\n"
-                "3. **Current State:** Describe the final state of the relevant objects in the scene.\n"
-                "4. **Reflections:** Were there any unexpected movements or issues during the execution?\n"
+                f"1. **Verdict on the Last Skill:** Based *only* on the images, did the skill truly succeed or fail? Compare what you see against the goal: '{skill_info['criterion']['successed']}'. State your conclusion clearly (e.g., 'Verdict: The skill succeeded despite the timeout report.').\n"
+                "2. **Not Succeed Reason:** If the skill did not succeed, provide your analysis of why it failed.\n"
+                "3. **Scene Transformation:** How did the scene change from the beginning to the end of the skill execution?\n"
+                "4. **Current State:** Describe the final state of the relevant objects in the scene.\n"
+                "5. **Reflections:** Were there any unexpected movements or issues during the execution?\n"
                 "\n## Output Template:\n"
                 "[Verdict] Your explicit conclusion on the skill's true outcome.\n"
                 "[Scene Change] Your description of the changes.\n"
@@ -674,36 +695,6 @@ class QwenVLBrain:
             }
         )
         return full_skill_info
-
-    def advance_skill(self):
-        """
-        Marks the current skill as COMPLETED and advances the index to the next pending skill.
-        Note: The main loop's replan-on-complete logic is now the primary way of advancing.
-        """
-        assert False, (
-            "[QwenVLBrain] advance_skill is no longer used. Use replan-on-complete logic instead."
-        )
-        if self.state.current_plan:
-            # Mark the current skill as completed
-            current_index = self.state.current_skill_index
-            self.state.current_plan.mark_status(current_index, SkillStatus.COMPLETED)
-
-            # Find the next pending skill
-            next_skill_info = (
-                self.state.current_plan.get_next_pending_skill_with_index()
-            )
-
-            if next_skill_info:
-                new_index, _ = next_skill_info
-                self.state.current_skill_index = new_index
-                self.initial_monitor()  # Reset monitor for the new skill
-            else:
-                # Plan completed
-                print("[QwenVLBrain] Task execution completed")
-                self.state.status = SystemStatus.IDLE
-                self.state.current_task = None
-                self.state.current_plan = None
-                self.state.current_skill_index = 0
 
     def should_monitor(self, obs_history) -> bool:
         """Check if it's time to monitor the current skill execution."""
@@ -1218,20 +1209,20 @@ Task: {task.description}
 Available Skills:
 {skill_descriptions}
 
-First, think step-by-step about the user's request and the available skills. Lay out your reasoning for the chosen sequence of skills. Enclose your entire thinking process within `<thinking>` and `</thinking>` tags.
+First, think step-by-step about the user's request and the available skills. Lay out your reasoning for the chosen sequence of skills. Enclose your entire thinking process within `<think>` and `</think>` tags.
 
 After your thinking process, provide the final execution plan as a JSON array.
 -   Each object in the array represents one step in the plan.
 -   Each object **must** include a `step` key, which is a sequential integer starting from 1, indicating the logical execution order.
--   The JSON should be the only thing after the closing `</thinking>` tag.
+-   The JSON should be the only thing after the closing `</think>` tag.
 
 Example response format:
-<thinking>
+<think>
 Here I will describe my thought process.
 1. First, I need to achieve X. The skill `skill_A` seems appropriate for this.
 2. Then, the user wants to do Y. The description for `skill_B` says it must be preceded by `skill_C`.
 3. Therefore, the logical sequence is `skill_A`, then `skill_C`, then `skill_B`.
-</thinking>
+</think>
 ```json
 [
     {{
@@ -1268,6 +1259,7 @@ Here I will describe my thought process.
                 f"""Skill Index: {skill_info["index"]}
 Skill Name: {skill_info["name"]}
 Skill Execution Result (skill reported): {skill_info["result"] if skill_info["result"] != "timeout" else "unkown"}
+Skill Execution Result Reason (skill reported): {skill_info["status_info"]}
 Execution Summary (Your expert analysis of the visual evidence): {skill_info.get("execution_summary", "No summary as it compelete success")}
 """
                 for skill_info in skill_history
@@ -1305,7 +1297,7 @@ You are an expert robot task supervisor. Your goal is to analyze the previous ex
 **Instructions for Your Response:**
 Your first and most important job is to compare the self-reported 'Execution Result' with the visual 'Execution Summary' of last skill. If they conflict, the visual summary is the truth.
 
-First, think step-by-step in `<thinking>` tags. Then, generate a JSON array of operations to modify the plan.
+First, think step-by-step in `<think>` tags. Then, generate a JSON array of operations to modify the plan.
 
 **Available Operations:**
 1.  **update_status**: Corrects the status of a completed skill. THIS IS YOUR MOST IMPORTANT CORRECTION TOOL.
@@ -1325,14 +1317,14 @@ First, think step-by-step in `<thinking>` tags. Then, generate a JSON array of o
     - `index`: The index of the skill to retry.
     
 -   If, after your corrections, no more operations should be did, provide an empty array `[]`.
--   The JSON should be the only thing after the closing `</thinking>` tag.
+-   The JSON should be the only thing after the closing `</think>` tag.
 
 ### Example Response (Correcting a False Failure and Finishing):
-<thinking>
+<think>
 1. **Reflection:** The skill `place_in_box` at index 3 self-reported `TIMEOUT`. However, my visual summary says: 'The spanner is clearly visible inside the red box.'
 2. **Analysis:** The timeout was incorrect; the skill actually succeeded. I must first update the status of skill 3 to `COMPLETED`. Since this was the final skill in the plan, the entire task is now complete.
 3. **Conclusion:** I will perform an `update_status` operation. Because the task is now finished, the subsequent plan of operations is empty.
-</thinking>
+</think>
 ```json
 [
 {{

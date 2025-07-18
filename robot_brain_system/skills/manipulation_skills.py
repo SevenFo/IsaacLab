@@ -50,9 +50,9 @@ if TYPE_CHECKING:
 )
 class PressButton:
     """
-This skill is used for openning a box by moving the end-effector.
+    This skill is used for openning a box by moving the end-effector.
 
-Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
+    Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
     """
 
     def __init__(self, policy_device: str = "cuda", **running_params):
@@ -145,15 +145,15 @@ Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically 
 )
 class GraspSpanner:
     """
-GRAB & LIFT SPANNER: Grasp tool from red box and lift it
+    GRAB & LIFT SPANNER: Grasp tool from red box and lift it
 
-[HARD RULE] REQUIRED BEFORE EXECUTION:
-MUST HAVE `move end effector to home` TO THIS SPOT AS LAST STEP!
-Which means cant insert anyother skill between `move_to_home` and `grasp_spanner`, anyother skill only canbe inserted before `move_to_home` or after `grasp_spanner`.
-Right example: open_box -> move_to_home -> grasp_spanner -> other skill -> move_to_home -> grasp_spanner
-Wrong example: move_to_home -> open_box -> grasp_spanner -> other skill -> grasp_spanner
-Once you want to execute grasp_spanner, you must have `move_to_home` as last step, otherwise it will fail.
-PARAMETERS: None
+    [HARD RULE] REQUIRED BEFORE EXECUTION:
+    MUST HAVE `move end effector to home` TO THIS SPOT AS LAST STEP!
+    Which means cant insert anyother skill between `move_to_home` and `grasp_spanner`, anyother skill only canbe inserted before `move_to_home` or after `grasp_spanner`.
+    Right example: open_box -> move_to_home -> grasp_spanner -> other skill -> move_to_home -> grasp_spanner
+    Wrong example: move_to_home -> open_box -> grasp_spanner -> other skill -> grasp_spanner
+    Once you want to execute grasp_spanner, you must have `move_to_home` as last step, otherwise it will fail.
+    PARAMETERS: None
     """
 
     def __init__(self, policy_device: str = "cuda", **running_params):
@@ -270,8 +270,8 @@ def quat_to_axis_angle_torch(q: torch.Tensor, epsilon: float = 1e-8) -> torch.Te
 class MoveToTarget:
     """Moves the robot's end-effector to a specified target pose. in samecase, this skill can be helpful for trying a failed skill.
 
-Args:
-    target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
+    Args:
+        target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
     """
 
     def __init__(
@@ -280,7 +280,7 @@ Args:
         **running_params,
     ):
         if "target_pose" not in running_params:
-            assert 'target_object' in running_params, "No moving target is specified."
+            assert "target_object" in running_params, "No moving target is specified."
         target_object = running_params.get("target_object", None)
         self.gripper_state: float = running_params.get(
             "gripper_state", 1.0
@@ -301,7 +301,7 @@ Args:
         print("[Skill: MoveToTarget] Initializing...")
         self.device = policy_device
         self.enable_verification = enable_verification
-        if target_object is None:    
+        if target_object is None:
             target_pose: List[float] = running_params["target_pose"]
             if not isinstance(target_pose, list) or len(target_pose) != 7:
                 raise ValueError(
@@ -313,10 +313,13 @@ Args:
 
             self.target_pos = self.target_pose[:, :3]
             self.target_quat = self.target_pose[:, 3:7]
+            print(
+                f"[Skill: MoveToTarget] Target pose set to: {self.target_pose.cpu().numpy().tolist()}"
+            )
         else:
             self.target_pose = None
             self.target_object = target_object
-
+            print(f"[Skill: MoveToTarget] Target object set to: {self.target_object}")
         self.pos_gain = pos_gain
         self.rot_gain = rot_gain
         self.max_pos_vel = max_pos_vel
@@ -328,9 +331,6 @@ Args:
                 "[Skill: MoveToTarget] VERIFICATION MODE IS ENABLED. SciPy will be used to check torch results."
             )
 
-        print(
-            f"[Skill: MoveToTarget] Target pose set to: {self.target_pose.cpu().numpy().tolist()}"
-        )
         print("[Skill: MoveToTarget] Initialized successfully.")
 
     def _verify_rotation_calculation(
@@ -369,14 +369,18 @@ Args:
                 [],
                 metadata={
                     "info": "error",
-                    "reason": f"Missing observation key: {eef_pose_key}",
+                    "reason": f"{eef_pose_key} has not been tracking in the environment, Non-visual skill can not be executed without it.",
                 },
             )
 
         # 直接获取位置和姿态，无需先拼接再分割
         current_pos = obs_dict["policy"]["eef_pos"]
         current_quat = obs_dict["policy"]["eef_quat"]
-        last_action = obs_dict["policy"]["action"].clone()
+        last_action = (
+            obs_dict["policy"]["action"].clone()
+            if "action" in obs_dict["policy"]
+            else None
+        )
 
         # 确保维度正确并移动到设备
         if current_pos.dim() == 1:
@@ -389,8 +393,23 @@ Args:
 
         # --- Position Control (unchanged) ---
         if self.target_pose is None:
-            target_aabb = obs_dict["policy"][f"{self.target_object}_aabb"]
-            target_pos=  torch.tensor(target_aabb.center(), device=self.device).unsqueeze(0) # [x, y, z] 
+            _k = f"{self.target_object}_aabb"
+            if _k not in obs_dict["policy"]:
+                print(
+                    f"[Skill: MoveToTarget] Error: Target object '{self.target_object}' not found in observations."
+                )
+                return Action(
+                    [],
+                    metadata={
+                        "info": "error",
+                        "reason": f"Target object '{self.target_object}' not found in observations.",
+                    },
+                )
+            # Get the target position from the AABB center
+            target_aabb = obs_dict["policy"][_k]
+            target_pos = torch.tensor(
+                target_aabb.center(), device=self.device
+            ).unsqueeze(0)  # [x, y, z]
             target_quat = current_quat.clone(0)
         else:
             target_pos = self.target_pos.clone()
@@ -425,7 +444,7 @@ Args:
             torch.linalg.norm(total_rot_vec, dim=-1) + torch.linalg.norm(delta_pos)
             < 0.1
         ):
-            last_action[...,-1] = self.gripper_state
+            last_action[..., -1] = self.gripper_state
             print("[Skill: MoveToTarget] Delta is too small, skill finished.")
             return Action(last_action, metadata={"info": "finished"})
 
@@ -440,8 +459,9 @@ Args:
 
         # --- Combine and create final action ---
         delta_pose_action = torch.cat([delta_pos, delta_rot], dim=1)
-        last_action[...,:-1] = delta_pose_action
+        last_action[..., :-1] = delta_pose_action
         return Action(last_action, metadata={"info": "success"})
+
 
 registry = get_skill_registry()
 registry.register_skill(
@@ -450,7 +470,8 @@ registry.register_skill(
     name="move_to_target_object",
     function=MoveToTarget,
     description="""Moves the robot's end-effector to the center pose of the target object.
-This skill will automatically get the target object's center from the environment obs by the specified target object name.
+This skill can not understand the visual information, only automatically retrieve the target object's center from the environment observation by the specified target object name.
+So the target object related observation must be provided in the environment observation.
 Args:
     target_object (str): The name of the target object.
     gripper_state (float, optional): Command for the gripper after arrivival. 1 means open, 0 means close. default is 1.""",

@@ -6,7 +6,6 @@ and in-process skill execution.
 
 import multiprocessing as mp
 import threading
-import time
 from typing import (
     Dict,
     Any,
@@ -230,7 +229,7 @@ class IsaacSimulator:
         return response.get("success", False) if response else False
 
     def start_skill_non_blocking(
-        self, skill_name: str, parameters: Dict[str, Any]
+        self, skill_name: str, parameters: Dict[str, Any], timeout: float = 60.0
     ) -> bool:
         """Start a skill execution in the simulation subprocess (non-blocking)."""
         response = self._send_command_and_recv(
@@ -238,7 +237,8 @@ class IsaacSimulator:
                 "command": "start_skill_non_blocking",
                 "skill_name": skill_name,
                 "parameters": parameters,
-            }
+            },
+            timeout=timeout,
         )
         return response.get("success", False) if response else False
 
@@ -270,6 +270,13 @@ class IsaacSimulator:
         """Terminate current skill execution in the subprocess."""
         response = self._send_command_and_recv(
             {"command": "change_current_skill_status", "status": SkillStatus.RUNNING}
+        )
+        return response.get("success", False) if response else False
+
+    def change_current_skill_status(self, status: SkillStatus) -> bool:
+        """Change current skill execution status in the subprocess."""
+        response = self._send_command_and_recv(
+            {"command": "change_current_skill_status_force", "status": status}
         )
         return response.get("success", False) if response else False
 
@@ -356,7 +363,7 @@ class IsaacSimulator:
                 get_skill_registry,
             )
             from robot_brain_system.utils import dynamic_set_attr
-            import robot_brain_system.skills # noqa: F401
+            import robot_brain_system.skills  # noqa: F401
 
             print(
                 "[IsaacSubprocess] Isaac App was launched by launcher. Continuing initialization."
@@ -373,7 +380,7 @@ class IsaacSimulator:
                 use_fabric=not cli_args.disable_fabric,
             )
             # Load custom config if provided
-            if hasattr(cli_args, 'env_config_file'):
+            if hasattr(cli_args, "env_config_file"):
                 with open(cli_args.env_config_file, "r") as f:
                     env_new_cfg = yaml.safe_load(f)
                     dynamic_set_attr(env_cfg, env_new_cfg, path=["env_cfg"])
@@ -501,10 +508,7 @@ class IsaacSimulator:
                                 f"[IsaacSubprocess] Starting skill (non-blocking): {skill_name}"
                             )
                             success = skill_executor.initialize_skill(
-                                skill_name,
-                                params,
-                                _env.device,
-                                obs_dict
+                                skill_name, params, _env.device, obs_dict
                             )
                             child_conn.send(
                                 {
@@ -523,6 +527,12 @@ class IsaacSimulator:
                         elif cmd == "change_current_skill_status":
                             skill_status = command_data["status"]
                             success = skill_executor.change_current_skill_status(
+                                skill_status=skill_status
+                            )
+                            child_conn.send({"success": success})
+                        elif cmd == "change_current_skill_status_force":
+                            skill_status = command_data["status"]
+                            success = skill_executor._change_current_skill_status_force(
                                 skill_status=skill_status
                             )
                             child_conn.send({"success": success})
@@ -677,67 +687,67 @@ class IsaacSimulator:
 
 
 if __name__ == "__main__":
-    from robot_brain_system.configs.config import DEVELOPMENT_CONFIG
+    ...
 
-    print("Isaac Simulator Tets")
-    isim = IsaacSimulator(sim_config=DEVELOPMENT_CONFIG)
-    result = isim.initialize()
-    assert result, "Failed to initialize Isaac Simulator"
-    print("Isaac Simulator initialized successfully.")
+    # print("Isaac Simulator Tets")
+    # isim = IsaacSimulator(sim_config=DEVELOPMENT_CONFIG)
+    # result = isim.initialize()
+    # assert result, "Failed to initialize Isaac Simulator"
+    # print("Isaac Simulator initialized successfully.")
 
-    # reset test
-    obs = isim.reset_env()
-    assert obs is not None, "Failed to reset Isaac Simulator environment"
-    print("Isaac Simulator environment reset successfully.")
+    # # reset test
+    # obs = isim.reset_env()
+    # assert obs is not None, "Failed to reset Isaac Simulator environment"
+    # print("Isaac Simulator environment reset successfully.")
 
-    # Get observation test
-    obs = isim.get_observation()
-    assert obs is not None, "Failed to get observation from Isaac Simulator"
-    print("Observation retrieved successfully:", obs)
+    # # Get observation test
+    # obs = isim.get_observation()
+    # assert obs is not None, "Failed to get observation from Isaac Simulator"
+    # print("Observation retrieved successfully:", obs)
 
-    skill_status = isim.get_skill_executor_status()
-    assert skill_status.get("status") == "idle", (
-        f"Skill executor status should be 'idle', but got {skill_status.get('status')}"
-    )
+    # skill_status = isim.get_skill_executor_status()
+    # assert skill_status.get("status") == "idle", (
+    #     f"Skill executor status should be 'idle', but got {skill_status.get('status')}"
+    # )
 
-    result = isim.start_skill_non_blocking(
-        "assemble_object",
-        {
-            "checkpoint_path": "assets/model_epoch_4000.pth",
-            "horizon": 1000,
-        },
-    )
-    assert result, "Failed to start skill in Isaac Simulator"
-    print("Skill started successfully.")
+    # result = isim.start_skill_non_blocking(
+    #     "assemble_object",
+    #     {
+    #         "checkpoint_path": "assets/model_epoch_4000.pth",
+    #         "horizon": 1000,
+    #     },
+    # )
+    # assert result, "Failed to start skill in Isaac Simulator"
+    # print("Skill started successfully.")
 
-    while isim.get_skill_executor_status().get("status") == "running":
-        time.sleep(1)
-        print("Waiting for skill to complete...")
-    skill_finish_status = isim.get_skill_executor_status()
-    print(f"Skill finished with status: {skill_finish_status.get('status', 'unknown')}")
+    # while isim.get_skill_executor_status().get("status") == "running":
+    #     time.sleep(1)
+    #     print("Waiting for skill to complete...")
+    # skill_finish_status = isim.get_skill_executor_status()
+    # print(f"Skill finished with status: {skill_finish_status.get('status', 'unknown')}")
 
-    # Terminate skill test
-    isim.start_skill_non_blocking(
-        "assemble_object",
-        {
-            "checkpoint_path": "assets/model_epoch_4000.pth",
-            "horizon": 1000,
-        },
-    )
-    time.sleep(5)  # Give it some time to start
-    print("Attempting to terminate current skill...")
-    result = isim.terminate_current_skill()
-    assert result, "Failed to terminate skill in Isaac Simulator"
-    skill_status = isim.get_skill_executor_status()
-    assert skill_status.get("status") == "interrupted", (
-        f"Skill executor status should be 'interrupted' after termination, but got {skill_status.get('status')}"
-    )
-    print(
-        "Skill terminated successfully, current skill status:",
-        isim.get_skill_executor_status().get("status"),
-    )
+    # # Terminate skill test
+    # isim.start_skill_non_blocking(
+    #     "assemble_object",
+    #     {
+    #         "checkpoint_path": "assets/model_epoch_4000.pth",
+    #         "horizon": 1000,
+    #     },
+    # )
+    # time.sleep(5)  # Give it some time to start
+    # print("Attempting to terminate current skill...")
+    # result = isim.terminate_current_skill()
+    # assert result, "Failed to terminate skill in Isaac Simulator"
+    # skill_status = isim.get_skill_executor_status()
+    # assert skill_status.get("status") == "interrupted", (
+    #     f"Skill executor status should be 'interrupted' after termination, but got {skill_status.get('status')}"
+    # )
+    # print(
+    #     "Skill terminated successfully, current skill status:",
+    #     isim.get_skill_executor_status().get("status"),
+    # )
 
-    isim.shutdown()
+    # isim.shutdown()
 
     # # Step environment test
     # for i in range(5):

@@ -3,10 +3,6 @@ Skill registry and management system based on intelligent_robot_system design.
 Skills execute directly in the Isaac subprocess with direct environment access.
 """
 
-import importlib
-import importlib.util
-import os
-import sys
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from dataclasses import dataclass
 
@@ -112,7 +108,6 @@ class SkillRegistry:
 
         return "".join(formated_descriptions)
 
-
     # _register_skills_from_module is effectively replaced by the decorator's direct registration
 
     def clear_registry(self):
@@ -196,13 +191,23 @@ class SkillExecutor:
         self.current_skill_name: Optional[str] = None
         self.current_skill_params: Optional[Dict[str, Any]] = None
         self.preaction_skills: list[Callable] = []
-        self.status: SkillStatus = SkillStatus.IDLE  # Using SkillStatus enum
+        # the status of current skill execution
+        self.status: SkillStatus = SkillStatus.IDLE
+        # Additional status information returned by the skill
+        self.status_info: str = ""
         self.env = env
         self.env_device = env.unwrapped.device
-    
+
     def initialize_skill(
-        self, skill_name: str, parameters: Dict[str, Any], policy_device: None,obs_dict:dict = {}
+        self,
+        skill_name: str,
+        parameters: Dict[str, Any],
+        policy_device: None,
+        obs_dict: dict = {},
     ):
+        self.status = SkillStatus.NOT_STARTED
+        self.status_info = ""
+        self._reset_current_skill_state()
         if not policy_device:
             policy_device = self.env_device
         if self.is_running():
@@ -228,10 +233,10 @@ class SkillExecutor:
                 print(f"[SkillExecutor] Started policy skill: {skill_name}")
                 return True
             elif skill_def.execution_mode == ExecutionMode.PREACTION:
-                self.preaction_skills.append(skill_def.function(policy_device, obs_dict, **parameters))
-            elif (
-                skill_def.execution_mode == ExecutionMode.DIRECT
-            ):
+                self.preaction_skills.append(
+                    skill_def.function(policy_device, obs_dict, **parameters)
+                )
+            elif skill_def.execution_mode == ExecutionMode.DIRECT:
                 assert False, "Unsupported now!"
                 # Direct execution is inherently blocking, so it completes immediately
                 result = skill_def.function(*args_for_skill)
@@ -264,10 +269,11 @@ class SkillExecutor:
         """
         # preaction preprocess for obs
         for preaction_skill in self.preaction_skills:
-            obs = preaction_skill(obs)
-        
+            obs = preaction_skill(obs, visualize=True)
+
         action: Action = self.current_skill.select_action(obs)
         action_info = action.metadata["info"]
+        self.status_info = action.metadata["reason"]
         if action_info == "error":
             step_result = (None, None, None, None, None)
             if action.data:
@@ -275,7 +281,7 @@ class SkillExecutor:
                 step_result = self.env.step(action_data)
             print(f"[SkillExecutor] Error stepping skill {self.current_skill_name}")
             self.status = SkillStatus.FAILED
-            self._reset_current_skill_state()
+            # self._reset_current_skill_state()
             return step_result
         elif action_info == "finished":
             print(
@@ -286,12 +292,12 @@ class SkillExecutor:
                 action_data = action.data.to(self.env_device)
                 step_result = self.env.step(action_data)
             self.status = SkillStatus.COMPLETED
-            self._reset_current_skill_state()
+            # self._reset_current_skill_state()
             return step_result
         elif action_info == "timeout":
             print(f"[SkillExecutor] Skill {self.current_skill_name} timed out.")
             self.status = SkillStatus.TIMEOUT
-            self._reset_current_skill_state()
+            # self._reset_current_skill_state()
             return (None, None, None, None, None)
         else:
             action_data = action.data.to(self.env_device)
@@ -303,22 +309,30 @@ class SkillExecutor:
         self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
     ) -> bool:
         """Terminate the current non-blocking skill execution."""
-        if self.current_skill is not None and (self.status == SkillStatus.RUNNING or self.status == SkillStatus.PAUSED):
-            self.status = skill_status
-            print(
-                f"[SkillExecutor] Change current skill status: {self.current_skill_name} with status: {skill_status}"
-            )
-            return True
+        if self.current_skill is not None and (
+            self.status == SkillStatus.RUNNING or self.status == SkillStatus.PAUSED
+        ):
+            return self._change_current_skill_status_force(skill_status)
         else:
             # this skill is already finished
             print(
-                f"[SkillExecutor] Change current skill status no skill runing, unable to change"
+                "[SkillExecutor] Change current skill status no skill runing, unable to change"
             )
         return False
 
+    def _change_current_skill_status_force(
+        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
+    ) -> bool:
+        """Terminate the current non-blocking skill execution."""
+        self.status = skill_status
+        print(
+            f"[SkillExecutor] Change current skill status: {self.current_skill_name} with status: {skill_status}"
+        )
+        return True
+
     def is_running(self) -> bool:
         """Check if a non-blocking skill is currently running."""
-        return self.current_skill is not None and (self.status == SkillStatus.RUNNING) 
+        return self.current_skill is not None and (self.status == SkillStatus.RUNNING)
 
     def terminate_current_skill(
         self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
@@ -328,7 +342,7 @@ class SkillExecutor:
             print(
                 f"[SkillExecutor] Terminating skill: {self.current_skill_name} with status: {skill_status}"
             )
-            self._reset_current_skill_state()
+            # self._reset_current_skill_state()
             self.status = skill_status
             return True
         else:
@@ -350,6 +364,7 @@ class SkillExecutor:
         """Get current execution status information."""
         return {
             "status": self.status.value,
+            "status_info": self.status_info,
             "current_skill": self.current_skill_name,
             "skill_params": self.current_skill_params,
             "is_running": self.is_running(),

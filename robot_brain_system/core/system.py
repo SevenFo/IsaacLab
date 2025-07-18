@@ -432,33 +432,20 @@ class RobotBrainSystem:
             traceback.print_exc()
             return False
 
-    def _handle_skill_completion(self, last_skill_info: dict, result_status: str):
+    def _handle_skill_completion(self, result_status: str, state_info: str):
         """
         Handles the logic after a skill finishes, including summarization,
         state updates, and triggering a replan.
         """
         print(
-            f"[RobotBrainSystem] Handling completion of skill [{last_skill_info['name']}] with status: {result_status}"
+            f"[RobotBrainSystem] Handling completion of skill [{self.state.skill_history[-1]['name']}] with status: {result_status}"
         )
-
+        # 同步 skill manager 的最终技能状态倒 skill history
         # 1. Update the skill history with the final result
         self.state.skill_history[-1]["result"] = result_status
+        self.state.skill_history[-1]["status_info"] = state_info
 
-        # 2. Ask the brain to summarize the execution
-        # This now correctly uses the last completed skill from history
-        last_plan = self.state.plan_history[-1]
-        last_plan.mark_status(
-            last_skill_info["index"], SkillStatus[result_status.upper()]
-        )  # Update the plan's status
-
-        print("[RobotBrainSystem] Generating execution summary with brain...")
-        execution_summary = self.brain.summary_skill_execution(
-            self.state.skill_history[-1]
-        )
-        self.state.skill_history[-1]["execution_summary"] = execution_summary
-        print(f"Summary: {execution_summary}")
-
-        # 3. Get the latest observation for replanning
+        # 2. Get the latest observation for summarization and replanning
         obss = self.simulator.get_observation()
         if obss:
             self.state.obs_history.extend(obss)
@@ -468,6 +455,20 @@ class RobotBrainSystem:
         else:
             # Fallback if queue was empty
             obs = self.simulator.get_current_observation()
+
+        # 3. Ask the brain to summarize the execution
+        # This now correctly uses the last completed skill from history
+        last_plan = self.state.plan_history[-1]
+        last_plan.mark_status(
+            self.state.skill_history[-1]["index"], SkillStatus[result_status.upper()]
+        )  # Update the plan's status
+
+        print("[RobotBrainSystem] Generating execution summary with brain...")
+        execution_summary = self.brain.summary_skill_execution(
+            self.state.skill_history[-1], obs
+        )
+        self.state.skill_history[-1]["execution_summary"] = execution_summary
+        print(f"Summary: {execution_summary}")
 
         # 4. Trigger the brain to replan based on the new state
         if self.state.current_task and obs:
@@ -588,7 +589,7 @@ class RobotBrainSystem:
                 else:
                     # 3b. No skill is running. Either one just finished, or we need to start the first one.
                     last_sim_skill_state = sim_skill_status.get("status")
-
+                    last_sim_skill_state_info = sim_skill_status.get("status_info", "")
                     # Check if a skill *was* running and has now finished
                     # 如果 not running, 那么 simulator.skill_executor_status.current_skill well be None
                     if self.state.skill_history:
@@ -600,7 +601,7 @@ class RobotBrainSystem:
                             "interrupted",
                         ]:
                             self._handle_skill_completion(
-                                self.state.skill_history[-1], last_sim_skill_state
+                                last_sim_skill_state, last_sim_skill_state_info
                             )
                         else:
                             print(

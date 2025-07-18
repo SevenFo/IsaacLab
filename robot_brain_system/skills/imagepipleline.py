@@ -1,6 +1,5 @@
 import torch
 import json_repair
-import cv2
 import numpy as np
 import base64
 import time
@@ -14,6 +13,7 @@ from hydra import initialize
 from hydra.core.global_hydra import GlobalHydra
 
 from robot_brain_system.utils.visualization_utils import visualize_all
+from robot_brain_system.core.brain import BrainMemory
 
 try:
     import pyrealsense2 as rs
@@ -26,7 +26,12 @@ except ImportError:
 
 class ImagePipeline:
     def __init__(
-        self, device: str, sam_checkpoint: str, sam_model_config: str, cutie_model, vl_adapter
+        self,
+        device: str,
+        sam_checkpoint: str,
+        sam_model_config: str,
+        cutie_model,
+        vl_adapter,
     ):
         """
         多目标分割与跟踪管道（集成视觉语言模型）
@@ -39,19 +44,26 @@ class ImagePipeline:
         """
         self.device = device
 
+        gh = GlobalHydra.instance()
+        prev_hydra = None
+        if gh.is_initialized():
+            print("[get_default_model] 检测到已存在的Hydra实例，将进行暂存和恢复。")
+            prev_hydra = gh.hydra
+            gh.clear()
+            print(f"[build_sam2] 已清除现有的Hydra实例: {GlobalHydra.instance()}")
+            print(f"[build_sam2] {gh.is_initialized()}")
         try:
-            # 清除Hydra状态
-            if GlobalHydra().is_initialized():
-                GlobalHydra.instance().clear()
-
-            # 重新初始化Hydra，使用相对路径
             with initialize(version_base=None, config_path="pkg://sam2"):
                 self.predictor = SAM2ImagePredictor(
                     build_sam2(sam_model_config, sam_checkpoint, device=self.device)
                 )
-        except Exception as e:
-            print(f"Backup SAM2 initialization also failed: {e}")
-            raise
+        finally:
+            # 3. 无论成功还是失败，都必须把主程序的Hydra状态恢复原样
+            print("[build_sam2] 清理临时上下文并恢复原始Hydra实例...")
+            gh.clear()  # 清除我们刚刚创建的临时状态
+            if prev_hydra is not None:
+                gh.initialize(prev_hydra)  # 恢复主程序的状态
+            print("[build_sam2] 上下文恢复完毕。")
 
         # 初始化CUTIE - 确保模型在正确设备上
         self.cutie = cutie_model.to(self.device)
@@ -64,6 +76,7 @@ class ImagePipeline:
         # 状态跟踪
         self.current_objects = []
         self.is_initialized = False
+        self.instruction = ""
 
     def _image_to_base64(self, image: np.ndarray) -> str:
         """将numpy图像转换为base64编码字符串"""
@@ -83,30 +96,28 @@ class ImagePipeline:
         返回:
         bboxes: 边界框列表 [[x1,y1,x2,y2], ...]
         """
-        # 转换图像格式
-        base64_image = self._image_to_base64(frame)
 
         # 构建VL模型输入
-        prompt = (
-            f"Analyze the image and identify ALL objects matching: {instruction}.\n"
-            "Return bboxes for ALL matching objects in this format:\n"
-            '[{"bbox_2d": [x1,y1,x2,y2], "label": "..."}, ...]'
+        prompt = BrainMemory()
+        prompt.add_user_input(
+            [
+                f"Analyze the image and identify ALL objects matching: {instruction}.\n"
+                "Return bboxes for ALL matching objects in this format:\n"
+                '[{"bbox_2d": [x1,y1,x2,y2], "label": "..."}, ...]',
+                Image.fromarray(frame),
+            ]
         )
-
-        print(f"vl user prompt:\n{prompt}")
 
         # 生成响应
-        input_data = self.vl_adapter.prepare_input(
-            text=prompt, image_url=f"data:image/jpeg;base64,{base64_image}"
-        )
-        response, _ = self.vl_adapter.generate_response(input_data, max_tokens=512)
+
+        response, _ = self.vl_adapter.generate(prompt.history, max_tokens=512)
 
         print(f"response from vl: {response}")
 
         # 解析响应
         try:
             # 提取JSON部分
-            json_str = response[response.find("[") : response.rfind("]") + 1]
+            json_str = response[response.find("```json") : response.rfind("```") + 3]
             bbox_list = json_repair.loads(json_str)
 
             # 验证bbox格式
@@ -123,7 +134,11 @@ class ImagePipeline:
             raise RuntimeError(f"Failed to parse VL model response: {str(e)}")
 
     def initialize_with_instruction(
-        self, frame: np.ndarray, instruction: str, return_bbox: bool = False, visualize: bool = False
+        self,
+        frame: np.ndarray,
+        instruction: str,
+        return_bbox: bool = False,
+        visualize: bool = False,
     ) -> tuple[np.ndarray, list | None]:
         """
         端到端初始化流程：VL生成bbox -> SAM分割 -> CUTIE初始化
@@ -136,15 +151,25 @@ class ImagePipeline:
         combined_mask: 组合后的多目标mask
         """
         # Step 1: 通过VL模型获取bbox
+        self.instruction = instruction
         bboxes = self.get_bbox_from_vl(frame, instruction)
         if not bboxes:
             raise ValueError("No valid bounding boxes detected by VL model")
         if visualize:
-            visualize_all(frame, bboxes, save_path=f"vis_{instruction}_{int(time.time()*10)}.png")
+            visualize_all(
+                frame,
+                bboxes,
+                save_path=f"vis_{instruction}_{int(time.time() * 10)}.png",
+            )
         # Step 2: SAM生成mask
-        return self.initialize_masks(frame, bboxes), None if not return_bbox else bboxes
+        if return_bbox:
+            return self.initialize_masks(frame, bboxes), bboxes
+        else:
+            return self.initialize_masks(frame, bboxes), None
 
-    def initialize_masks(self, frame: np.ndarray, bboxes: list) -> np.ndarray:
+    def initialize_masks(
+        self, frame: np.ndarray, bboxes: list, visualize: bool = True
+    ) -> np.ndarray:
         """
         初始化多目标分割
 
@@ -185,13 +210,23 @@ class ImagePipeline:
             to_tensor(rgb_frame).to(self.device), mask_tensor, object_ids
         )
 
+        if visualize:
+            visualize_all(
+                rgb_frame,
+                bboxes=bboxes,
+                mask=combined_mask,
+                save_path=f"vis_init_{self.instruction}_{int(time.time() * 10)}.png",
+            )
+
         # 更新状态
         self.current_objects = object_ids
         self.is_initialized = True
 
         return combined_mask
 
-    def update_masks(self, frame: np.ndarray) -> tuple[np.ndarray, list]:
+    def update_masks(
+        self, frame: np.ndarray | torch.Tensor | Image.Image, visualize: bool = False
+    ) -> tuple[np.ndarray, list]:
         """
         更新多目标跟踪结果
 
@@ -205,15 +240,30 @@ class ImagePipeline:
             raise RuntimeError("Pipeline not initialized. Call initialize_masks first.")
 
         # 准备输入数据
-        rgb_frame = frame
-        image_tensor = to_tensor(rgb_frame).to(self.device)
+        if not isinstance(frame, torch.Tensor):
+            rgb_frame = frame
+            image_tensor = to_tensor(rgb_frame).to(self.device)
+        else:
+            if frame.dim() == 3 and frame.shape[0] != 3:
+                # 如果是 [H, W, 3] 格式，转换为 [3, H, W]
+                image_tensor = frame.permute(2, 0, 1).to(self.device)
+            else:
+                image_tensor = frame.to(self.device)
+            if image_tensor.dtype == torch.uint8 or torch.max(image_tensor) > 1.0:
+                image_tensor = image_tensor.float() / 255.0
 
         # CUTIE推理
         with torch.no_grad():
             output_prob = self.processor.step(image_tensor)
             current_mask = self.processor.output_prob_to_mask(output_prob)
             current_mask_np = current_mask.cpu().numpy().astype(np.uint8)
-
+        if visualize:
+            visualize_all(
+                frame.cpu().numpy() if isinstance(frame, torch.Tensor) else frame,
+                None,
+                current_mask_np,
+                save_path=f"vis_mask_{self.instruction}_{int(time.time() * 10)}.png",
+            )
         # 分离各个目标的mask
         return current_mask_np, [
             (current_mask_np == obj_id) for obj_id in self.current_objects
@@ -259,7 +309,6 @@ class ImagePipeline:
         self.processor.step(image_tensor, combined_mask, self.current_objects)
 
         return new_mask
-
 
 
 # 使用示例

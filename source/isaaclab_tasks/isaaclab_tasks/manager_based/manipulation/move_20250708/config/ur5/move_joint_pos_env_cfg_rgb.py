@@ -225,7 +225,7 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             # height=256,
             width=480,
             height=480,
-            data_types=["rgb"],
+            data_types=["rgb", "depth"],
             debug_vis=True,
         )
 
@@ -240,7 +240,7 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             ),
             width=480,
             height=480,
-            data_types=["rgb"],
+            data_types=["rgb", "depth"],
             debug_vis=True,
         )
         # add wristcamera
@@ -254,7 +254,7 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             ),
             width=480,
             height=480,
-            data_types=["rgb"],
+            data_types=["rgb", "depth"],
             debug_vis=True,
         )
         # add contact_sensor

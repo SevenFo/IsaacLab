@@ -142,8 +142,7 @@ class SkillPlan:
         """Returns a nicely formatted string representation of the plan."""
         header = f"--- Skill Plan for Task: {self.task_id} ---\n"
         plan_str = "\n".join(f"  Step {i}: {step}" for i, step in enumerate(self.steps))
-        footer = "\n------------------------------------"
-        return header + plan_str + footer
+        return header + plan_str
 
 
 @dataclass
@@ -207,7 +206,7 @@ class SkillType(Enum):
 
     FUNCTION = "function"  # Simple Python function (fixed logic)
     POLICY = "policy"  # Trained RL policy
-    OBSERVATION = 'observation'
+    OBSERVATION = "observation"
 
 
 class ExecutionMode(Enum):
@@ -215,7 +214,7 @@ class ExecutionMode(Enum):
 
     DIRECT = "direct"  # Execute immediately without yielding
     STEPACTION = "stepaction"
-    PREACTION = 'preaction'
+    PREACTION = "preaction"
 
 
 # Type aliases for better readability
