@@ -13,6 +13,7 @@ from hydra import initialize
 from hydra.core.global_hydra import GlobalHydra
 
 from robot_brain_system.utils.visualization_utils import visualize_all
+from robot_brain_system.utils.retry_utils import retry
 from robot_brain_system.core.brain import BrainMemory
 
 try:
@@ -85,6 +86,13 @@ class ImagePipeline:
         pil_img.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
+    @retry(
+        max_attempts=3,
+        delay_seconds=1.0,
+        backoff_factor=2.0,
+        exceptions_to_retry=(ValueError,),
+        logger_func=lambda msg: print(f"[ImagePipeline] {msg}"),
+    )
     def get_bbox_from_vl(self, frame: np.ndarray, instruction: str) -> list:
         """
         使用视觉语言模型生成目标边界框
@@ -96,6 +104,18 @@ class ImagePipeline:
         返回:
         bboxes: 边界框列表 [[x1,y1,x2,y2], ...]
         """
+
+        def validate_bbox(bbox, frame_shape):
+            """验证边界框是否在图像范围内"""
+            if len(bbox) != 4:
+                return False
+            x1, y1, x2, y2 = bbox
+            return (
+                0 <= x1 < frame_shape[1]
+                and 0 <= y1 < frame_shape[0]
+                and 0 < x2 <= frame_shape[1]
+                and 0 < y2 <= frame_shape[0]
+            )
 
         # 构建VL模型输入
         prompt = BrainMemory()
@@ -114,24 +134,36 @@ class ImagePipeline:
 
         print(f"response from vl: {response}")
 
-        # 解析响应
-        try:
-            # 提取JSON部分
-            json_str = response[response.find("```json") : response.rfind("```") + 3]
-            bbox_list = json_repair.loads(json_str)
+        # 提取JSON部分
+        json_str = response[response.find("```json") : response.rfind("```") + 3]
+        bbox_list = json_repair.loads(json_str)
 
-            # 验证bbox格式
-            valid_bboxes = []
-            for item in bbox_list:
-                bbox = item.get("bbox_2d", [])
-                if len(bbox) == 4 and all(
-                    0 <= v <= frame.shape[1] if i % 2 == 0 else 0 <= v <= frame.shape[0]
-                    for i, v in enumerate(bbox)
-                ):
-                    valid_bboxes.append(bbox)
-            return valid_bboxes
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse VL model response: {str(e)}")
+        valid_bboxes = []
+
+        if isinstance(bbox_list, dict):
+            bbox_list = [bbox_list]  # 确保是列表格式
+
+        if not all(isinstance(item, dict) and "bbox_2d" in item for item in bbox_list):
+            # treat as one instance if bbox list
+            if validate_bbox(bbox_list, frame.shape):
+                valid_bboxes.append(bbox_list)
+                return valid_bboxes
+            else:
+                raise ValueError("Invalid bbox format or values in response.")
+
+        # 验证bbox格式
+        for item in bbox_list:
+            bbox = item.get("bbox_2d", [])
+            if len(bbox) == 4 and all(
+                0 <= v <= frame.shape[1] if i % 2 == 0 else 0 <= v <= frame.shape[0]
+                for i, v in enumerate(bbox)
+            ):
+                valid_bboxes.append(bbox)
+
+        if not valid_bboxes:
+            raise ValueError("No valid bounding boxes found in VL model response.")
+
+        return valid_bboxes
 
     def initialize_with_instruction(
         self,

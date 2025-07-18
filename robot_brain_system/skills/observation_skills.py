@@ -49,6 +49,7 @@ class ObjectTracking:
         sam_checkpoint = "thirdparty/sam2/checkpoints/sam2.1_hiera_large.pt"
         sam_model_config = "configs/sam2.1/sam2.1_hiera_l.yaml"
         cutie_default_model = get_default_model()
+        _init_success = []
         for key in cameras_data:
             self.pipeline_instance[key] = ImagePipeline(
                 policy_device,
@@ -61,6 +62,7 @@ class ObjectTracking:
                 self.pipeline_instance[key].initialize_with_instruction(
                     cameras_data[key], self.target_object, visualize=True
                 )
+                _init_success.append(key)
             except ValueError as e:
                 # NO OBJECT IS DETECTED
                 # TODO 如果所有视角都没看到就要抛出错误进行处理
@@ -68,6 +70,10 @@ class ObjectTracking:
                     f"[ObjectTracking] No object detected in {key}, as {e}, please check the camera data."
                 )
                 pass
+        if len(_init_success) == 0:
+            raise ValueError(
+                f"[ObjectTracking] No camera initialized successfully for {self.target_object}. Please check the camera data."
+            )
 
     def __call__(self, obs_dict: dict, visualize: bool = False) -> Any:
         points_list = []
@@ -80,12 +86,23 @@ class ObjectTracking:
                 obs_dict["policy"][instance_key][0], visualize=visualize
             )
             assert len(mask_list) == 1, "Only one mask is expected."
+            if not all_mask.any():
+                print(
+                    f"[ObjectTracking] No mask found for {self.target_object} in {instance_key}, skipping."
+                )
+                continue
             pointcloud: torch.tensor = obs_dict["policy"][f"pointcloud_{instance_key}"][
                 0
             ]
             masked_pointcloud = pointcloud[all_mask.flatten()]
             points_list.append(masked_pointcloud)
         # 合并点云并转换为 numpy 数组
+        if len(points_list) == 0:
+            print(
+                f"[ObjectTracking] No points found for {self.target_object}, returning empty observation."
+            )
+            # TODO 删除当前观测技能，并进行反馈！一种可能是随着技能的执行，所有视角中已经都看不到 target object 了导致所有视角的 mask 更新结果都为空
+            return obs_dict
         points_np = torch.cat(points_list, dim=0).cpu().numpy()
 
         # 创建 Open3D 点云对象

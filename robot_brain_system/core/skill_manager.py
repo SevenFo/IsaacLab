@@ -253,6 +253,7 @@ class SkillExecutor:
                 self.status = SkillStatus.FAILED
                 return False
         except Exception as e:
+            # TODO 技能初始化失败也要作为反馈信息的一部分！！
             print(f"[SkillExecutor] Error initialize skill {skill_name}: {e}")
             import traceback
 
@@ -269,14 +270,14 @@ class SkillExecutor:
         """
         # preaction preprocess for obs
         for preaction_skill in self.preaction_skills:
-            obs = preaction_skill(obs, visualize=True)
+            obs = preaction_skill(obs, visualize=False)
 
         action: Action = self.current_skill.select_action(obs)
         action_info = action.metadata["info"]
         self.status_info = action.metadata["reason"]
         if action_info == "error":
             step_result = (None, None, None, None, None)
-            if action.data:
+            if not action.data == []:
                 action_data = action.data.to(self.env_device)
                 step_result = self.env.step(action_data)
             print(f"[SkillExecutor] Error stepping skill {self.current_skill_name}")
@@ -288,7 +289,7 @@ class SkillExecutor:
                 f"[SkillExecutor] Skill {self.current_skill_name} finished successfully."
             )
             step_result = (None, None, None, None, None)
-            if action.data:
+            if not action.data == []:
                 action_data = action.data.to(self.env_device)
                 step_result = self.env.step(action_data)
             self.status = SkillStatus.COMPLETED

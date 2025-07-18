@@ -94,13 +94,17 @@ class PressButton:
             print(
                 "[Skill: PressButton] Maximum steps reached, stopping skill execution."
             )
-            return Action([], metadata={"info": "timeout"})
+            return Action(
+                [], metadata={"info": "timeout", "reason": "max_steps_reached"}
+            )
         policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
             print(
                 f"[Skill: PressButton] Error: Key '{policy_obs_key}' not found in initial observations."
             )
-            return Action([], metadata={"info": "error"})
+            raise ValueError(
+                f"Expected key '{policy_obs_key}' not found in obs_dict: {obs_dict.keys()}"
+            )
 
         policy_input_source = obs_dict[policy_obs_key]
 
@@ -122,10 +126,11 @@ class PressButton:
             print(
                 f"[Skill: PressButton] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
-            return Action([], metadata={"info": "error"})
+            raise ValueError(f"Expected numpy array from policy, got {type(action_np)}")
         self.num_steps += 1
         return Action(
-            torch.from_numpy(action_np).unsqueeze(0), metadata={"info": "success"}
+            torch.from_numpy(action_np).unsqueeze(0),
+            metadata={"info": "success", "reason": "none"},
         )
 
 
@@ -196,14 +201,18 @@ class GraspSpanner:
             print(
                 "[Skill: GraspSpanner] Maximum steps reached, stopping skill execution."
             )
-            return Action([], metadata={"info": "timeout"})
+            return Action(
+                [], metadata={"info": "timeout", "reason": "max_steps_reached"}
+            )
         # 早期版本的 GraspSpanner 没有使用和 button 相关的特征，需要进行转化
         policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
             print(
                 f"[Skill: GraspSpanner] Error: Key '{policy_obs_key}' not found in initial observations."
             )
-            return Action([], metadata={"info": "error"})
+            raise ValueError(
+                f"Expected key '{policy_obs_key}' not found in obs_dict: {obs_dict.keys()}"
+            )
 
         policy_input_source = obs_dict[policy_obs_key]
         # policy_input_source["object"] = torch.cat(
@@ -231,10 +240,11 @@ class GraspSpanner:
             print(
                 f"[Skill: GraspSpanner] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
-            return Action([], metadata={"info": "error"})
+            raise ValueError(f"Expected numpy array from policy, got {type(action_np)}")
         self.num_steps += 1
         return Action(
-            torch.from_numpy(action_np).unsqueeze(0), metadata={"info": "success"}
+            torch.from_numpy(action_np).unsqueeze(0),
+            metadata={"info": "success", "reason": "none"},
         )
 
 
@@ -325,6 +335,7 @@ class MoveToTarget:
         self.max_pos_vel = max_pos_vel
         self.max_rot_vel = max_rot_vel
         self.epsilon = 1e-6
+        self.control_mode = "relative"  # Default control mode
 
         if self.enable_verification:
             print(
@@ -357,7 +368,7 @@ class MoveToTarget:
             f"Rotation mismatch!\nTorch: {torch_rot_vec_np}\nSciPy: {scipy_rot_vec_np}"
         )
 
-    def select_action(self, obs_dict: dict) -> Action:
+    def select_action(self, obs_dict: dict, visualize: bool = True) -> Action:
         eef_pose_key = ["eef_pos", "eef_quat"]
         if "policy" not in obs_dict or not all(
             key in obs_dict["policy"] for key in eef_pose_key
@@ -374,13 +385,9 @@ class MoveToTarget:
             )
 
         # 直接获取位置和姿态，无需先拼接再分割
-        current_pos = obs_dict["policy"]["eef_pos"]
-        current_quat = obs_dict["policy"]["eef_quat"]
-        last_action = (
-            obs_dict["policy"]["action"].clone()
-            if "action" in obs_dict["policy"]
-            else None
-        )
+        current_pos = obs_dict["policy"]["eef_pos"].clone()
+        current_quat = obs_dict["policy"]["eef_quat"].clone()
+        current_gripper_pos = obs_dict["policy"]["gripper_pos"].clone()
 
         # 确保维度正确并移动到设备
         if current_pos.dim() == 1:
@@ -408,12 +415,20 @@ class MoveToTarget:
             # Get the target position from the AABB center
             target_aabb = obs_dict["policy"][_k]
             target_pos = torch.tensor(
-                target_aabb.center(), device=self.device
+                target_aabb.get_center(), device=self.device
             ).unsqueeze(0)  # [x, y, z]
-            target_quat = current_quat.clone(0)
+            target_quat = current_quat.clone()
         else:
             target_pos = self.target_pos.clone()
             target_quat = self.target_quat.clone()
+        if visualize:
+            print(
+                f"[Skill: MoveToTarget] Current position: {current_pos.cpu().numpy().tolist()}, Target position: {target_pos.cpu().numpy().tolist()}"
+            )
+            print(
+                f"[Skill: MoveToTarget] Current quaternion: {current_quat.cpu().numpy().tolist()}, Target quaternion: {target_quat.cpu().numpy().tolist()}"
+            )
+
         pos_error = target_pos - current_pos
         desired_pos_vel = pos_error * self.pos_gain
         pos_vel_norm = torch.linalg.norm(desired_pos_vel, dim=1, keepdim=True)
@@ -444,9 +459,27 @@ class MoveToTarget:
             torch.linalg.norm(total_rot_vec, dim=-1) + torch.linalg.norm(delta_pos)
             < 0.1
         ):
-            last_action[..., -1] = self.gripper_state
+            if self.control_mode == "relative":
+                zero_action = torch.zeros(
+                    size=(current_pos.shape[0], 7), device=self.device
+                )
+            else:
+                raise NotImplementedError(
+                    "[Skill: MoveToTarget] Absolute control mode is not implemented yet."
+                )
+                # TODO 假设绝对控制的 action 为 joint posisition,
+                zero_action = torch.zeros(
+                    size=(current_pos.shape[0], 7), device=self.device
+                )
+            zero_action[..., -1] = self.gripper_state
             print("[Skill: MoveToTarget] Delta is too small, skill finished.")
-            return Action(last_action, metadata={"info": "finished"})
+            return Action(
+                zero_action,
+                metadata={
+                    "info": "finished",
+                    "reason": f"end-effector is close enough to {self.target_pose or self.target_object}",
+                },
+            )
 
         # Continue with the pure torch result
         desired_rot_vel = total_rot_vec * self.rot_gain
@@ -459,8 +492,16 @@ class MoveToTarget:
 
         # --- Combine and create final action ---
         delta_pose_action = torch.cat([delta_pos, delta_rot], dim=1)
-        last_action[..., :-1] = delta_pose_action
-        return Action(last_action, metadata={"info": "success"})
+        current_gripper_action = current_gripper_pos.mean(dim=1, keepdim=True).to(
+            self.device
+        )
+        current_gripper_action[current_gripper_action > 0.5] = 1.0
+        current_gripper_action[current_gripper_action <= 0.5] = 0.0
+        action = torch.cat(
+            [delta_pose_action, current_gripper_action],
+            dim=1,
+        )
+        return Action(action, metadata={"info": "success", "reason": "none"})
 
 
 registry = get_skill_registry()
