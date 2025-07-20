@@ -1,12 +1,16 @@
 # from thirdparty.ImagePipeline.imagepipeline import imagepipeline
 from typing import Any
 import torch
+import numpy as np
+import time
 import open3d as o3d
 
 from robot_brain_system.core.skill_manager import skill_register
 from robot_brain_system.core.types import SkillType, ExecutionMode
 from robot_brain_system.core.model_adapters_v2 import OpenAIAdapter
 from robot_brain_system.skills.imagepipleline import ImagePipeline
+from robot_brain_system.utils.visualization_utils import visualize_all
+from robot_brain_system.utils.config_utils import load_skill_config, hydra_context_base
 
 from cutie.utils.get_default_model import get_default_model
 
@@ -31,6 +35,8 @@ class ObjectTracking:
         obs_dict: dict = {},
         **running_params,
     ) -> None:
+        self.cfg = load_skill_config(config_path="../conf", config_name="config")
+        print(f"[ObjectTracking] Loaded skill config: {self.cfg}")
         print(f"[SKILL: ObjectTracking: {running_params}")
         self.target_object = running_params.get("target_object", None)
         if self.target_object is None:
@@ -48,7 +54,8 @@ class ObjectTracking:
         )
         sam_checkpoint = "thirdparty/sam2/checkpoints/sam2.1_hiera_large.pt"
         sam_model_config = "configs/sam2.1/sam2.1_hiera_l.yaml"
-        cutie_default_model = get_default_model()
+        with hydra_context_base():
+            cutie_default_model = get_default_model()
         _init_success = []
         for key in cameras_data:
             self.pipeline_instance[key] = ImagePipeline(
@@ -75,7 +82,9 @@ class ObjectTracking:
                 f"[ObjectTracking] No camera initialized successfully for {self.target_object}. Please check the camera data."
             )
 
-    def __call__(self, obs_dict: dict, visualize: bool = False) -> Any:
+    def __call__(
+        self, obs_dict: dict, visualize: bool = False, debug_save=False
+    ) -> Any:
         points_list = []
         for instance_key in self.pipeline_instance:
             if not self.pipeline_instance[instance_key].is_initialized:
@@ -94,8 +103,32 @@ class ObjectTracking:
             pointcloud: torch.tensor = obs_dict["policy"][f"pointcloud_{instance_key}"][
                 0
             ]
-            masked_pointcloud = pointcloud[all_mask.flatten()]
+            mask_flattened = (
+                all_mask.transpose().flatten()
+            )  # 转置后再展平，匹配列优先顺序
+            masked_pointcloud = pointcloud[mask_flattened]
             points_list.append(masked_pointcloud)
+            if debug_save:
+                np.savetxt(
+                    f"masked_pointcloud_{instance_key}_{int(time.time() * 10)}.txt",
+                    masked_pointcloud.cpu().numpy(),
+                )
+                np.savetxt(
+                    f"masked_pointcloud_unmasked_{instance_key}_{int(time.time() * 10)}.txt",
+                    pointcloud.cpu().numpy(),
+                )
+                np.savetxt(
+                    f"masked_pointcloud_mask_{instance_key}_{int(time.time() * 10)}.txt",
+                    all_mask,
+                )
+            if visualize:
+                visualize_all(
+                    obs_dict["policy"][instance_key][0].cpu().numpy(),
+                    None,
+                    all_mask,
+                    save_path=f"masked_pointcloud_vis_{instance_key}_{int(time.time() * 1000)}.png",
+                )
+
         # 合并点云并转换为 numpy 数组
         if len(points_list) == 0:
             print(
@@ -123,4 +156,13 @@ class ObjectTracking:
             print(f"aabb of {self.target_object}: {aabb}")
             o3d_vis.draw_geometries([pcd_downsampled])
 
+        if debug_save:
+            o3d.io.write_point_cloud(
+                f"masked_pointcloud_pcd_filtered_{self.target_object}_{int(time.time() * 10)}.ply",
+                pcd_filtered,
+            )
+            o3d.io.write_point_cloud(
+                f"masked_pointcloud_pcd_downsampled_{self.target_object}_{int(time.time() * 1000)}.ply",
+                pcd_downsampled,
+            )
         return obs_dict

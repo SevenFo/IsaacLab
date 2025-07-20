@@ -9,11 +9,10 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 from cutie.inference.inference_core import InferenceCore
 from torchvision.transforms.functional import to_tensor
 from io import BytesIO
-from hydra import initialize
-from hydra.core.global_hydra import GlobalHydra
 
 from robot_brain_system.utils.visualization_utils import visualize_all
 from robot_brain_system.utils.retry_utils import retry
+from robot_brain_system.utils.config_utils import hydra_config_context
 from robot_brain_system.core.brain import BrainMemory
 
 try:
@@ -45,26 +44,11 @@ class ImagePipeline:
         """
         self.device = device
 
-        gh = GlobalHydra.instance()
-        prev_hydra = None
-        if gh.is_initialized():
-            print("[get_default_model] 检测到已存在的Hydra实例，将进行暂存和恢复。")
-            prev_hydra = gh.hydra
-            gh.clear()
-            print(f"[build_sam2] 已清除现有的Hydra实例: {GlobalHydra.instance()}")
-            print(f"[build_sam2] {gh.is_initialized()}")
-        try:
-            with initialize(version_base=None, config_path="pkg://sam2"):
-                self.predictor = SAM2ImagePredictor(
-                    build_sam2(sam_model_config, sam_checkpoint, device=self.device)
-                )
-        finally:
-            # 3. 无论成功还是失败，都必须把主程序的Hydra状态恢复原样
-            print("[build_sam2] 清理临时上下文并恢复原始Hydra实例...")
-            gh.clear()  # 清除我们刚刚创建的临时状态
-            if prev_hydra is not None:
-                gh.initialize(prev_hydra)  # 恢复主程序的状态
-            print("[build_sam2] 上下文恢复完毕。")
+        # 使用封装的上下文管理器初始化 SAM2
+        with hydra_config_context("pkg://sam2"):
+            self.predictor = SAM2ImagePredictor(
+                build_sam2(sam_model_config, sam_checkpoint, device=self.device)
+            )
 
         # 初始化CUTIE - 确保模型在正确设备上
         self.cutie = cutie_model.to(self.device)

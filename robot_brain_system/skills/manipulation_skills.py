@@ -418,6 +418,10 @@ class MoveToTarget:
                 target_aabb.get_center(), device=self.device
             ).unsqueeze(0)  # [x, y, z]
             target_quat = current_quat.clone()
+            if visualize:
+                print(
+                    f"[Skill: MoveToTarget] Target AABB 8p: {np.array2string(np.asarray(target_aabb.get_box_points()), precision=2, separator=', ')}"
+                )
         else:
             target_pos = self.target_pos.clone()
             target_quat = self.target_quat.clone()

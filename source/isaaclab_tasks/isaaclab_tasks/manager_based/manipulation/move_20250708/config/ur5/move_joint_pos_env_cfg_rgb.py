@@ -155,6 +155,15 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             disable_gravity=True,
         )
 
+        alice_properties = RigidBodyPropertiesCfg(
+            solver_position_iteration_count=16,
+            solver_velocity_iteration_count=1,
+            max_angular_velocity=1000.0,
+            max_linear_velocity=1000.0,
+            max_depenetration_velocity=5.0,
+            disable_gravity=True,
+        )
+
         self.scene.spanner = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Spanner",
             init_state=RigidObjectCfg.InitialStateCfg(
@@ -176,6 +185,18 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
                 usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0403/Desk.usd",
                 scale=(1, 1, 1),
                 rigid_props=desk_properties,
+            ),
+        )
+
+        self.scene.alice = RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/Alice",
+            init_state=RigidObjectCfg.InitialStateCfg(
+                pos=[0.4067, -3.1, 1.6], rot=[0.5, 0.5, 0.5, 0.5]
+            ),
+            spawn=UsdFileCfg(
+                usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0409/PN_Stickman_v12_ThumbInward.usd",
+                scale=(0.01, 0.01, 0.01),
+                rigid_props=alice_properties,
             ),
         )
 
