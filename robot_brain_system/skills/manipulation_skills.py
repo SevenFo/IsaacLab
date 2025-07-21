@@ -12,7 +12,8 @@ import os
 from typing import TYPE_CHECKING, List
 
 import isaaclab.utils.math as math_utils
-from isaaclab.assets.rigid_object import RigidObject
+# TODO 不要包含 isaacsim 相关的package，后续可以从 sub process 获取 skill description
+# from isaaclab.assets.rigid_object import RigidObject
 
 from ..core.types import SkillType, ExecutionMode, Action, BaseSkill
 from ..core.skill_manager import skill_register, get_skill_registry
@@ -543,12 +544,12 @@ class AliceControl(BaseSkill):
 
     def __init__(
         self,
-        alice_right_forearm_rigid_entity: RigidObject,
+        alice_right_forearm_rigid_entity: "RigidObject",
         policy_device: str = "cuda",
     ):
         super().__init__()
 
-        self.alice_right_forearm_rigid_entity: RigidObject = (
+        self.alice_right_forearm_rigid_entity: "RigidObject" = (
             alice_right_forearm_rigid_entity
         )
         bodies = self.alice_right_forearm_rigid_entity.body_names

@@ -144,6 +144,16 @@ class ImagePipeline:
                 for i, v in enumerate(bbox)
             ):
                 valid_bboxes.append(bbox)
+            else:
+                # TODO TEST CASE
+                # ```
+                # json_str: 
+                # ```json
+                # [
+                #     {"bbox_2d": [245, 22, 504, 298], "label": "red_box"}
+                # ]
+                # ```
+                print(f"Invalid bbox: {bbox} in response.")
 
         if not valid_bboxes:
             raise ValueError("No valid bounding boxes found in VL model response.")
