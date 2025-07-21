@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
+from robot_brain_system.utils.config_utils import load_skill_config
+
 
 class SystemStatus(Enum):
     """System status enumeration."""
@@ -33,6 +35,14 @@ class SkillStatus(Enum):
     IDLE = "idle"  # Skill is not currently executing
     TIMEOUT = "timeout"
     PENDING = "pending"  # Skill is waiting to be executed
+
+
+class BaseSkill:
+    """Base class for all skills."""
+
+    def __init__(self):
+        full_cfg = load_skill_config(config_path="../conf", config_name="config")
+        self.cfg = full_cfg.get("skills", {}).get(self.__class__.__name__.lower(), {})
 
 
 @dataclass

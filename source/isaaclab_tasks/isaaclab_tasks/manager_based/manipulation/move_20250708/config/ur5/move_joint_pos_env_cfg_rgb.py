@@ -200,6 +200,10 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             ),
         )
 
+        # self.scene.alice_right_forearm = RigidObjectCfg(
+        #     prim_path="{ENV_REGEX_NS}/Alice/PN_Stickman_v12_ThumbInward/Noitom_Hips/Noitom_Spine/Noitom_Spine1/Noitom_Spine2/Noitom_RightShoulder/Noitom_RightArm/Noitom_RightForeArm",
+        # )
+
         # 末端执行器跟踪坐标系配置
         marker_cfg = FRAME_MARKER_CFG.copy()
         marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
@@ -271,6 +275,19 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             offset=CameraCfg.OffsetCfg(
                 pos=(-0.07, 0.0, 0.0),
                 rot=(0, 0.70711, -0.70711, 0),
+                convention="opengl",
+            ),
+            width=480,
+            height=480,
+            data_types=["rgb", "depth"],
+            debug_vis=True,
+        )
+        self.scene.leftcamera = CameraCfg(
+            prim_path="{ENV_REGEX_NS}/LeftCamera",
+            spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=23),
+            offset=CameraCfg.OffsetCfg(
+                pos=(0.74745, -3.77492, 3.29499),
+                rot=(0.8925, 0.37505, -0.09707, -0.23101),
                 convention="opengl",
             ),
             width=480,

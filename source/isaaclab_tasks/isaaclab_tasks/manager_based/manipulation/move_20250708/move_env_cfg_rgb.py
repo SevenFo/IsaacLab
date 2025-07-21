@@ -80,6 +80,7 @@ class ObservationsCfg:
         eef_pos = ObsTerm(func=mdp.ee_frame_pos)  # 末端执行器的位置
         eef_quat = ObsTerm(func=mdp.ee_frame_quat)  # 末端执行器的朝向
         gripper_pos = ObsTerm(func=mdp.gripper_pos)  # 夹爪的位置
+        eef_pos_gripper = ObsTerm(func=mdp.ee_frame_pos_gripper)
         camera_top = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("topcamera"), "normalize": False},
@@ -92,10 +93,14 @@ class ObservationsCfg:
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("wristcamera"), "normalize": False},
         )  # RGB相机图像
+        camera_left = ObsTerm(
+            func=mdp.image,
+            params={"sensor_cfg": SceneEntityCfg("leftcamera"), "normalize": False},
+        )  # RGB相机图像
         pointcloud_camera_top = ObsTerm(
             func=mdp.camera_pointcloud,
             params={"sensor_cfg": SceneEntityCfg("topcamera"), "normalize": True},
-    )  # 点云
+        )  # 点云
         pointcloud_camera_side = ObsTerm(
             func=mdp.camera_pointcloud,
             params={"sensor_cfg": SceneEntityCfg("sidecamera"), "normalize": True},
@@ -104,6 +109,11 @@ class ObservationsCfg:
             func=mdp.camera_pointcloud,
             params={"sensor_cfg": SceneEntityCfg("wristcamera"), "normalize": True},
         )  # 点云
+        pointcloud_camera_left = ObsTerm(
+            func=mdp.camera_pointcloud,
+            params={"sensor_cfg": SceneEntityCfg("leftcamera"), "normalize": True},
+        )  # 点云
+
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = False

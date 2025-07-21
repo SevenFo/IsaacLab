@@ -233,9 +233,13 @@ class SkillExecutor:
                 print(f"[SkillExecutor] Started policy skill: {skill_name}")
                 return True
             elif skill_def.execution_mode == ExecutionMode.PREACTION:
+                self.current_skill_name = skill_name
+                self.current_skill_params = parameters
+                self.status = SkillStatus.IDLE
                 self.preaction_skills.append(
                     skill_def.function(policy_device, obs_dict, **parameters)
                 )
+                return True
             elif skill_def.execution_mode == ExecutionMode.DIRECT:
                 assert False, "Unsupported now!"
                 # Direct execution is inherently blocking, so it completes immediately
@@ -270,7 +274,7 @@ class SkillExecutor:
         """
         # preaction preprocess for obs
         for preaction_skill in self.preaction_skills:
-            obs = preaction_skill(obs, visualize=False)
+            obs = preaction_skill(obs)
 
         action: Action = self.current_skill.select_action(obs)
         action_info = action.metadata["info"]

@@ -603,6 +603,10 @@ class RobotBrainSystem:
                             self._handle_skill_completion(
                                 last_sim_skill_state, last_sim_skill_state_info
                             )
+                        elif last_sim_skill_state == "idle":
+                            print(
+                                "[RobotBrainSystem] Skill finished with 'idle' status, no action needed."
+                            )
                         else:
                             print(
                                 f"[RobotBrainSystem] Warning: Skill {self.state.skill_history[-1]['name']} finished with unexpected status: {last_sim_skill_state}"

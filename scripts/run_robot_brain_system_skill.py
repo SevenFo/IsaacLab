@@ -19,14 +19,14 @@ if __name__ == "__main__":
         isim.start_skill_non_blocking(
             "object_tracking",
             {
-                "target_object": "red box",
+                "target_object": "the black hand palm",
             },
             timeout=1000,  # Set a reasonable timeout for the skill to start
         )
         isim.start_skill_non_blocking(
             "move_to_target_object",
             {
-                "target_object": "red box",
+                "target_object": "the black hand palm",
             },
             timeout=1000,  # Set a reasonable timeout for the skill to start
         )

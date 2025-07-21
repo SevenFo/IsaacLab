@@ -116,10 +116,11 @@ class ImagePipeline:
 
         response, _ = self.vl_adapter.generate(prompt.history, max_tokens=512)
 
-        print(f"response from vl: {response}")
+        print(f"response from vl: \n{response}")
 
         # 提取JSON部分
         json_str = response[response.find("```json") : response.rfind("```") + 3]
+        print(f"json_str: \n{json_str}")
         bbox_list = json_repair.loads(json_str)
 
         valid_bboxes = []

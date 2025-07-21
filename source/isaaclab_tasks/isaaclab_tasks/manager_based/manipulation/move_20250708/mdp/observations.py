@@ -12,7 +12,7 @@ from isaaclab.envs import ManagerBasedEnv
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import FrameTransformer, ContactSensor
-from isaaclab.sensors import Camera, Imu, RayCaster, RayCasterCamera, TiledCamera
+from isaaclab.sensors import Camera, RayCasterCamera, TiledCamera
 import isaaclab.utils.math as math_utils
 
 if TYPE_CHECKING:
@@ -130,7 +130,16 @@ def ee_frame_pos(
 ) -> torch.Tensor:
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
     ee_frame_pos = ee_frame.data.target_pos_w[:, 0, :] - env.scene.env_origins[:, 0:3]
+    return ee_frame_pos
 
+
+def ee_frame_pos_gripper(
+    env: ManagerBasedRLEnv, ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame")
+) -> torch.Tensor:
+    ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+    ee_frame_pos_l = ee_frame.data.target_pos_w[:, 1, :] - env.scene.env_origins[:, 0:3]
+    ee_frame_pos_r = ee_frame.data.target_pos_w[:, 1, :] - env.scene.env_origins[:, 0:3]
+    ee_frame_pos = (ee_frame_pos_l + ee_frame_pos_r) / 2
     return ee_frame_pos
 
 
@@ -314,28 +323,30 @@ def camera_rgb(
     # 拼接所有相机 (B, 3, H, W, 4)
     return torch.cat(compressed_data, dim=1)
 
+
 def camera_pointcloud(
     env: ManagerBasedEnv,
     sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
     normalize: bool = True,
     visualize: bool = False,
 ) -> torch.Tensor:
-    """
-    """
+    """ """
     # extract the used quantities (to enable type-hinting)
-    sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name] # type: ignore
+    sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]  # type: ignore
     # distance_to_image_plane
-    if 'depth' not in sensor.data.output:
+    if "depth" not in sensor.data.output:
         return torch.zeros(0, 3, device=env.device)
-    
+
     # obtain the input image
-    depth_images = sensor.data.output['depth']
+    depth_images = sensor.data.output["depth"]
     points_3d_cam = math_utils.unproject_depth(
         depth_images, sensor.data.intrinsic_matrices
     )
 
     # TODO current w.r.t. world or not env_zero (not worked in muilti-env)
-    points_3d_world = math_utils.transform_points(points_3d_cam, sensor.data.pos_w, sensor.data.quat_w_ros)
+    points_3d_world = math_utils.transform_points(
+        points_3d_cam, sensor.data.pos_w, sensor.data.quat_w_ros
+    )
     if visualize:
         if points_3d_world.size()[0] > 0:
             ...
@@ -343,7 +354,7 @@ def camera_pointcloud(
     # rgb/depth image normalization
     if normalize:
         points_3d_world[points_3d_world == float("inf")] = 0
-        
+
     print(f"min: {points_3d_world.min()}, max: {points_3d_world.max()}")
     print(f"points_3d_world: {points_3d_world.shape}")
 

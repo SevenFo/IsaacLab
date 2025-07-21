@@ -10,3 +10,10 @@ monitoring:
   log_dir: "logs/robot_brain_system_${now:%Y%m%d-%H%M%S}"
   log_file: "${monitoring.log_dir}/robot_brain_system.log"
 
+skills:
+  movetotarget:
+    visualize: true
+  objecttracking:
+    visualize: false
+    debug_save: false
+    banned_cameras: ["camera_wrist", "camera_side","camera_top"]

@@ -487,6 +487,14 @@ class IsaacSimulator:
                     )
 
             obs_dict = obs
+
+            inner_skills = []
+            # inner_skills.append(
+            #     AliceControl(
+            #         alice_right_forearm_rigid_entity=_env.scene["alice_right_forearm"],
+            #         policy_device=_env.device,
+            #     )
+            # )
             while active:
                 try:
                     # Handle commands from parent process
@@ -619,6 +627,8 @@ class IsaacSimulator:
 
                     # Step non-blocking skill if one is running
                     if skill_executor.is_running():
+                        # inner hock
+
                         skill_exec_result = skill_executor.step(
                             obs_dict
                         )  # env is passed during start_skill

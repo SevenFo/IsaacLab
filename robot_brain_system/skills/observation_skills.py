@@ -6,11 +6,11 @@ import time
 import open3d as o3d
 
 from robot_brain_system.core.skill_manager import skill_register
-from robot_brain_system.core.types import SkillType, ExecutionMode
+from robot_brain_system.core.types import SkillType, ExecutionMode, BaseSkill
 from robot_brain_system.core.model_adapters_v2 import OpenAIAdapter
 from robot_brain_system.skills.imagepipleline import ImagePipeline
 from robot_brain_system.utils.visualization_utils import visualize_all
-from robot_brain_system.utils.config_utils import load_skill_config, hydra_context_base
+from robot_brain_system.utils.config_utils import hydra_context_base
 
 from cutie.utils.get_default_model import get_default_model
 
@@ -22,7 +22,7 @@ from cutie.utils.get_default_model import get_default_model
     enable_monitoring=False,  # Disable monitoring for this skill
     requires_env=True,
 )
-class ObjectTracking:
+class ObjectTracking(BaseSkill):
     """Adding a a tracker for the specific object in the environment, so that other skill can retrieve the pose information of the object from the observation.
     Especially useful for the skills that need to interact with the object and useful for solving object not found problem.
     Args:
@@ -35,17 +35,19 @@ class ObjectTracking:
         obs_dict: dict = {},
         **running_params,
     ) -> None:
-        self.cfg = load_skill_config(config_path="../conf", config_name="config")
+        super().__init__()
         print(f"[ObjectTracking] Loaded skill config: {self.cfg}")
         print(f"[SKILL: ObjectTracking: {running_params}")
         self.target_object = running_params.get("target_object", None)
         if self.target_object is None:
             raise ValueError("target_object must be specified.")
         self.pipeline_instance: dict[str, ImagePipeline] = {}
+        banned_cameras = self.cfg.get("banned_cameras", [])
+        print(f"[ObjectTracking] Banned cameras: {banned_cameras}")
         cameras_data = {
             camera_name: data[0].cpu().numpy()
             for camera_name, data in obs_dict["policy"].items()
-            if camera_name.startswith("camera_")
+            if camera_name.startswith("camera_") and camera_name not in banned_cameras
         }
         self.vlm = OpenAIAdapter(
             "qwen2.5-vl-32b-awq",
@@ -83,7 +85,8 @@ class ObjectTracking:
             )
 
     def __call__(
-        self, obs_dict: dict, visualize: bool = False, debug_save=False
+        self,
+        obs_dict: dict,
     ) -> Any:
         points_list = []
         for instance_key in self.pipeline_instance:
@@ -92,7 +95,8 @@ class ObjectTracking:
                 continue
             # 更新掩码
             all_mask, mask_list = self.pipeline_instance[instance_key].update_masks(
-                obs_dict["policy"][instance_key][0], visualize=visualize
+                obs_dict["policy"][instance_key][0],
+                visualize=self.cfg.get("visualize", False),
             )
             assert len(mask_list) == 1, "Only one mask is expected."
             if not all_mask.any():
@@ -108,7 +112,7 @@ class ObjectTracking:
             )  # 转置后再展平，匹配列优先顺序
             masked_pointcloud = pointcloud[mask_flattened]
             points_list.append(masked_pointcloud)
-            if debug_save:
+            if self.cfg.get("debug_save", False):
                 np.savetxt(
                     f"masked_pointcloud_{instance_key}_{int(time.time() * 10)}.txt",
                     masked_pointcloud.cpu().numpy(),
@@ -121,7 +125,7 @@ class ObjectTracking:
                     f"masked_pointcloud_mask_{instance_key}_{int(time.time() * 10)}.txt",
                     all_mask,
                 )
-            if visualize:
+            if self.cfg.get("visualize", False):
                 visualize_all(
                     obs_dict["policy"][instance_key][0].cpu().numpy(),
                     None,
@@ -150,13 +154,13 @@ class ObjectTracking:
         aabb = pcd_downsampled.get_axis_aligned_bounding_box()
         obs_dict["policy"][f"{self.target_object}_aabb"] = aabb
 
-        if visualize:
+        if self.cfg.get("visualize", False):
             import open3d.visualization as o3d_vis
 
             print(f"aabb of {self.target_object}: {aabb}")
             o3d_vis.draw_geometries([pcd_downsampled])
 
-        if debug_save:
+        if self.cfg.get("debug_save", False):
             o3d.io.write_point_cloud(
                 f"masked_pointcloud_pcd_filtered_{self.target_object}_{int(time.time() * 10)}.ply",
                 pcd_filtered,
