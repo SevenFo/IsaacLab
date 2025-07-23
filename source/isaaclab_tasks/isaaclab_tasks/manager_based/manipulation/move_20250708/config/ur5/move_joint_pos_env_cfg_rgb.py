@@ -16,6 +16,7 @@ from isaaclab.utils import configclass
 from ....move_20250708 import mdp
 from ....move_20250708.mdp import ur5_move_events
 from ....move_20250708.move_env_cfg_rgb import MoveEnvCfg
+from .robots.alice import ALICE_CFG
 
 ##
 # Pre-defined configs
@@ -106,6 +107,8 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
 
         self.scene.box = TOOLBOX_CFG.replace(prim_path="{ENV_REGEX_NS}/Box")
 
+        self.scene.alice = ALICE_CFG.replace(prim_path="{ENV_REGEX_NS}/Alice")
+
         self.scene.button = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Box/red_toolbox/Toolbox/box_lower/Button/button",
         )
@@ -155,14 +158,14 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             disable_gravity=True,
         )
 
-        alice_properties = RigidBodyPropertiesCfg(
-            solver_position_iteration_count=16,
-            solver_velocity_iteration_count=1,
-            max_angular_velocity=1000.0,
-            max_linear_velocity=1000.0,
-            max_depenetration_velocity=5.0,
-            disable_gravity=True,
-        )
+        # alice_properties = RigidBodyPropertiesCfg(
+        #     solver_position_iteration_count=16,
+        #     solver_velocity_iteration_count=1,
+        #     max_angular_velocity=1000.0,
+        #     max_linear_velocity=1000.0,
+        #     max_depenetration_velocity=5.0,
+        #     disable_gravity=True,
+        # )
 
         self.scene.spanner = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Spanner",
@@ -188,17 +191,17 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             ),
         )
 
-        self.scene.alice = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Alice",
-            init_state=RigidObjectCfg.InitialStateCfg(
-                pos=[0.4067, -3.1, 1.6], rot=[0.5, 0.5, 0.5, 0.5]
-            ),
-            spawn=UsdFileCfg(
-                usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0409/PN_Stickman_v12_ThumbInward.usd",
-                scale=(0.01, 0.01, 0.01),
-                rigid_props=alice_properties,
-            ),
-        )
+        # self.scene.alice = RigidObjectCfg(
+        #     prim_path="{ENV_REGEX_NS}/Alice",
+        #     init_state=RigidObjectCfg.InitialStateCfg(
+        #         pos=[0.4067, -3.1, 1.6], rot=[0.5, 0.5, 0.5, 0.5]
+        #     ),
+        #     spawn=UsdFileCfg(
+        #         usd_path="/data/shared_folder/IssacAsserts/Projects/Collected_ROOM_set_fix_0409/PN_Stickman_v12_ThumbInward.usd",
+        #         scale=(0.01, 0.01, 0.01),
+        #         rigid_props=alice_properties,
+        #     ),
+        # )
 
         # self.scene.alice_right_forearm = RigidObjectCfg(
         #     prim_path="{ENV_REGEX_NS}/Alice/PN_Stickman_v12_ThumbInward/Noitom_Hips/Noitom_Spine/Noitom_Spine1/Noitom_Spine2/Noitom_RightShoulder/Noitom_RightArm/Noitom_RightForeArm",

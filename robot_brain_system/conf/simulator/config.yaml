@@ -21,3 +21,4 @@ device: "cuda:0"  # 可选: "cpu", "cuda", "cuda:N"
 experience: ""  # 留空时根据 headless 和 enable_cameras 自动选择
 # 传递给 Omniverse Kit 的额外参数（以空格分隔的字符串）
 kit_args: ""
+warmup_steps: 10

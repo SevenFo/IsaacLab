@@ -15,6 +15,7 @@ from typing import (
 from multiprocessing.connection import Pipe, Connection
 import traceback
 import pickle  # For pickle.UnpicklingError
+import math
 
 # robot_brain_system imports
 from robot_brain_system.core.types import (
@@ -412,19 +413,57 @@ class IsaacSimulator:
                     device=_env.device,
                     dtype=torch.float32,
                 )
-
-                warmup_steps = 10  # Number of warm-up steps
-                for i in range(warmup_steps):
+                # joint InitialStateCfg not working, so we set it manually
+                alice_joint_position_target = torch.zeros_like(
+                    _env.scene["alice"].data.joint_pos_target
+                )
+                alice_joint_position_target[:, :9] = torch.tensor(
+                    [
+                        0.0,  # D6Joint_1:0
+                        math.radians(66.7),  # D6Joint_1:1
+                        math.radians(50.7),  # D6Joint_1:2
+                        0.0,  # D6Joint_2:0
+                        math.radians(25.9),  # D6Joint_2:1
+                        math.radians(-23.2),  # D6Joint_2:2
+                        math.radians(-141.8),  # D6Joint_3:0
+                        math.radians(-11.0),  # D6Joint_3:1
+                        math.radians(-41.7),  # D6Joint_3:2
+                    ],
+                    device=_env.device,
+                )
+                _env.scene["alice"].set_joint_position_target(
+                    alice_joint_position_target,
+                )
+                # write the joint state to sim to directly change the joint position at one step
+                _env.scene["alice"].write_joint_state_to_sim(
+                    alice_joint_position_target,
+                    torch.zeros_like(alice_joint_position_target, device=_env.device),
+                )
+                for i in range(cli_args.warmup_steps):
                     # Step the environment with the correctly shaped zero action
                     obs, reward, terminated, truncated, info = env.step(zero_action)
 
                 print(
-                    f"[IsaacSubprocess] Warm-up complete after {warmup_steps} steps with action shape {zero_action.shape}."
+                    f"[IsaacSubprocess] Warm-up complete after {cli_args.warmup_steps} steps with action shape {zero_action.shape}."
                 )
             else:
                 print(
                     "[IsaacSubprocess] Skipping warm-up: could not determine action dimension from action_manager."
                 )
+
+            alice_articulator = _env.scene["alice"]
+            print(
+                f"[IsaacSubprocess] Alice articulator joint_names: {alice_articulator.joint_names}"
+            )
+            dumped_data = {
+                "joint_pos": alice_articulator.data.joint_pos.cpu().numpy(),
+                "joint_pos_target": alice_articulator.data.joint_pos_target.cpu().numpy(),
+            }
+
+            import pickle
+
+            pickle.dump(dumped_data, open("alice_articulator_200.pkl", "wb"))
+            exit(0)  # Exit after warm-up for debugging
             # The 'obs' variable now holds the observation from the final warm-up step.
             # -- WARM-UP CORRECTION END --
 
