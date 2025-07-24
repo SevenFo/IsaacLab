@@ -363,6 +363,7 @@ class IsaacSimulator:
                 SkillExecutor,
                 get_skill_registry,
             )
+            from robot_brain_system.skills.manipulation_skills import AliceControl
             from robot_brain_system.utils import dynamic_set_attr
             import robot_brain_system.skills  # noqa: F401
 
@@ -414,10 +415,10 @@ class IsaacSimulator:
                     dtype=torch.float32,
                 )
                 # joint InitialStateCfg not working, so we set it manually
-                alice_joint_position_target = torch.zeros_like(
+                init_alice_joint_position_target = torch.zeros_like(
                     _env.scene["alice"].data.joint_pos_target
                 )
-                alice_joint_position_target[:, :9] = torch.tensor(
+                init_alice_joint_position_target[:, :9] = torch.tensor(
                     [
                         0.0,  # D6Joint_1:0
                         math.radians(66.7),  # D6Joint_1:1
@@ -432,15 +433,20 @@ class IsaacSimulator:
                     device=_env.device,
                 )
                 _env.scene["alice"].set_joint_position_target(
-                    alice_joint_position_target,
+                    init_alice_joint_position_target,
                 )
                 # write the joint state to sim to directly change the joint position at one step
                 _env.scene["alice"].write_joint_state_to_sim(
-                    alice_joint_position_target,
-                    torch.zeros_like(alice_joint_position_target, device=_env.device),
+                    init_alice_joint_position_target,
+                    torch.zeros_like(init_alice_joint_position_target, device=_env.device),
+                )
+                alice_control = AliceControl(
+                    alice_right_forearm_rigid_entity=_env.scene["alice"],
+                    policy_device=_env.device,
                 )
                 for i in range(cli_args.warmup_steps):
                     # Step the environment with the correctly shaped zero action
+                    alice_control.apply_action(_env)
                     obs, reward, terminated, truncated, info = env.step(zero_action)
 
                 print(
@@ -455,15 +461,6 @@ class IsaacSimulator:
             print(
                 f"[IsaacSubprocess] Alice articulator joint_names: {alice_articulator.joint_names}"
             )
-            dumped_data = {
-                "joint_pos": alice_articulator.data.joint_pos.cpu().numpy(),
-                "joint_pos_target": alice_articulator.data.joint_pos_target.cpu().numpy(),
-            }
-
-            import pickle
-
-            pickle.dump(dumped_data, open("alice_articulator_200.pkl", "wb"))
-            exit(0)  # Exit after warm-up for debugging
             # The 'obs' variable now holds the observation from the final warm-up step.
             # -- WARM-UP CORRECTION END --
 

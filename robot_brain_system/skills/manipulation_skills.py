@@ -5,6 +5,7 @@ Primarily features the 'assemble_object' skill using a pre-trained policy.
 
 import numpy as np
 import torch
+import math
 from scipy.spatial.transform import Rotation as R
 
 # Ensure os module is imported if not already
@@ -549,150 +550,54 @@ class AliceControl(BaseSkill):
     ):
         super().__init__()
 
-        self.alice_right_forearm_rigid_entity: "RigidObject" = (
-            alice_right_forearm_rigid_entity
+        # self.alice_right_forearm_rigid_entity: "RigidObject" = (
+        #     alice_right_forearm_rigid_entity
+        # )
+        # bodies = self.alice_right_forearm_rigid_entity.body_names
+        # print(f"[Skill: AliceControl] Found bodies in Alice's right forearm: {bodies}")
+        # print("[Skill: AliceControl] Initialized successfully.")
+
+    def apply_action(self, env) -> bool:
+        # 获取当前关节目标位置
+        current_target = env.scene["alice"].data.joint_pos_target.clone()
+
+        # D6Joint_1:2 对应的是索引 5
+        joint_idx = 5
+
+        # 定义增量和限制范围（弧度）
+        increment = math.radians(1)
+        lower_limit = math.radians(-15)
+        upper_limit = math.radians(15)
+
+        # 初始化或检查方向张量（每个实例一个方向）
+        if not hasattr(self, 'direction') or self.direction.shape[0] != current_target.shape[0]:
+            self.direction = torch.ones(current_target.shape[0], device=env.device, dtype=torch.float32)
+
+        # 获取当前角度
+        current_angles = current_target[:, joint_idx]
+
+        # 计算下一个角度
+        next_angles = current_angles + increment * self.direction
+
+        # 检测是否超出边界并反转方向
+        exceeded_upper = next_angles > upper_limit
+        exceeded_lower = next_angles < lower_limit
+
+        # 更新方向（到达边界则反转）
+        self.direction[exceeded_upper | exceeded_lower] *= -1
+
+        # 限制角度在范围内
+        next_angles = torch.clamp(next_angles, lower_limit, upper_limit)
+
+        # 更新目标角度
+        current_target[:, joint_idx] = next_angles
+
+        # 将目标位置设置回环境
+        env.scene["alice"].set_joint_position_target(current_target)
+
+        # 写入模拟器，立即生效
+        env.scene["alice"].write_joint_state_to_sim(
+            current_target,
+            torch.zeros_like(current_target, device=env.device),
         )
-        bodies = self.alice_right_forearm_rigid_entity.body_names
-        print(f"[Skill: AliceControl] Found bodies in Alice's right forearm: {bodies}")
-        print("[Skill: AliceControl] Initialized successfully.")
-
-    def select_action(self, obs_dict: dict) -> Action:
-        eef_pose_key = ["eef_pos_gripper", "eef_quat"]
-        if "policy" not in obs_dict or not all(
-            key in obs_dict["policy"] for key in eef_pose_key
-        ):
-            print(
-                f"[Skill: MoveToTarget] Error: Key '{eef_pose_key}' not found in observations."
-            )
-            return Action(
-                [],
-                metadata={
-                    "info": "error",
-                    "reason": f"{eef_pose_key} has not been tracking in the environment, Non-visual skill can not be executed without it.",
-                },
-            )
-
-        # 直接获取位置和姿态，无需先拼接再分割
-        current_pos = obs_dict["policy"]["eef_pos"].clone()
-        current_quat = obs_dict["policy"]["eef_quat"].clone()
-        current_gripper_pos = obs_dict["policy"]["gripper_pos"].clone()
-
-        # 确保维度正确并移动到设备
-        if current_pos.dim() == 1:
-            current_pos = current_pos.unsqueeze(0)
-        if current_quat.dim() == 1:
-            current_quat = current_quat.unsqueeze(0)
-
-        current_pos = current_pos.to(self.device)
-        current_quat = current_quat.to(self.device)
-
-        # --- Position Control (unchanged) ---
-        if self.target_pose is None:
-            _k = f"{self.target_object}_aabb"
-            if _k not in obs_dict["policy"]:
-                print(
-                    f"[Skill: MoveToTarget] Error: Target object '{self.target_object}' not found in observations."
-                )
-                return Action(
-                    [],
-                    metadata={
-                        "info": "error",
-                        "reason": f"Target object '{self.target_object}' not found in observations.",
-                    },
-                )
-            # Get the target position from the AABB center
-            target_aabb = obs_dict["policy"][_k]
-            target_center = target_aabb.get_center()
-            target_center[2] += self.z_offset  # Add z offset
-            target_pos = torch.tensor(target_center, device=self.device).unsqueeze(
-                0
-            )  # [x, y, z]
-            target_quat = current_quat.clone()
-            if self.cfg.get("visualize", False):
-                print(
-                    f"[Skill: MoveToTarget] Target AABB 8p: {np.array2string(np.asarray(target_aabb.get_box_points()), precision=2, separator=', ')}"
-                )
-        else:
-            target_pos = self.target_pos.clone()
-            target_quat = self.target_quat.clone()
-        if self.cfg.get("visualize", False):
-            print(
-                f"[Skill: MoveToTarget] Current position: {current_pos.cpu().numpy().tolist()}, Target position: {target_pos.cpu().numpy().tolist()}"
-            )
-            print(
-                f"[Skill: MoveToTarget] Current quaternion: {current_quat.cpu().numpy().tolist()}, Target quaternion: {target_quat.cpu().numpy().tolist()}"
-            )
-
-        pos_error = target_pos - current_pos
-        desired_pos_vel = pos_error * self.pos_gain
-        pos_vel_norm = torch.linalg.norm(desired_pos_vel, dim=1, keepdim=True)
-        scaled_pos_vel = desired_pos_vel * torch.min(
-            torch.ones_like(pos_vel_norm),
-            self.max_pos_vel / (pos_vel_norm + self.epsilon),
-        )
-        delta_pos = scaled_pos_vel
-
-        # --- Rotation Control (with verification logic) ---
-        # Calculate the error quaternion using PyTorch
-        error_quat = math_utils.quat_mul(
-            target_quat, math_utils.quat_conjugate(current_quat)
-        )
-        error_quat = torch.where(error_quat[:, 0:1] < 0, -error_quat, error_quat)
-
-        # Convert error quaternion to an axis-angle vector using our high-performance torch function
-        total_rot_vec = quat_to_axis_angle_torch(error_quat)
-
-        # -- VERIFICATION BLOCK --
-        if self.enable_verification:
-            # This function will throw an AssertionError if the results don't match
-            self._verify_rotation_calculation(total_rot_vec, error_quat)
-        # -- END VERIFICATION BLOCK --
-
-        # check if the delta is too small
-        if (
-            torch.linalg.norm(total_rot_vec, dim=-1) + torch.linalg.norm(delta_pos)
-            < 0.1
-        ):
-            if self.control_mode == "relative":
-                zero_action = torch.zeros(
-                    size=(current_pos.shape[0], 7), device=self.device
-                )
-            else:
-                raise NotImplementedError(
-                    "[Skill: MoveToTarget] Absolute control mode is not implemented yet."
-                )
-                # TODO 假设绝对控制的 action 为 joint posisition,
-                zero_action = torch.zeros(
-                    size=(current_pos.shape[0], 7), device=self.device
-                )
-            zero_action[..., -1] = self.gripper_state
-            print("[Skill: MoveToTarget] Delta is too small, skill finished.")
-            return Action(
-                zero_action,
-                metadata={
-                    "info": "finished",
-                    "reason": f"end-effector is close enough to {self.target_pose or self.target_object}",
-                },
-            )
-
-        # Continue with the pure torch result
-        desired_rot_vel = total_rot_vec * self.rot_gain
-        rot_vel_norm = torch.linalg.norm(desired_rot_vel, dim=1, keepdim=True)
-        scaled_rot_vel = desired_rot_vel * torch.min(
-            torch.ones_like(rot_vel_norm),
-            self.max_rot_vel / (rot_vel_norm + self.epsilon),
-        )
-        delta_rot = scaled_rot_vel
-
-        # --- Combine and create final action ---
-        delta_pose_action = torch.cat([delta_pos, delta_rot], dim=1)
-        current_gripper_action = current_gripper_pos.mean(dim=1, keepdim=True).to(
-            self.device
-        )
-        current_gripper_action[current_gripper_action > 0.5] = 1.0
-        current_gripper_action[current_gripper_action <= 0.5] = 0.0
-        action = torch.cat(
-            [delta_pose_action, current_gripper_action],
-            dim=1,
-        )
-        return Action(action, metadata={"info": "success", "reason": "none"})
+        return True
