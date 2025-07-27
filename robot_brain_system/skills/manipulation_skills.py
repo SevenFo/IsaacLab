@@ -6,6 +6,8 @@ Primarily features the 'assemble_object' skill using a pre-trained policy.
 import numpy as np
 import torch
 import math
+from torchvision.transforms import Resize, Compose
+from torchvision.transforms.functional import convert_image_dtype
 from scipy.spatial.transform import Rotation as R
 
 # Ensure os module is imported if not already
@@ -35,6 +37,30 @@ except ImportError:
 # Type hinting for Isaac Lab environment if available
 if TYPE_CHECKING:
     pass  # Or the specific env type you use
+
+
+def HWC_to_CHW(image: torch.Tensor) -> torch.Tensor:
+    """
+    Convert an image tensor from HWC (Height, Width, Channels) format to CHW (Channels, Height, Width).
+    This is often required for compatibility with PyTorch models.
+    """
+    if image.dim() == 3:  # Check if the input is a 3D tensor (HWC)
+        return image.permute(2, 0, 1)  # Change to CHW format
+    elif image.dim() == 4:  # Check if the input is a batch of images
+        return image.permute(0, 3, 1, 2)  # Change to BCHW format
+    else:
+        raise ValueError("Input tensor must be either HWC or BCHW format.")
+
+
+def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
+    """Resize and normalize an image tensor to have pixel values in the range [0, 1]."""
+
+    if image.dtype != torch.uint8:
+        return image
+
+    return (
+        convert_image_dtype(image, dtype=torch.float32) / 255.0
+    )  # Normalize to [0, 1] range
 
 
 @skill_register(
@@ -70,7 +96,7 @@ class PressButton(BaseSkill):
 
         print("[Skill: press_button] Starting...")
 
-        checkpoint_path = "assets/skills/press.pth"
+        checkpoint_path = self.cfg.get("model_path", "assets/skills/press.pth")
         if not os.path.exists(checkpoint_path):
             print(
                 f"[Skill: press_button] Error: Checkpoint path '{checkpoint_path}' does not exist."
@@ -92,6 +118,13 @@ class PressButton(BaseSkill):
         self.num_steps = 0  # Initialize step counter
         self.policy = policy
         self.policy.start_episode()
+        self.resize_fn = Compose(
+            [
+                HWC_to_CHW,
+                pixcel_normalize,
+                Resize([256, 256]),
+            ]
+        )
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= 100:
@@ -111,6 +144,12 @@ class PressButton(BaseSkill):
             )
 
         policy_input_source = obs_dict[policy_obs_key]
+        # Resize rgb obs to match policy input requirements
+        rgb_obs_keys = [
+            key for key in policy_input_source.keys() if key.startswith("camera_")
+        ]
+        for rbg_key in rgb_obs_keys:
+            policy_input_source[rbg_key] = self.resize_fn(policy_input_source[rbg_key])
 
         current_policy_obs = OrderedDict()
         for key, tensor_val in policy_input_source.items():
@@ -177,7 +216,8 @@ class GraspSpanner(BaseSkill):
 
         print("[Skill: GraspSpanner] Starting...")
 
-        checkpoint_path = "assets/skills/grasp.pth"
+        checkpoint_path = self.cfg.get("model_path", "assets/skills/grasp.pth")
+
         if not os.path.exists(checkpoint_path):
             print(
                 f"[Skill: GraspSpanner] Error: Checkpoint path '{checkpoint_path}' does not exist."
@@ -200,6 +240,7 @@ class GraspSpanner(BaseSkill):
         self.policy = policy
         self.policy.start_episode()
         self.num_steps = 0  # Initialize step counter
+        self.resize_fn = Resize([256, 256])
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= 200:
@@ -220,6 +261,11 @@ class GraspSpanner(BaseSkill):
             )
 
         policy_input_source = obs_dict[policy_obs_key]
+        rgb_obs_keys = [
+            key for key in policy_input_source.keys() if key.startswith("camera_")
+        ]
+        for rbg_key in rgb_obs_keys:
+            policy_input_source[rbg_key] = self.resize_fn(policy_input_source[rbg_key])
         # policy_input_source["object"] = torch.cat(
         #     [
         #         policy_input_source["object"][..., 0:7],
@@ -561,17 +607,22 @@ class AliceControl(BaseSkill):
         # 获取当前关节目标位置
         current_target = env.scene["alice"].data.joint_pos_target.clone()
 
-        # D6Joint_1:2 对应的是索引 5
-        joint_idx = 5
+        # D6Joint_1:1 对应的是索引 2
+        joint_idx = 2
 
         # 定义增量和限制范围（弧度）
-        increment = math.radians(1)
-        lower_limit = math.radians(-15)
-        upper_limit = math.radians(15)
+        increment = math.radians(0.1)
+        lower_limit = math.radians(55)
+        upper_limit = math.radians(75)
 
         # 初始化或检查方向张量（每个实例一个方向）
-        if not hasattr(self, 'direction') or self.direction.shape[0] != current_target.shape[0]:
-            self.direction = torch.ones(current_target.shape[0], device=env.device, dtype=torch.float32)
+        if (
+            not hasattr(self, "direction")
+            or self.direction.shape[0] != current_target.shape[0]
+        ):
+            self.direction = torch.ones(
+                current_target.shape[0], device=env.device, dtype=torch.float32
+            )
 
         # 获取当前角度
         current_angles = current_target[:, joint_idx]

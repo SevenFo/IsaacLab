@@ -17,3 +17,7 @@ skills:
     visualize: false
     debug_save: false
     banned_cameras: ["camera_wrist", "camera_side","camera_top"]
+  pressbutton:
+    model_path: "assets/skills/press_rgb.pth"
+  graspspanner:
+    model_path: "assets/skills/grasp_rgb.pth"

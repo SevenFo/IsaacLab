@@ -363,9 +363,9 @@ class IsaacSimulator:
                 SkillExecutor,
                 get_skill_registry,
             )
-            from robot_brain_system.skills.manipulation_skills import AliceControl
             from robot_brain_system.utils import dynamic_set_attr
             import robot_brain_system.skills  # noqa: F401
+            from robot_brain_system.skills.manipulation_skills import AliceControl
 
             print(
                 "[IsaacSubprocess] Isaac App was launched by launcher. Continuing initialization."
@@ -438,7 +438,9 @@ class IsaacSimulator:
                 # write the joint state to sim to directly change the joint position at one step
                 _env.scene["alice"].write_joint_state_to_sim(
                     init_alice_joint_position_target,
-                    torch.zeros_like(init_alice_joint_position_target, device=_env.device),
+                    torch.zeros_like(
+                        init_alice_joint_position_target, device=_env.device
+                    ),
                 )
                 alice_control = AliceControl(
                     alice_right_forearm_rigid_entity=_env.scene["alice"],
@@ -446,7 +448,7 @@ class IsaacSimulator:
                 )
                 for i in range(cli_args.warmup_steps):
                     # Step the environment with the correctly shaped zero action
-                    alice_control.apply_action(_env)
+                    # alice_control.apply_action(_env)
                     obs, reward, terminated, truncated, info = env.step(zero_action)
 
                 print(
@@ -531,6 +533,7 @@ class IsaacSimulator:
             #         policy_device=_env.device,
             #     )
             # )
+            # TODO: 将 Alice Control 放在 active 循环中，等待最后一个技能触发
             while active:
                 try:
                     # Handle commands from parent process

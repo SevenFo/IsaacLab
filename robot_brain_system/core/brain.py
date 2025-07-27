@@ -1215,6 +1215,7 @@ After your thinking process, provide the final execution plan as a JSON array.
 -   Each object in the array represents one step in the plan.
 -   Each object **must** include a `step` key, which is a sequential integer starting from 1, indicating the logical execution order.
 -   The JSON should be the only thing after the closing `</think>` tag.
+-   DO NOT USE ANY Placeholder in the JSON.
 
 Example response format:
 <think>
