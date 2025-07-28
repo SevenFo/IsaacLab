@@ -340,23 +340,24 @@ class SkillExecutor:
         return self.current_skill is not None and (self.status == SkillStatus.RUNNING)
 
     def terminate_current_skill(
-        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
+        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED, status_info=""
     ) -> bool:
         """Terminate the current non-blocking skill execution."""
         if self.current_skill is not None:
             print(
-                f"[SkillExecutor] Terminating skill: {self.current_skill_name} with status: {skill_status}"
+                f"[SkillExecutor] Terminating skill: {self.current_skill_name} with status: {skill_status} and info: {status_info}"
             )
             # self._reset_current_skill_state()
             self.status = skill_status
-            return True
+            self.status_info = status_info
         else:
             # this skill is already finished
             print(
-                f"[SkillExecutor] no skill runing, directly setting status to: {skill_status}"
+                f"[SkillExecutor] no skill runing, directly setting status to: {skill_status}, info: {status_info}"
             )
             self.status = skill_status
-        return False
+            self.status_info = status_info
+        return True
 
     def _reset_current_skill_state(self):
         self.current_skill = None

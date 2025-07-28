@@ -45,22 +45,25 @@ def HWC_to_CHW(image: torch.Tensor) -> torch.Tensor:
     This is often required for compatibility with PyTorch models.
     """
     if image.dim() == 3:  # Check if the input is a 3D tensor (HWC)
-        return image.permute(2, 0, 1)  # Change to CHW format
+        image = image.permute(2, 0, 1)  # Change to CHW format
     elif image.dim() == 4:  # Check if the input is a batch of images
-        return image.permute(0, 3, 1, 2)  # Change to BCHW format
+        image = image.permute(0, 3, 1, 2)  # Change to BCHW format
     else:
         raise ValueError("Input tensor must be either HWC or BCHW format.")
+    return image
+    return pixcel_normalize(image)  # Normalize the image to [0, 1] range
 
 
 def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
     """Resize and normalize an image tensor to have pixel values in the range [0, 1]."""
 
     if image.dtype != torch.uint8:
+        print(
+            f"[Warning] Image is not in uint8 format ({image.dtype}), remaining in the original format."
+        )
         return image
 
-    return (
-        convert_image_dtype(image, dtype=torch.float32) / 255.0
-    )  # Normalize to [0, 1] range
+    return convert_image_dtype(image, dtype=torch.float32)  # Normalize to [0, 1] range
 
 
 @skill_register(
@@ -69,7 +72,7 @@ def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
     execution_mode=ExecutionMode.STEPACTION,
     timeout=300.0,  # 5 minutes, adjust as needed
     criterion={
-        "successed": "the box is opened, it is a success.",
+        "successed": "红色箱子的上盖滑开，并且可以看到箱子里面有一个黄色扳手，否则说明技能正在执行！",
         # "failed": "".join(
         #     ["gripper state that is not reasonable to execute the skill."]
         # ),  # The gripper posisiton is far away from the box and yellow button, ", "or the gripper was pressed on areas other than the yellow button," "or the gripper is lingering (not moving) for several monitoring rounds, ", "or any other
@@ -78,9 +81,8 @@ def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
     requires_env=True,
 )
 class PressButton(BaseSkill):
-    """
-    This skill is used for openning a box by moving the end-effector.
-
+    """This skill is used for openning a red box by moving the end-effector, It will automatically move the end-effector to the red box and open it by pressing the yellow button on the box.
+    红色箱子盖子上有一个黑色的把手，箱子的盖子可以左右滑动，按下红色的按钮之后，箱子的盖子会滑开，里面有一把黄色的扳手
     Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
     """
 
@@ -118,13 +120,7 @@ class PressButton(BaseSkill):
         self.num_steps = 0  # Initialize step counter
         self.policy = policy
         self.policy.start_episode()
-        self.resize_fn = Compose(
-            [
-                HWC_to_CHW,
-                pixcel_normalize,
-                Resize([256, 256]),
-            ]
-        )
+        self.resize_fn = Compose([HWC_to_CHW, Resize([256, 256]), pixcel_normalize])
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= 100:
@@ -150,6 +146,9 @@ class PressButton(BaseSkill):
         ]
         for rbg_key in rgb_obs_keys:
             policy_input_source[rbg_key] = self.resize_fn(policy_input_source[rbg_key])
+            # print(
+            #     f"[Skill: PressButton] Resized {rbg_key} to shape {policy_input_source[rbg_key].shape}, min, max: {policy_input_source[rbg_key].min()} - {policy_input_source[rbg_key].max()}"
+            # )
 
         current_policy_obs = OrderedDict()
         for key, tensor_val in policy_input_source.items():
@@ -183,7 +182,8 @@ class PressButton(BaseSkill):
     execution_mode=ExecutionMode.STEPACTION,
     timeout=300.0,  # 5 minutes, adjust as needed
     criterion={
-        "successed": "the spanner is graspped by the gripper and moving above the box, the spanner must be high enough to avoid collision with the box.",
+        # "successed": "the spanner is graspped by the gripper and moving above the box, the spanner must be high enough to avoid collision with the box.",
+        "successed": "机械臂抓夹抓住黄色扳手，并离桌面一定距离，避免与箱子发生碰撞。",
         # "failed": "".join(
         #     ["any gripper state that is not reasonable to execute the skill."]
         # ),
@@ -240,7 +240,7 @@ class GraspSpanner(BaseSkill):
         self.policy = policy
         self.policy.start_episode()
         self.num_steps = 0  # Initialize step counter
-        self.resize_fn = Resize([256, 256])
+        self.resize_fn = Compose([HWC_to_CHW, Resize([256, 256]), pixcel_normalize])
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= 200:
@@ -327,6 +327,10 @@ def quat_to_axis_angle_torch(q: torch.Tensor, epsilon: float = 1e-8) -> torch.Te
     timeout=300.0,
     enable_monitoring=False,  # Disable monitoring for this skill
     requires_env=True,
+    criterion={
+        "successed": "This skill always succeeds as it was controlled by the low-level controller, which is always successful.",
+        "progress": "",
+    },
 )
 class MoveToTarget(BaseSkill):
     """Moves the robot's end-effector to a specified target pose. in samecase, this skill can be helpful for trying a failed skill.
@@ -537,7 +541,7 @@ class MoveToTarget(BaseSkill):
                 zero_action,
                 metadata={
                     "info": "finished",
-                    "reason": f"end-effector is close enough to {self.target_pose or self.target_object}",
+                    "reason": f"end-effector is close enough to {self.target_pose if self.target_pose is not None else self.target_object}, skill finished.",
                 },
             )
 

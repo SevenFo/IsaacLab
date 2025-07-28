@@ -426,12 +426,12 @@ class QwenVLBrain:
             (
                 "The robot are try to orchestrate skills to accomplish a task.\n\n"
                 "## Skill Execution Context Info:\n"
-                f"Original Task: {self.state.current_task.description}\n"
+                # f"Original Task: {self.state.current_task.description}\n"  # 加入 original task 描述 会让 llm 认为是在判断 original task 的执行结果 而不是 task 的执行情况
                 f"Current Skill: {skill_info['name']}\n"
                 f"Skill Description: {skill_info['description']}\n"
                 f"Skill Parameters: {skill_info['parameters']}\n"
                 f"Skill Criterion: {skill_info['criterion']}\n\n"
-                f"Skill Execution Result (reported by skill itself): {skill_info['result']}, Reason: {skill_info['status_info']}\n\n"
+                f"Skill Execution Result (reported by skill itself): {skill_info['result']}, Reason: {skill_info['status_info'] if skill_info['result'] != 'completed' else 'N/A'}\n\n"
             )
         )
         content.append(
@@ -505,9 +505,6 @@ class QwenVLBrain:
                 text_prompt = self._format_prompt_for_replanning(
                     task, current_plan, skill_history, observation
                 )
-                print("--- Replan Prompt ---")
-                print(text_prompt)
-                print("\n")
                 current_image = Image.fromarray(
                     observation.data["policy"]["camera_side"][0].cpu().numpy()
                 )
@@ -708,7 +705,7 @@ class QwenVLBrain:
             return False
         if len(obs_history) == 0:
             print(
-                "[QwenVLBrain] should_monitor: No observation data available for monitoring"
+                "[QwenVLBrain] should_monitor: No observation data available for monitoring, len obs_history is 0"
             )
             return False
         if not (
@@ -925,12 +922,6 @@ class QwenVLBrain:
             video_frames_inspect = []
             video_frames_front = []
 
-            def calculate_indices(jump, total, available):
-                if available >= total * jump + 1:
-                    return list(range(-total * jump + 1, 0, jump))
-                else:
-                    return None
-
             # TODO 提取 obs 这部分应该要放在外面才对，这里面只进行query_qwen的逻辑
             # 计算可用的观察帧数
             available_frames = len(obs_history)
@@ -943,6 +934,9 @@ class QwenVLBrain:
             indices.sort()
             # 提取帧
             for frame_index in indices:
+                # print(
+                #     f"[QwenVLBrain] obs_shape: { {key: val.shape for key, val in obs_history[frame_index].data['policy'].items() if isinstance(val, torch.Tensor)} }, "
+                # )
                 video_frames_inspect.append(
                     Image.fromarray(
                         obs_history[frame_index]
@@ -961,7 +955,7 @@ class QwenVLBrain:
                 )
             if self.visualize:
                 # 获取原始视频帧率（示例值，需根据实际情况替换）
-                original_fps = 30
+                original_fps = 2
                 duration = 1000 // original_fps  # 每帧持续时间（毫秒）
 
                 all_frames = []
@@ -1267,22 +1261,17 @@ Execution Summary (Your expert analysis of the visual evidence): {skill_info.get
             ]
         )
         current_plan_state = current_plan.pretty_print()
-        last_summary = (
-            skill_history[-1].get("execution_summary", "No summary available.")
-            if skill_history
-            else "No execution yet."
-        )
         last_skill_info = skill_history[-1]
         last_execution_info = f"""Skill Index: {last_skill_info["index"]}
 Skill Name: {last_skill_info["name"]}
 Skill Execution Result (skill reported): {last_skill_info["result"] if last_skill_info["result"] != "timeout" else "unkown"}
 Execution Summary (Your expert analysis of the visual evidence): {last_skill_info.get("execution_summary", "No summary as it compelete success")}"""
 
-        prompt = f"""
-You are an expert robot task supervisor. Your goal is to analyze the previous execution attempt, determine the true outcome, correct the plan's state if necessary, and decide on the next actions.
-
-**Original Task:** {task.description}
-
+        prompt = (
+            f"""
+You are an expert robot task supervisor. Your goal is to analyze the previous execution attempt, determine the true outcome, correct the plan's state if necessary, and decide on the next actions."""
+            f"\n**Original Task:** {task.description}\n"
+            f"""
 **Available Skills:**
 {self.skill_registry.get_skill_descriptions()}
 
@@ -1293,7 +1282,7 @@ You are an expert robot task supervisor. Your goal is to analyze the previous ex
 {last_execution_info}
 
 **Current Robot Low-dimensional State:**
-- pose: {np.array2string(observation.data["policy"]["eef_pos"].cpu().numpy(), precision=3, separator=", ")}, {np.array2string(observation.data["policy"]["eef_quat"].cpu().numpy(), precision=3, separator=", ")}
+- pose: {np.array2string(observation.data["policy"]["eef_pos"].cpu().numpy(), precision=3, separator=", ")},quat: {np.array2string(observation.data["policy"]["eef_quat"].cpu().numpy(), precision=3, separator=", ")}
 
 **Instructions for Your Response:**
 Your first and most important job is to compare the self-reported 'Execution Result' with the visual 'Execution Summary' of last skill. If they conflict, the visual summary is the truth.
@@ -1335,9 +1324,8 @@ First, think step-by-step in `<think>` tags. Then, generate a JSON array of oper
 }}
 ]
 ```
-
-
 """
+        )
         return prompt
 
     def _format_system_prompt_for_monitoring(

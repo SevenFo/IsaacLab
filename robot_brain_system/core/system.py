@@ -36,7 +36,7 @@ class RobotBrainSystem:
     def __init__(self, config: DictConfig):
         self.config = config
         self.visualize = True
-        self.log_path = config.get("log_dir", "logs")
+        self.log_path = config["monitoring"]["log_dir"]
         self.state = SystemState()
 
         # Core components
@@ -293,20 +293,16 @@ class RobotBrainSystem:
         # brain not track skill status  only record current skill info!
         if self.simulator and self.simulator.is_initialized:
             sim_skill_status = self.simulator.get_skill_executor_status()
+            print(
+                f"[RobotBrainSystem] Current sim_skill_status in simulator: {sim_skill_status}"
+            )
             # TODO
             # when the skill is finished while dicision havnt been marking, it would occure belowe situation, NEED TO RECORED LAST SKILL IN SKILL EXECUTION
             # assert brain_skill_info['name'] == sim_skill_status['current_skill'], f"brain skill info {brain_skill_info['name']} != sim skill status {sim_skill_status['current_skill']}"
-            if sim_skill_status.get("is_running"):
-                print(
-                    "[RobotBrainSystem] Sending terminate signal to skill in simulator..."
-                )
-                return self.simulator.terminate_current_skill(skill_status)
+            return self.simulator.terminate_current_skill(
+                skill_status, status_info=reason
+            )
 
-            else:
-                print(
-                    f"[RobotBrainSystem] Skill is not in running status, directly change the state of executor to {skill_status}"
-                )
-                return True
         else:
             raise RuntimeError("Simulator is not initialzed!")
 
@@ -468,7 +464,6 @@ class RobotBrainSystem:
             self.state.skill_history[-1], obs
         )
         self.state.skill_history[-1]["execution_summary"] = execution_summary
-        print(f"Summary: {execution_summary}")
 
         # 4. Trigger the brain to replan based on the new state
         if self.state.current_task and obs:

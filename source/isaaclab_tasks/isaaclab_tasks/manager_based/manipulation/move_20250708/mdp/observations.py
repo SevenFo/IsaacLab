@@ -355,7 +355,7 @@ def camera_pointcloud(
     if normalize:
         points_3d_world[points_3d_world == float("inf")] = 0
 
-    print(f"min: {points_3d_world.min()}, max: {points_3d_world.max()}")
-    print(f"points_3d_world: {points_3d_world.shape}")
+    # print(f"min: {points_3d_world.min()}, max: {points_3d_world.max()}")
+    # print(f"points_3d_world: {points_3d_world.shape}")
 
     return points_3d_world.clone()

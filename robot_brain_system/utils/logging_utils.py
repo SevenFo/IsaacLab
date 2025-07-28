@@ -50,6 +50,7 @@ def setup_logging(
     """
     if log_format is None:
         log_format = "[%(asctime)s] %(name)s - %(levelname)s - %(message)s"
+        log_format = "%(message)s"
 
     numeric_log_level = getattr(logging, log_level.upper())
 

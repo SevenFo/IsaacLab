@@ -243,10 +243,12 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
         # add frontcemaera
         self.scene.topcamera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/TopCamera",
-            spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=28),
+            spawn=PinholeCameraCfg(
+                vertical_aperture=None, focal_length=20
+            ),  # focal_length=28
             offset=CameraCfg.OffsetCfg(
-                pos=(1.7, -3.95, 3.5),
-                rot=(0.85009, 0.35166, 0.17222, 0.35216),
+                pos=(1.175, -3.7, 4.04),  # (1.7, -3.95, 3.5),
+                rot=(0.99027, 0.13917, 0, 0),  # (0.85009, 0.35166, 0.17222, 0.35216),
                 convention="opengl",
             ),
             # width=256,
@@ -260,10 +262,17 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
         # add sidecamera
         self.scene.sidecamera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/SideCamera",
-            spawn=PinholeCameraCfg(vertical_aperture=None, focal_length=23),
+            spawn=PinholeCameraCfg(
+                vertical_aperture=None, focal_length=20
+            ),  # focal_length=23
             offset=CameraCfg.OffsetCfg(
-                pos=(0.07763, -3.91718, 3.77474),
-                rot=(0.65996, 0.4312, -0.33461, -0.51629),
+                pos=(0.07763, -3.7, 3.63566),  # (0.07763, -3.91718, 3.77474),
+                rot=(
+                    0.57923,
+                    0.40558,
+                    -0.40558,
+                    -0.57923,
+                ),  # (0.65996, 0.4312, -0.33461, -0.51629),
                 convention="opengl",
             ),
             width=480,

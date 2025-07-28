@@ -657,7 +657,10 @@ class OpenAIAdapter(BaseModelAdapter):
         sanitized_messages_for_log = self._sanitize_payload_for_logging(messages)
         print("\n--- [OpenAIAdapter] Sending Payload ---")
         try:
-            print(json.dumps(sanitized_messages_for_log, indent=2, ensure_ascii=False))
+            json_str = json.dumps(
+                sanitized_messages_for_log, indent=2, ensure_ascii=False
+            )
+            print(json_str.replace("\\n", "\n"))
         except TypeError:
             print(sanitized_messages_for_log)
         print("-------------------------------------\n")

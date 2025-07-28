@@ -7,7 +7,7 @@ adapter:
   base_url: ""
   model_path: "/quick_data/model--OpenGVLab-InternVL3-8B"
   adapter_type: "lmdeploy"
-  max_tokens: 4096
+  max_tokens: 2048
   device: "auto"
   lmd_adapter_args:
     model_format: "awq"

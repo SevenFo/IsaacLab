@@ -44,6 +44,8 @@ class ImagePipeline:
         """
         self.device = device
 
+        print(f"[ImagePipeline] Initializing with device: {self.device}")
+
         # 使用封装的上下文管理器初始化 SAM2
         with hydra_config_context("pkg://sam2"):
             self.predictor = SAM2ImagePredictor(
@@ -147,7 +149,7 @@ class ImagePipeline:
             else:
                 # TODO TEST CASE
                 # ```
-                # json_str: 
+                # json_str:
                 # ```json
                 # [
                 #     {"bbox_2d": [245, 22, 504, 298], "label": "red_box"}

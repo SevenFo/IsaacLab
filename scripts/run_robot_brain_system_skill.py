@@ -16,18 +16,23 @@ if __name__ == "__main__":
         assert result, "Failed to initialize Isaac Simulator"
         print("Isaac Simulator initialized successfully.")
 
+        # isim.start_skill_non_blocking(
+        #     "object_tracking",
+        #     {
+        #         "target_object": "the black hand palm",
+        #     },
+        #     timeout=1000,  # Set a reasonable timeout for the skill to start
+        # )
+        # isim.start_skill_non_blocking(
+        #     "move_to_target_object",
+        #     {
+        #         "target_object": "the black hand palm",
+        #     },
+        #     timeout=1000,  # Set a reasonable timeout for the skill to start
+        # )
         isim.start_skill_non_blocking(
-            "object_tracking",
-            {
-                "target_object": "the black hand palm",
-            },
-            timeout=1000,  # Set a reasonable timeout for the skill to start
-        )
-        isim.start_skill_non_blocking(
-            "move_to_target_object",
-            {
-                "target_object": "the black hand palm",
-            },
+            "open_box",
+            {},
             timeout=1000,  # Set a reasonable timeout for the skill to start
         )
         for i in range(1000):

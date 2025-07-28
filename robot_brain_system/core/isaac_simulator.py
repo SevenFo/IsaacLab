@@ -174,9 +174,9 @@ class IsaacSimulator:
         retry_on_return_value_condition=_should_retry_command,  # Pass the method itself
     )
     def _send_command_and_recv(
-        self, command: Dict[str, Any], timeout: float = 10.0
+        self, command: Dict[str, Any], timeout: float = 60
     ) -> Optional[Dict[str, Any]]:
-        acquired = self._command_lock.acquire(timeout=10)
+        acquired = self._command_lock.acquire(timeout=60)
         if acquired:
             if not self.is_initialized or not self.parent_conn:
                 print("[IsaacSimulator] Simulator not initialized or connection lost.")
@@ -249,13 +249,14 @@ class IsaacSimulator:
         return response or {"status": "error", "error": "No response"}
 
     def terminate_current_skill(
-        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
+        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED, status_info: str = ""
     ) -> bool:
         """Terminate current skill execution in the subprocess."""
         response = self._send_command_and_recv(
             {
                 "command": "terminate_current_skill",
                 "skill_status": skill_status,
+                "status_info": status_info,
             }
         )
         return response.get("success", False) if response else False
@@ -567,8 +568,9 @@ class IsaacSimulator:
                             child_conn.send(skill_executor.get_status_info())
                         elif cmd == "terminate_current_skill":
                             skill_status = command_data["skill_status"]
+                            status_info = command_data.get("status_info", "")
                             success = skill_executor.terminate_current_skill(
-                                skill_status
+                                skill_status, status_info=status_info
                             )
                             child_conn.send({"success": success})
                         elif cmd == "change_current_skill_status":
@@ -640,6 +642,7 @@ class IsaacSimulator:
                                 }
                             )
                         elif cmd == "reset_env":
+                            assert False
                             obs_queue = queue.Queue()  # Reset obs queue
                             obs_dict, info = env.reset()
                             obs_payload = {
@@ -675,8 +678,16 @@ class IsaacSimulator:
                             skill_exec_result
                         )
                         if skill_executor.is_running():
+                            obs_dict_in = {obs_key: {} for obs_key in obs_dict.keys()}
+                            obs_dict_in["policy"].update(
+                                {
+                                    key: val.clone()
+                                    for key, val in obs_dict["policy"].items()
+                                    if isinstance(val, torch.Tensor)
+                                }
+                            )
                             obs_payload = {
-                                "data": obs_dict,
+                                "data": obs_dict_in,
                                 "metadata": "None",
                                 "timestamp": time.time(),
                             }
@@ -684,7 +695,9 @@ class IsaacSimulator:
                             latest_obs_payload = obs_payload  # Store latest obs
                         else:
                             obs_dict = latest_obs_payload["data"]  # Use last obs
-
+                        # print(
+                        #     f"[IsaacSubprocess] obs_shape: { {key: val.shape for key, val in obs_dict['policy'].items() if isinstance(val, torch.Tensor)} }, "
+                        # )
                     # Small delay to prevent tight loop if no commands and no active skill
                     if not child_conn.poll(0) and not skill_executor.is_running():
                         time.sleep(0.001)
