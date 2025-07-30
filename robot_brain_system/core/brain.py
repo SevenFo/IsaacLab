@@ -412,10 +412,10 @@ class QwenVLBrain:
         #     contents=[f"skill execution result: {skill_info['result']}"]
         # )
         camera_side_image = Image.fromarray(
-            obs.data["policy"]["camera_side"][0].cpu().numpy()
+            obs.data["policy"]["inspector_side"][0].cpu().numpy()
         )
         camera_front_image = Image.fromarray(
-            obs.data["policy"]["camera_top"][0].cpu().numpy()
+            obs.data["policy"]["inspector_top"][0].cpu().numpy()
         )
         content = []
         if only_image:
@@ -506,7 +506,7 @@ class QwenVLBrain:
                     task, current_plan, skill_history, observation
                 )
                 current_image = Image.fromarray(
-                    observation.data["policy"]["camera_side"][0].cpu().numpy()
+                    observation.data["policy"]["inspector_side"][0].cpu().numpy()
                 )
                 if self.visualize:
                     import matplotlib.pyplot as plt
@@ -896,10 +896,10 @@ class QwenVLBrain:
         try:
             if self.visualize:
                 inspector_rgb = (
-                    obs_history[-1].data["policy"]["camera_side"][0].cpu().numpy()
+                    obs_history[-1].data["policy"]["inspector_side"][0].cpu().numpy()
                 )
                 front_rgb = (
-                    obs_history[-1].data["policy"]["camera_top"][0].cpu().numpy()
+                    obs_history[-1].data["policy"]["inspector_top"][0].cpu().numpy()
                 )
                 import matplotlib.pyplot as plt
 
@@ -940,7 +940,7 @@ class QwenVLBrain:
                 video_frames_inspect.append(
                     Image.fromarray(
                         obs_history[frame_index]
-                        .data["policy"]["camera_side"][0]
+                        .data["policy"]["inspector_side"][0]
                         .cpu()
                         .numpy()
                     )
@@ -948,7 +948,7 @@ class QwenVLBrain:
                 video_frames_front.append(
                     Image.fromarray(
                         obs_history[frame_index]
-                        .data["policy"]["camera_top"][0]
+                        .data["policy"]["inspector_top"][0]
                         .cpu()
                         .numpy()
                     )

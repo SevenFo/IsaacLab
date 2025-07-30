@@ -251,6 +251,23 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
                 rot=(0.99027, 0.13917, 0, 0),  # (0.85009, 0.35166, 0.17222, 0.35216),
                 convention="opengl",
             ),
+            width=256,
+            height=256,
+            # width=480,
+            # height=480,
+            data_types=["rgb", "depth"],
+            debug_vis=True,
+        )
+        self.scene.inspector_top = CameraCfg(
+            prim_path="{ENV_REGEX_NS}/InsTopCamera",
+            spawn=PinholeCameraCfg(
+                vertical_aperture=None, focal_length=20
+            ),  # focal_length=28
+            offset=CameraCfg.OffsetCfg(
+                pos=(1.7, -3.95, 3.5),
+                rot=(0.85009, 0.35166, 0.17222, 0.35216),
+                convention="opengl",
+            ),
             # width=256,
             # height=256,
             width=480,
@@ -258,7 +275,6 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
             data_types=["rgb", "depth"],
             debug_vis=True,
         )
-
         # add sidecamera
         self.scene.sidecamera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/SideCamera",
@@ -275,6 +291,21 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
                 ),  # (0.65996, 0.4312, -0.33461, -0.51629),
                 convention="opengl",
             ),
+            width=256,
+            height=256,
+            data_types=["rgb", "depth"],
+            debug_vis=True,
+        )
+        self.scene.inspector_side = CameraCfg(
+            prim_path="{ENV_REGEX_NS}/InsSideCamera",
+            spawn=PinholeCameraCfg(
+                vertical_aperture=None, focal_length=23
+            ),  # focal_length=
+            offset=CameraCfg.OffsetCfg(
+                pos=(0.07763, -3.91718, 3.77474),
+                rot=(0.65996, 0.4312, -0.33461, -0.51629),
+                convention="opengl",
+            ),
             width=480,
             height=480,
             data_types=["rgb", "depth"],
@@ -289,8 +320,8 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
                 rot=(0, 0.70711, -0.70711, 0),
                 convention="opengl",
             ),
-            width=480,
-            height=480,
+            width=256,
+            height=256,
             data_types=["rgb", "depth"],
             debug_vis=True,
         )

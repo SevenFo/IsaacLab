@@ -184,9 +184,7 @@ class PressButton(BaseSkill):
     criterion={
         # "successed": "the spanner is graspped by the gripper and moving above the box, the spanner must be high enough to avoid collision with the box.",
         "successed": "机械臂抓夹抓住黄色扳手，并离桌面一定距离，避免与箱子发生碰撞。",
-        # "failed": "".join(
-        #     ["any gripper state that is not reasonable to execute the skill."]
-        # ),
+        "failed": "".join(["抓夹闭合，但是没有抓住扳手"]),
         "progress": "The gripper is on a reasonable state to execute the skill, such as: grasping the spanner etc.",
     },
     requires_env=True,
@@ -200,7 +198,7 @@ class GraspSpanner(BaseSkill):
     Which means cant insert anyother skill between `move_to_home` and `grasp_spanner`, anyother skill only canbe inserted before `move_to_home` or after `grasp_spanner`.
     Right example: open_box -> move_to_home -> grasp_spanner -> other skill -> move_to_home -> grasp_spanner
     Wrong example: move_to_home -> open_box -> grasp_spanner -> other skill -> grasp_spanner
-    Once you want to execute grasp_spanner, you must have `move_to_home` as last step, otherwise it will fail.
+    Once you want to execute grasp_spanner, you must have `move_to_home` (or near the home is ok) as last step, otherwise it will fail.
     PARAMETERS: None
     """
 
@@ -577,6 +575,7 @@ registry.register_skill(
     description="""Moves the robot's end-effector to the center pose of the target object.
 This skill can not understand the visual information, only automatically retrieve the target object's center from the environment observation by the specified target object name.
 So the target object related observation must be provided in the environment observation.
+For example, `object_tracking` skill can be used to add the target object tracking information to the environment observation. However you need to call the `object_tracking` skill before this skill.
 Args:
     target_object (str): The name of the target object.
     gripper_state (float, optional): Command for the gripper after arrivival. 1 means open, 0 means close. default is 1.""",

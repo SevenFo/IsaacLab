@@ -88,14 +88,24 @@ class SkillPlan:
             return self.steps[index]
         return None
 
+    def set_skill(self, index: int, skill: SkillStep):
+        """Sets a skill step at a specific index."""
+        if not (0 <= index < len(self.steps)):
+            raise IndexError("Index is out of bounds.")
+
+        print(
+            f"[SkillPlan] Setting skill at index {index}: {skill.name}, {skill.params}, {skill.status.name}"
+        )
+        self.steps[index] = skill
+
     def insert_skill(self, index: int, name: str, params: Dict[str, Any]):
         """Inserts a new skill at a specific index."""
         if not (0 <= index <= len(self.steps)):
             raise IndexError("Insertion index is out of bounds.")
 
         new_step = SkillStep(name=name, params=params)
-        self.steps.insert(index, new_step)
-        print(f"[SkillPlan] Inserted at index {index}: {new_step.name}")
+        self.steps.insert(index + 1, new_step)
+        print(f"[SkillPlan] Inserted after index {index}: {new_step.name}")
 
     def delete_skill(self, index: int):
         """Deletes a skill at a specific index."""
@@ -127,6 +137,7 @@ class SkillPlan:
             )
             skill.params = new_params
         skill.status = SkillStatus.PENDING  # Reset status after modification
+        self.set_skill(index, skill)
 
     def mark_status(self, index: int, status: SkillStatus):
         """Marks a skill as completed, failed, etc."""
@@ -136,12 +147,21 @@ class SkillPlan:
                 f"[SkillPlan] Set status for skill {index} ({skill.name}) to {status.name}"
             )
             skill.status = status
+            self.set_skill(index, skill)
 
     def get_next_pending_skill_with_index(self) -> Optional[tuple[int, SkillStep]]:
         """Finds the next skill that is not yet completed."""
         for i, step in enumerate(self.steps):
             if step.status == SkillStatus.PENDING:
-                return i, step
+                # 找到第一个PENDING技能后，确保后续步骤也是PENDING状态
+                for j in range(i + 1, len(self.steps)):
+                    if self.steps[j].status != SkillStatus.PENDING:
+                        self.mark_status(j, SkillStatus.PENDING)
+
+                print(f"[SkillPlan] Next pending skill found: step {i}: {step.name}")
+                return (i, step)
+
+        print("[SkillPlan] No pending skills found.")
         return None
 
     def is_complete(self) -> bool:

@@ -215,7 +215,7 @@ class RobotBrainSystem:
                 self.state.error_message = "No observations available"
                 return False
             obs = obss[-1] if obss else self.state.obs_history[-1]
-            inspector_rgb = obs.data["policy"]["camera_side"][0].cpu().numpy()
+            inspector_rgb = obs.data["policy"]["inspector_side"][0].cpu().numpy()
             if self.visualize:
                 import matplotlib.pyplot as plt
 
