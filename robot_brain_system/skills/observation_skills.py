@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import time
 import open3d as o3d
+from PIL import Image
 
 from robot_brain_system.core.skill_manager import skill_register
 from robot_brain_system.core.types import SkillType, ExecutionMode, BaseSkill
@@ -11,7 +12,7 @@ from robot_brain_system.core.model_adapters_v2 import OpenAIAdapter
 from robot_brain_system.skills.imagepipleline import ImagePipeline
 from robot_brain_system.utils.visualization_utils import visualize_all
 from robot_brain_system.utils.config_utils import hydra_context_base
-
+from robot_brain_system.skills.manipulation_skills import AliceControl
 from cutie.utils.get_default_model import get_default_model
 
 
@@ -32,7 +33,7 @@ class ObjectTracking(BaseSkill):
     def __init__(
         self,
         policy_device: str = "cuda",
-        obs_dict: dict = {},
+        env: Any = None,
         **running_params,
     ) -> None:
         super().__init__()
@@ -44,6 +45,20 @@ class ObjectTracking(BaseSkill):
         self.pipeline_instance: dict[str, ImagePipeline] = {}
         banned_cameras = self.cfg.get("banned_cameras", [])
         print(f"[ObjectTracking] Banned cameras: {banned_cameras}")
+        # handle alice
+        print("[ObjectTracking] Initializing AliceControl")
+        alice_control = AliceControl(
+            alice_right_forearm_rigid_entity=env.scene["alice"],
+            policy_device=env.device,
+        )
+        # TODO zero action 可以用 sim 的直接 update 来代替
+        zero_action = torch.zeros(
+            (env.num_envs, env.action_manager.total_action_dim),
+            device=env.device,
+            dtype=torch.float32,
+        )
+        obs_dict = alice_control.initialize(env, zero_action)
+
         cameras_data = {
             camera_name: data[0].cpu().numpy()
             for camera_name, data in obs_dict["policy"].items()
@@ -68,6 +83,8 @@ class ObjectTracking(BaseSkill):
                 self.vlm,
             )
             try:
+                frame_image = Image.fromarray(cameras_data[key])
+                frame_image.save(f"frame_image_{key}_{int(time.time() * 1000)}.png")
                 self.pipeline_instance[key].initialize_with_instruction(
                     cameras_data[key], self.target_object, visualize=True
                 )

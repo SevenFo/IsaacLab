@@ -138,7 +138,7 @@ def ee_frame_pos_gripper(
 ) -> torch.Tensor:
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
     ee_frame_pos_l = ee_frame.data.target_pos_w[:, 1, :] - env.scene.env_origins[:, 0:3]
-    ee_frame_pos_r = ee_frame.data.target_pos_w[:, 1, :] - env.scene.env_origins[:, 0:3]
+    ee_frame_pos_r = ee_frame.data.target_pos_w[:, 2, :] - env.scene.env_origins[:, 0:3]
     ee_frame_pos = (ee_frame_pos_l + ee_frame_pos_r) / 2
     return ee_frame_pos
 
@@ -148,6 +148,32 @@ def ee_frame_quat(
 ) -> torch.Tensor:
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
     ee_frame_quat = ee_frame.data.target_quat_w[:, 0, :]
+
+    return ee_frame_quat
+
+
+def ee_frame_quat_gripper(
+    env: ManagerBasedRLEnv, ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame")
+) -> torch.Tensor:
+    """
+    计算抓夹两个手指之间的四元数平均值。
+    使用归一化的算术平均方法来近似两个四元数的平均值。
+    这对于接近的四元数是一个合理的近似。
+    """
+    ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+    ee_frame_quat_l = ee_frame.data.target_quat_w[:, 1, :]  # 左手指四元数
+    ee_frame_quat_r = ee_frame.data.target_quat_w[:, 2, :]  # 右手指四元数
+
+    # 确保两个四元数的符号一致（选择较短的路径）
+    # 如果点积为负，翻转其中一个四元数的符号
+    dot_product = torch.sum(ee_frame_quat_l * ee_frame_quat_r, dim=1, keepdim=True)
+    ee_frame_quat_r = torch.where(dot_product < 0, -ee_frame_quat_r, ee_frame_quat_r)
+
+    # 算术平均并归一化
+    ee_frame_quat_avg = (ee_frame_quat_l + ee_frame_quat_r) / 2.0
+    ee_frame_quat = ee_frame_quat_avg / torch.norm(
+        ee_frame_quat_avg, dim=1, keepdim=True
+    )
 
     return ee_frame_quat
 

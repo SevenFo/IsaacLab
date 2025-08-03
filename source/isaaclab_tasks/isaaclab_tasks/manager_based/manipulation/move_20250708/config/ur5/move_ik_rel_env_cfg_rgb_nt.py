@@ -29,7 +29,15 @@ class UR5BoxMoveEnvCfg(move_joint_pos_env_cfg_rgb.UR5BoxMoveEnvCfg):
                 enable_translucency=True,
                 enable_global_illumination=True,
                 enable_shadows=True,
-            )
+            ),
+            dt=0.01,  # 100Hz
+            render_interval=self.decimation,
+            physx=sim_utils.PhysxCfg(
+                bounce_threshold_velocity=0.01,
+                gpu_found_lost_aggregate_pairs_capacity=1024 * 1024 * 4,
+                gpu_total_aggregate_pairs_capacity=16 * 1024,
+                friction_correlation_distance=0.00625,
+            ),
         )
 
         # Set UR5 as robot
@@ -54,3 +62,5 @@ class UR5BoxMoveEnvCfg(move_joint_pos_env_cfg_rgb.UR5BoxMoveEnvCfg):
 
         self.terminations.success.params = {"disable": True}
         self.max_episode_length = 1e6  # effectively infinite for this task
+
+        print(f"render_interval: {self.sim.render_interval}")

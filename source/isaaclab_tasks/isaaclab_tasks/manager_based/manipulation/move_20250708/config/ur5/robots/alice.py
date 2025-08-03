@@ -41,7 +41,7 @@ ALICE_CFG = ArticulationCfg(
     # （-141.8， -11.0，-41.7）
     init_state=ArticulationCfg.InitialStateCfg(
         # pos=(0.0, -3.1, 1.6),
-        pos=(0.4067, 0, 1.7),
+        pos=(0.4067, 10, 1.7),
         rot=(0.5, 0.5, 0.5, 0.5),
         joint_pos={
             "D6Joint_1:0": math.radians(0),

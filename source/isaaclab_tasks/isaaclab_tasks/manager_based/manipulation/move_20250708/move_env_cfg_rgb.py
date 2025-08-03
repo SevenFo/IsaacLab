@@ -81,6 +81,7 @@ class ObservationsCfg:
         eef_quat = ObsTerm(func=mdp.ee_frame_quat)  # 末端执行器的朝向
         gripper_pos = ObsTerm(func=mdp.gripper_pos)  # 夹爪的位置
         eef_pos_gripper = ObsTerm(func=mdp.ee_frame_pos_gripper)
+        eef_quat_gripper = ObsTerm(func=mdp.ee_frame_quat_gripper)
         camera_top = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("topcamera"), "normalize": False},
@@ -212,3 +213,4 @@ class MoveEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
+        print(f"[MoveEnvCfg] render_interval: {self.sim.render_interval}")

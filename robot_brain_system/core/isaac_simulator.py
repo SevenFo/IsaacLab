@@ -415,6 +415,7 @@ class IsaacSimulator:
                     device=_env.device,
                     dtype=torch.float32,
                 )
+                zero_action[..., -1] = 1  # Ensure gripper is open
                 # joint InitialStateCfg not working, so we set it manually
                 init_alice_joint_position_target = torch.zeros_like(
                     _env.scene["alice"].data.joint_pos_target
@@ -451,6 +452,12 @@ class IsaacSimulator:
                     # Step the environment with the correctly shaped zero action
                     # alice_control.apply_action(_env)
                     obs, reward, terminated, truncated, info = env.step(zero_action)
+                    print(
+                        f"[IsaacSubprocess] Warm-up step {i + 1}/{cli_args.warmup_steps}, action: {zero_action}"
+                    )
+                    print(
+                        f"[IsaacSubprocess] Warm-up step {i + 1}/{cli_args.warmup_steps}, obs: {obs['policy']['gripper_pos'].clone()}"
+                    )
 
                 print(
                     f"[IsaacSubprocess] Warm-up complete after {cli_args.warmup_steps} steps with action shape {zero_action.shape}."
@@ -517,7 +524,7 @@ class IsaacSimulator:
 
             def _get_observation():
                 if isinstance(_env, ManagerBasedRLEnv):
-                    return _env.observation_manager.compute
+                    return _env.observation_manager.compute()
                 elif isinstance(_env, DirectRLEnv):
                     return _env._get_observations
                 else:
@@ -526,7 +533,9 @@ class IsaacSimulator:
                     )
 
             obs_dict = obs
-
+            print(
+                f"[IsaacSubprocess] Initial observation eef_pos_gripper: {obs_dict['policy']['eef_pos_gripper'].clone()}"
+            )
             inner_skills = []
             # inner_skills.append(
             #     AliceControl(
@@ -534,7 +543,12 @@ class IsaacSimulator:
             #         policy_device=_env.device,
             #     )
             # )
-            # TODO: 将 Alice Control 放在 active 循环中，等待最后一个技能触发
+            # set_boxjoint_pose(
+            #     env=_env,
+            #     env_ids=torch.arange(_env.num_envs),
+            #     target_joint_pos=0.33,
+            #     asset_cfg=SceneEntityCfg("box"),
+            # )
             while active:
                 try:
                     # Handle commands from parent process
@@ -555,8 +569,8 @@ class IsaacSimulator:
                             print(
                                 f"[IsaacSubprocess] Starting skill (non-blocking): {skill_name}"
                             )
-                            success = skill_executor.initialize_skill(
-                                skill_name, params, _env.device, obs_dict
+                            success, obs_dict = skill_executor.initialize_skill(
+                                skill_name, params, obs_dict=obs_dict
                             )
                             child_conn.send(
                                 {
@@ -669,8 +683,6 @@ class IsaacSimulator:
 
                     # Step non-blocking skill if one is running
                     if skill_executor.is_running():
-                        # inner hock
-
                         skill_exec_result = skill_executor.step(
                             obs_dict
                         )  # env is passed during start_skill
@@ -699,6 +711,10 @@ class IsaacSimulator:
                         #     f"[IsaacSubprocess] obs_shape: { {key: val.shape for key, val in obs_dict['policy'].items() if isinstance(val, torch.Tensor)} }, "
                         # )
                     # Small delay to prevent tight loop if no commands and no active skill
+                    else:
+                        obs_dict = _get_observation()
+                        # _sim.set_render_mode(_sim.RenderMode.FULL_RENDERING)
+                        # _sim.step(render=True)
                     if not child_conn.poll(0) and not skill_executor.is_running():
                         time.sleep(0.001)
 

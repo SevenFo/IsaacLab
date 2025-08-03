@@ -602,6 +602,18 @@ class RobotBrainSystem:
                             print(
                                 "[RobotBrainSystem] Skill finished with 'idle' status, no action needed."
                             )
+                            self.state.skill_history[-1]["result"] = (
+                                last_sim_skill_state
+                            )
+                            self.state.skill_history[-1]["status_info"] = (
+                                last_sim_skill_state_info
+                            )
+                            self.state.skill_history[-1]["execution_summary"] = "N/A"
+                            last_plan = self.state.plan_history[-1]
+                            last_plan.mark_status(
+                                self.state.skill_history[-1]["index"],
+                                SkillStatus.COMPLETED,
+                            )  # Update the plan's status
                         else:
                             print(
                                 f"[RobotBrainSystem] Warning: Skill {self.state.skill_history[-1]['name']} finished with unexpected status: {last_sim_skill_state}"

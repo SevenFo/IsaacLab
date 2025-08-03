@@ -47,9 +47,9 @@ def main(cfg: DictConfig):
 
     # 5. 执行一个高级任务指令
     print("\n--- System is running, executing high-level task... ---")
-    task_instruction = "grasp the spanner in the red box, home position is [1.1283, -3.8319,  3.6731, -0.6167,  0.3308, -0.3199, -0.6386]"
+    task_instruction = "grasp the spanner in the red box, home position is [1.1279, -3.7576,  3.5571, -0.6167,  0.3308, -0.3199, -0.6386]"
     task_instruction = "move to the red box"
-    task_instruction = "grasp the spanner in the red box, then move the grasp to the white hand palm, home position is [1.1283, -3.8319,  3.6731, -0.6167,  0.3308, -0.3199, -0.6386]"
+    task_instruction = "grasp the spanner in the red box, then move the grasp to the palm, home position is [1.1283, -3.8319,  3.6731, -0.6167,  0.3308, -0.3199, -0.6386]"
 
     if not system.execute_task(task_instruction):
         print(

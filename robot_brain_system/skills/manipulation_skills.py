@@ -6,7 +6,7 @@ Primarily features the 'assemble_object' skill using a pre-trained policy.
 import numpy as np
 import torch
 import math
-from torchvision.transforms import Resize, Compose
+from torchvision.transforms import Compose
 from torchvision.transforms.functional import convert_image_dtype
 from scipy.spatial.transform import Rotation as R
 
@@ -120,7 +120,7 @@ class PressButton(BaseSkill):
         self.num_steps = 0  # Initialize step counter
         self.policy = policy
         self.policy.start_episode()
-        self.resize_fn = Compose([HWC_to_CHW, Resize([256, 256]), pixcel_normalize])
+        self.resize_fn = Compose([HWC_to_CHW, pixcel_normalize])
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= 100:
@@ -184,8 +184,12 @@ class PressButton(BaseSkill):
     criterion={
         # "successed": "the spanner is graspped by the gripper and moving above the box, the spanner must be high enough to avoid collision with the box.",
         "successed": "机械臂抓夹抓住黄色扳手，并离桌面一定距离，避免与箱子发生碰撞。",
-        "failed": "".join(["抓夹闭合，但是没有抓住扳手"]),
-        "progress": "The gripper is on a reasonable state to execute the skill, such as: grasping the spanner etc.",
+        "failed": "".join(
+            [
+                "grasp has closed while not graspping the spanner (if the gripper is not closed, it will be considered as progress). The prerequisite for failed is that the gripper has already closed."
+            ]
+        ),
+        "progress": "The gripper is on a reasonable state to execute the skill, such as: The robot arm moved towards the spanner. The robot attempted to grasp the object. The robot gripper is opening. The robot is trying to grasp the spanner etc.",
     },
     requires_env=True,
 )
@@ -238,10 +242,40 @@ class GraspSpanner(BaseSkill):
         self.policy = policy
         self.policy.start_episode()
         self.num_steps = 0  # Initialize step counter
-        self.resize_fn = Compose([HWC_to_CHW, Resize([256, 256]), pixcel_normalize])
+        self.resize_fn = Compose([HWC_to_CHW, pixcel_normalize])
+
+    def initialize(self, env):
+        """
+        Initialize the skill by setting up the environment and zero action.
+        This method is called before the skill starts executing.
+        """
+        print("[Skill: GraspSpanner] Initializing skill...")
+
+        robot = env.scene["robot"]
+
+        joint_pos = robot.data.default_joint_pos
+        joint_vel = robot.data.default_joint_vel
+
+        robot.set_joint_position_target(joint_pos)
+        robot.set_joint_velocity_target(joint_vel)
+        robot.write_joint_state_to_sim(
+            joint_pos,
+            torch.zeros_like(joint_vel, device=env.device),
+        )
+        zero_action = torch.zeros(
+            (env.num_envs, env.action_manager.total_action_dim),
+            device=env.device,
+            dtype=torch.float32,
+        )
+        zero_action[..., -1] = +1.0  # Ensure gripper is open
+        for i in range(30):
+            # Step the environment with the correctly shaped zero action
+            # alice_control.apply_action(_env)
+            obs, reward, terminated, truncated, info = env.step(zero_action)
+        return obs
 
     def select_action(self, obs_dict: dict) -> Action:
-        if self.num_steps >= 200:
+        if self.num_steps >= 400:
             print(
                 "[Skill: GraspSpanner] Maximum steps reached, stopping skill execution."
             )
@@ -263,6 +297,13 @@ class GraspSpanner(BaseSkill):
             key for key in policy_input_source.keys() if key.startswith("camera_")
         ]
         for rbg_key in rgb_obs_keys:
+            # from PIL import Image
+
+            # frame = Image.fromarray(
+            #     policy_input_source[rbg_key].cpu().squeeze(0).numpy().astype(np.uint8)
+            # )
+            # frame.show(f"{rbg_key}")
+            # input(f"Press Enter to continue after viewing {rbg_key}...")
             policy_input_source[rbg_key] = self.resize_fn(policy_input_source[rbg_key])
         # policy_input_source["object"] = torch.cat(
         #     [
@@ -326,7 +367,7 @@ def quat_to_axis_angle_torch(q: torch.Tensor, epsilon: float = 1e-8) -> torch.Te
     enable_monitoring=False,  # Disable monitoring for this skill
     requires_env=True,
     criterion={
-        "successed": "This skill always succeeds as it was controlled by the low-level controller, which is always successful.",
+        "successed": "This skill always succeeds as it was controlled by the low-level controller, which is always successful. This skill does not require visual evidence to double-check even if there is no visual evidence just consider there are enough visual evidence.",
         "progress": "",
     },
 )
@@ -336,6 +377,8 @@ class MoveToTarget(BaseSkill):
     Args:
         target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
     """
+
+    # gripper_state (List[float], optional): 1 means open, 0 means close. First element is the gripper state at the start of the skill and this continues until the skill is completed, second element is the gripper state at the end of the skill. Defaults to [1.0, 1.0]."""
 
     def __init__(
         self,
@@ -392,6 +435,8 @@ class MoveToTarget(BaseSkill):
         self.max_rot_vel = max_rot_vel
         self.epsilon = 1e-6
         self.control_mode = "relative"  # Default control mode
+        self.delay_steps = 10  # Number of steps to delay before ending the skill
+        self.step_counter = 0  # Initialize step counter
 
         if self.enable_verification:
             print(
@@ -425,6 +470,7 @@ class MoveToTarget(BaseSkill):
         )
 
     def select_action(self, obs_dict: dict) -> Action:
+        self.step_counter += 1
         eef_pose_key = ["eef_pos_gripper", "eef_quat"]
         if "policy" not in obs_dict or not all(
             key in obs_dict["policy"] for key in eef_pose_key
@@ -441,7 +487,7 @@ class MoveToTarget(BaseSkill):
             )
 
         # 直接获取位置和姿态，无需先拼接再分割
-        current_pos = obs_dict["policy"]["eef_pos"].clone()
+        current_pos = obs_dict["policy"]["eef_pos_gripper"].clone()
         current_quat = obs_dict["policy"]["eef_quat"].clone()
         current_gripper_pos = obs_dict["policy"]["gripper_pos"].clone()
 
@@ -454,7 +500,7 @@ class MoveToTarget(BaseSkill):
         current_pos = current_pos.to(self.device)
         current_quat = current_quat.to(self.device)
 
-        # --- Position Control (unchanged) ---
+        # --- Position Control ---
         if self.target_pose is None:
             _k = f"{self.target_object}_aabb"
             if _k not in obs_dict["policy"]:
@@ -534,7 +580,16 @@ class MoveToTarget(BaseSkill):
                     size=(current_pos.shape[0], 7), device=self.device
                 )
             zero_action[..., -1] = self.gripper_state
-            print("[Skill: MoveToTarget] Delta is too small, skill finished.")
+            print("[Skill: MoveToTarget] Delta is too small, skill finishing.")
+            if self.delay_steps > 0:
+                self.delay_steps -= 1
+                return Action(
+                    zero_action,
+                    metadata={
+                        "info": "success",
+                        "reason": f"end-effector is close enough to {self.target_pose if self.target_pose is not None else self.target_object}, skill finishing.",
+                    },
+                )
             return Action(
                 zero_action,
                 metadata={
@@ -554,13 +609,15 @@ class MoveToTarget(BaseSkill):
 
         # --- Combine and create final action ---
         delta_pose_action = torch.cat([delta_pos, delta_rot], dim=1)
-        current_gripper_action = current_gripper_pos.mean(dim=1, keepdim=True).to(
-            self.device
-        )
-        current_gripper_action[current_gripper_action > 0.5] = 1.0
-        current_gripper_action[current_gripper_action <= 0.5] = 0.0
+
+        # 在移动过程中保持当前抓夹状态，而不是设置为期望状态
+        # 判断当前抓夹是开着还是关着的：如果平均绝对值大于阈值，说明抓夹是打开的
+        current_gripper_open_level = current_gripper_pos.abs().mean(dim=1, keepdim=True)
+        # 保持当前状态：大于0.1认为是关闭的(-1.0)，小于等于0.1认为是打开的(+1.0)
+        gripper_action = torch.where(current_gripper_open_level > 0.1, -1.0, 1.0)
+
         action = torch.cat(
-            [delta_pose_action, current_gripper_action],
+            [delta_pose_action, gripper_action],
             dim=1,
         )
         return Action(action, metadata={"info": "success", "reason": "none"})
@@ -578,7 +635,7 @@ So the target object related observation must be provided in the environment obs
 For example, `object_tracking` skill can be used to add the target object tracking information to the environment observation. However you need to call the `object_tracking` skill before this skill.
 Args:
     target_object (str): The name of the target object.
-    gripper_state (float, optional): Command for the gripper after arrivival. 1 means open, 0 means close. default is 1.""",
+    gripper_state (float, optional): Command for the gripper after arrivival. 1 means open, -1 means close. default is 1.""",
     timeout=300,
     enable_monitoring=False,  # Disable monitoring for this skill
     requires_env=True,
@@ -605,6 +662,51 @@ class AliceControl(BaseSkill):
         # bodies = self.alice_right_forearm_rigid_entity.body_names
         # print(f"[Skill: AliceControl] Found bodies in Alice's right forearm: {bodies}")
         # print("[Skill: AliceControl] Initialized successfully.")
+
+    def initialize(self, env, zero_action):
+        alice = env.scene["alice"]
+        alice.write_root_state_to_sim(
+            torch.tensor(
+                [[0.4067, -3.1, 1.7, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
+                device=env.device,
+                dtype=torch.float32,
+            ),
+        )
+        init_alice_joint_position_target = torch.zeros_like(alice.data.joint_pos_target)
+        init_alice_joint_position_target[:, :9] = torch.tensor(
+            [
+                0.0,  # D6Joint_1:0
+                math.radians(66.7),  # D6Joint_1:1
+                math.radians(50.7),  # D6Joint_1:2
+                0.0,  # D6Joint_2:0
+                math.radians(25.9),  # D6Joint_2:1
+                math.radians(-23.2),  # D6Joint_2:2
+                math.radians(-141.8),  # D6Joint_3:0
+                math.radians(-11.0),  # D6Joint_3:1
+                math.radians(-41.7),  # D6Joint_3:2
+            ],
+            device=env.device,
+        )
+        alice.set_joint_position_target(
+            init_alice_joint_position_target,
+        )
+        # write the joint state to sim to directly change the joint position at one step
+        alice.write_joint_state_to_sim(
+            init_alice_joint_position_target,
+            torch.zeros_like(init_alice_joint_position_target, device=env.device),
+        )
+        zero_action[..., -1] = -1.0  # Ensure gripper is closed
+        for i in range(10):
+            # Step the environment with the correctly shaped zero action
+            # alice_control.apply_action(_env)
+            obs, reward, terminated, truncated, info = env.step(zero_action)
+        frame = (
+            obs["policy"]["camera_left"][0].cpu().numpy()
+        )  # Ensure the observation is processed
+        from PIL import Image
+
+        Image.fromarray(frame).save("alice_initialization.png")
+        return obs
 
     def apply_action(self, env) -> bool:
         # 获取当前关节目标位置

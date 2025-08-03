@@ -262,7 +262,7 @@ class QwenVLBrain:
         self.replan_memory = BrainMemory()
         self.replan_memory.add_system_prompt()
 
-        self.FRAME_JUMP = 4
+        self.FRAME_JUMP = 15
         self.FRAME_TOTAL = 3
 
     def initialize(self):
@@ -1211,7 +1211,7 @@ After your thinking process, provide the final execution plan as a JSON array.
 -   The JSON should be the only thing after the closing `</think>` tag.
 -   DO NOT USE ANY Placeholder in the JSON.
 
-Example response format:
+## Example response format:
 <think>
 Here I will describe my thought process.
 1. First, I need to achieve X. The skill `skill_A` seems appropriate for this.
@@ -1236,6 +1236,30 @@ Here I will describe my thought process.
         "step": 3,
         "method": "skill_B",
         "params": {{}}
+    }}
+]
+### Example response (move and open grasp):
+<think>
+1. The task requires moving to a target object and then opening the gripper.
+2. The skill `move_to_target_object` is suitable for the first step, and it need to add tracking skill before it.
+3. The skill `move_to_target_object` can set the gripper state to open after reaching the target.
+</think>
+```json
+[
+    {{
+        "step": 1,
+        "method": "object_tracking",
+        "params": {{
+            "target_object": "white_hand_palm"
+        }}
+    }},
+    {{
+        "step": 2,
+        "method": "move_to_target_object",
+        "params": {{
+            "target_object": "white_hand_palm",
+            "gripper_state": "1" # 1 means open gripper after reaching the target
+        }}
     }}
 ]
 """
@@ -1282,21 +1306,33 @@ You are an expert robot task supervisor. Your goal is to analyze the previous ex
 {last_execution_info}
 
 **Current Robot Low-dimensional State:**
-- pose: {np.array2string(observation.data["policy"]["eef_pos"].cpu().numpy(), precision=3, separator=", ")},quat: {np.array2string(observation.data["policy"]["eef_quat"].cpu().numpy(), precision=3, separator=", ")}
+- pose: {
+                np.array2string(
+                    observation.data["policy"]["eef_pos"].cpu().numpy(),
+                    precision=3,
+                    separator=", ",
+                )
+            },quat: {
+                np.array2string(
+                    observation.data["policy"]["eef_quat"].cpu().numpy(),
+                    precision=3,
+                    separator=", ",
+                )
+            }
 
 **Instructions for Your Response:**
 Your first and most important job is to compare the self-reported 'Execution Result' with the visual 'Execution Summary' of last skill. If they conflict, the visual summary is the truth.
 
 First, think step-by-step in `<think>` tags. Then, generate a JSON array of operations to modify the plan.
 
-**Available Operations:**
+**Available Operations (index is starting from 0):**
 1.  **update_status**: Corrects the status of a completed skill. THIS IS YOUR MOST IMPORTANT CORRECTION TOOL.
     - `operation`: "update_status"
     - `index`: The index of the skill whose status needs correction.
     - `new_status`: The TRUE status ("COMPLETED", "FAILED", etc.).
 2.  **insert**: Adds a new skill.
     - `operation`: "insert"
-    - `index`: new skill well be inserted after this index
+    - `index`: new skill well be inserted AFTER this index
     - `method`: The name of the skill to insert.
     - `params`: The parameters for the skill.
 3.  **delete**: Removes an unnecessary skill.
@@ -1309,18 +1345,43 @@ First, think step-by-step in `<think>` tags. Then, generate a JSON array of oper
 -   If, after your corrections, no more operations should be did, provide an empty array `[]`.
 -   The JSON should be the only thing after the closing `</think>` tag.
 
-### Example Response (Correcting a False Failure and Finishing):
+### Example Response (insert a skill):
 <think>
-1. **Reflection:** The skill `place_in_box` at index 3 self-reported `TIMEOUT`. However, my visual summary says: 'The spanner is clearly visible inside the red box.'
-2. **Analysis:** The timeout was incorrect; the skill actually succeeded. I must first update the status of skill 3 to `COMPLETED`. Since this was the final skill in the plan, the entire task is now complete.
-3. **Conclusion:** I will perform an `update_status` operation. Because the task is now finished, the subsequent plan of operations is empty.
+1. **Reflection:** The skill `move_to_target_object` at index 3 self-reported `failed`, and the visual summary confirms this. Indicating that the target object was not correctly identified or tracked within the environment.
+2. **Analysis:** The absence of the 'white_hand_palm' object in the scene suggests a mismatch between the expected target and the actual environment. To resolve this issue, we need to ensure that the 'white_hand_palm' object is correctly tracked before attempting to move the robot's end-effector to its center pose.
+3. **Conclusion:** We chose to use `insert` operation to insert a `object_tracking` skill before the `move_to_target_object` skill to ensure the target object is correctly identified. As the insert operation will insert a skill after given index and the index of `move_to_target_object` skill is 3, if we want to insert a skill before it, we should use index 2.
 </think>
 ```json
 [
 {{
-    "operation": "update_status",
-    "index": 3,
-    "new_status": "COMPLETED"
+    "operation": "insert",
+    "index": 2,
+    "method": "object_tracking",
+    "params": {{
+        "target_object": "white_hand_palm"
+    }}
+}},
+{{
+    "operation": "retry",
+    "index": 4, # retry the move_to_target_object (after insert operation, the index of move_to_target_object skill will be 3+1=4)
+}}
+]
+
+### Example Response (retry a skill):
+<think>
+1. **Reflection:** The skill `grasp_spanner` at index 2 self-reported `failed`. The visual summary confirms that the mechanical arm attempted to grasp the yellow spanner but did not successfully secure it. The gripper closed without making contact with the spanner, which aligns with the reported failure reason.
+2. **Analysis:** Given the failure of the `grasp_spanner` skill, the next logical step would be to retry the skill. However, considering the hard rule for the `grasp_spanner` skill, it requires the end-effector to be at the home position or near it before execution. The current robot low-dimensional state shows that the end-effector is not at the home position. Therefore, we need to move the end-effector back to the home position before retrying the `grasp_spanner` skill, So we just retry index 1 skill (`move_to_target_pose`).
+3. **Conclusion:** We chose to retry the `move_to_target_pose` skill at index 1, which will move the end-effector to the home position, and then retry the `grasp_spanner` skill at index 2.
+</think>
+```json
+[
+{{
+    "operation": "retry",
+    "index": 1, # retry the move_to_target_pose skill
+}},
+{{
+    "operation": "retry",
+    "index": 2, # retry the grasp_spanner skill
 }}
 ]
 ```

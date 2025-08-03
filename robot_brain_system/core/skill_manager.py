@@ -202,7 +202,7 @@ class SkillExecutor:
         self,
         skill_name: str,
         parameters: Dict[str, Any],
-        policy_device: None,
+        policy_device=None,
         obs_dict: dict = {},
     ):
         self.status = SkillStatus.NOT_STARTED
@@ -222,24 +222,28 @@ class SkillExecutor:
                 f"[SkillExecutor] Skill '{skill_name}' not found, available skills: {self.registry.list_skills()}"
             )
             self.status = SkillStatus.FAILED
-            return False
+            return False, obs_dict
 
         try:
             if skill_def.execution_mode == ExecutionMode.STEPACTION:
                 self.current_skill = skill_def.function(policy_device, **parameters)
+                if skill_name == "grasp_spanner":
+                    obs_dict = self.current_skill.initialize(self.env.unwrapped)
                 self.current_skill_name = skill_name
                 self.current_skill_params = parameters
                 self.status = SkillStatus.RUNNING
                 print(f"[SkillExecutor] Started policy skill: {skill_name}")
-                return True
+                return True, obs_dict
             elif skill_def.execution_mode == ExecutionMode.PREACTION:
                 self.current_skill_name = skill_name
                 self.current_skill_params = parameters
-                self.status = SkillStatus.IDLE
+                self.status = SkillStatus.RUNNING
                 self.preaction_skills.append(
-                    skill_def.function(policy_device, obs_dict, **parameters)
+                    skill_def.function(policy_device, self.env.unwrapped, **parameters)
                 )
-                return True
+                self.status = SkillStatus.IDLE
+                self.status_info = "Skill executed successfully."
+                return True, obs_dict
             elif skill_def.execution_mode == ExecutionMode.DIRECT:
                 assert False, "Unsupported now!"
                 # Direct execution is inherently blocking, so it completes immediately
@@ -251,11 +255,11 @@ class SkillExecutor:
                 # No ongoing generator for direct skills
                 self.current_skill_name = None
                 self.current_skill_params = None
-                return bool(result)
+                return bool(result), obs_dict
             else:
                 print(f"[SkillExecutor] Unknown execution mode for skill {skill_name}")
                 self.status = SkillStatus.FAILED
-                return False
+                return False, obs_dict
         except Exception as e:
             # TODO 技能初始化失败也要作为反馈信息的一部分！！
             print(f"[SkillExecutor] Error initialize skill {skill_name}: {e}")
@@ -263,7 +267,7 @@ class SkillExecutor:
 
             traceback.print_exc()
             self.status = SkillStatus.FAILED
-            return False
+            return False, obs_dict
 
     def step(self, obs) -> Tuple:
         """
