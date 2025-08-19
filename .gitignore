@@ -64,5 +64,6 @@ _build
 # Isaac-Sim Python Venv
 env_isaacsim/
 assets/
+env_assets/
 
 robot_brain_system/conf/override
