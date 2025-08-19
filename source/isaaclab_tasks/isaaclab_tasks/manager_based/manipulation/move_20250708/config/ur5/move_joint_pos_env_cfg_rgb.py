@@ -17,14 +17,14 @@ from ....move_20250708 import mdp
 from ....move_20250708.mdp import ur5_move_events
 from ....move_20250708.move_env_cfg_rgb import MoveEnvCfg
 from .robots.alice import ALICE_CFG
+from .robots.universal_robots import UR5_CFG
+from .robots.toolbox import TOOLBOX_CFG  # isort: skip
+
 
 ##
 # Pre-defined configs
 ##
-from isaaclab.markers.config import FRAME_MARKER_CFG
-from isaaclab_assets.robots.universal_robots import UR5_CFG
-from isaaclab_assets.robots.toolbox import TOOLBOX_CFG  # isort: skip
-
+# from isaaclab.markers.config import FRAME_MARKER_CFG
 
 @configclass
 class EventCfg:
@@ -208,13 +208,13 @@ class UR5BoxMoveEnvCfg(MoveEnvCfg):
         # )
 
         # 末端执行器跟踪坐标系配置
-        marker_cfg = FRAME_MARKER_CFG.copy()
-        marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        marker_cfg.prim_path = "/Visuals/FrameTransformer"
+        # marker_cfg = FRAME_MARKER_CFG.copy()
+        # marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+        # marker_cfg.prim_path = "/Visuals/FrameTransformer"
         self.scene.ee_frame = FrameTransformerCfg(
             prim_path="{ENV_REGEX_NS}/Robot/ur5/base_link",
             debug_vis=False,
-            visualizer_cfg=marker_cfg,
+            # visualizer_cfg=marker_cfg,
             target_frames=[
                 FrameTransformerCfg.FrameCfg(
                     prim_path="{ENV_REGEX_NS}/Robot/ur5/gripper/base_link_gripper",

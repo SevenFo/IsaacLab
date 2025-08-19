@@ -15,8 +15,8 @@ from ....move_20250708.move_env_cfg import MoveEnvCfg
 # Pre-defined configs
 ##
 from isaaclab.markers.config import FRAME_MARKER_CFG
-from isaaclab_assets.robots.universal_robots import UR5_CFG
-from isaaclab_assets.robots.toolbox import TOOLBOX_CFG  # isort: skip
+from .robots.universal_robots import UR5_CFG
+from .robots.toolbox import TOOLBOX_CFG  # isort: skip
 
 
 @configclass

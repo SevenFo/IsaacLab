@@ -1,0 +1,19 @@
+scene:
+  ROOM_set:
+    spawn:
+      usd_path: env_assets/Collected_ROOM_set_fix_0403/Collected_ROOM_set/ROOM_set.no.ur5.box.desk_clean_version.usd
+  desk:
+    spawn:
+      usd_path: env_assets/Collected_Desk/Desk.usd
+  robot:
+    spawn:
+      usd_path: env_assets/Collected_ur5_with_gripper_drive_fix/ur5_with_gripper_drive_fix.usd
+  box:
+    spawn:
+      usd_path: env_assets/Collected_red_toolbox/red_toolbox.usd
+  spanner:
+    spawn:
+      usd_path: env_assets/Collected_spanner/spanner.usd
+  alice:
+    spawn:
+      usd_path: env_assets/Alice/PN_Stickman_v12_ThumbInward_joint.usd

@@ -8,7 +8,7 @@ from . import move_joint_pos_env_cfg_rgb
 ##
 # Pre-defined configs
 ##
-from isaaclab_assets.robots.universal_robots import UR5_CFG  # isort: skip
+from .robots.universal_robots import UR5_CFG  # isort: skip
 
 
 @configclass
