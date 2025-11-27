@@ -1,100 +1,167 @@
-![Isaac Lab](docs/source/_static/isaaclab.jpg)
 
----
-
-# Isaac Lab
-
-[![IsaacSim](https://img.shields.io/badge/IsaacSim-4.5.0-silver.svg)](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html)
-[![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://docs.python.org/3/whatsnew/3.10.html)
-[![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/20.04/)
-[![Windows platform](https://img.shields.io/badge/platform-windows--64-orange.svg)](https://www.microsoft.com/en-us/)
-[![pre-commit](https://img.shields.io/github/actions/workflow/status/isaac-sim/IsaacLab/pre-commit.yaml?logo=pre-commit&logoColor=white&label=pre-commit&color=brightgreen)](https://github.com/isaac-sim/IsaacLab/actions/workflows/pre-commit.yaml)
-[![docs status](https://img.shields.io/github/actions/workflow/status/isaac-sim/IsaacLab/docs.yaml?label=docs&color=brightgreen)](https://github.com/isaac-sim/IsaacLab/actions/workflows/docs.yaml)
-[![License](https://img.shields.io/badge/license-BSD--3-yellow.svg)](https://opensource.org/licenses/BSD-3-Clause)
-[![License](https://img.shields.io/badge/license-Apache--2.0-yellow.svg)](https://opensource.org/license/apache-2-0)
+# Robot Brain System 技术文档
 
 
-**Isaac Lab** is a GPU-accelerated, open-source framework designed to unify and simplify robotics research workflows, such as reinforcement learning, imitation learning, and motion planning. Built on [NVIDIA Isaac Sim](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html), it combines fast and accurate physics and sensor simulation, making it an ideal choice for sim-to-real transfer in robotics.
+## 项目定位与核心原理
 
-Isaac Lab provides developers with a range of essential features for accurate sensor simulation, such as RTX-based cameras, LIDAR, or contact sensors. The framework's GPU acceleration enables users to run complex simulations and computations faster, which is key for iterative processes like reinforcement learning and data-intensive tasks. Moreover, Isaac Lab can run locally or be distributed across the cloud, offering flexibility for large-scale deployments.
+本系统采用 **Server/Client 分离架构**，实现高性能、低延迟的具身智能闭环：
 
-## Key Features
+- **Server**（`isaac_lab_server_shm.py`）：纯 Isaac Sim 仿真进程  
+  - 不加载任何大模型、技能或 Brain  
+  - 通过 **共享内存**（Shared Memory）写入最新 observation  
+  - 通过 **Unix Domain Socket** 接收控制命令  
+  - 仅提供环境服务与 success 判断支持
 
-Isaac Lab offers a comprehensive set of tools and environments designed to facilitate robot learning:
-- **Robots**: A diverse collection of robots, from manipulators, quadrupeds, to humanoids, with 16 commonly available models.
-- **Environments**: Ready-to-train implementations of more than 30 environments, which can be trained with popular reinforcement learning frameworks such as RSL RL, SKRL, RL Games, or Stable Baselines. We also support multi-agent reinforcement learning.
-- **Physics**: Rigid bodies, articulated systems, deformable objects
-- **Sensors**: RGB/depth/segmentation cameras, camera annotations, IMU, contact sensors, ray casters.
+- **Client**（`scripts/run_robot_brain_system.py`）：主控进程  
+  - 运行 Qwen-VL 大模型（Brain）进行任务解析与技能规划  
+  - 维护 SkillRegistry，所有技能在此注册并执行  
+  - 通过 `EnvProxy` 提供本地化 env 接口，屏蔽通信细节  
+  - 50Hz 主循环：观测 → 技能推理 → 动作下发 → 监控 → 重规划
 
+**通信机制**  
+- 观测：共享内存（~10MB，pickle 序列化）→ 零拷贝、高频率  
+- 动作 & 命令：共享内存 + Unix Socket（轻量可靠）
 
-## Getting Started
+## 环境准备（完整可执行）
 
-Our [documentation page](https://isaac-sim.github.io/IsaacLab) provides everything you need to get started, including detailed tutorials and step-by-step guides. Follow these links to learn more about:
+```bash
+# 1. 克隆仓库并切换分支
+git clone https://github.com/SevenFo/IsaacLab.git
+cd IsaacLab
+git checkout dev_502_bg_sm_align_demo_v0
 
-- [Installation steps](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html#local-installation)
-- [Reinforcement learning](https://isaac-sim.github.io/IsaacLab/main/source/overview/reinforcement-learning/rl_existing_scripts.html)
-- [Tutorials](https://isaac-sim.github.io/IsaacLab/main/source/tutorials/index.html)
-- [Available environments](https://isaac-sim.github.io/IsaacLab/main/source/overview/environments.html)
+# 2. 安装 Isaac Sim 4.5（推荐 pip 方式）
+参考 https://isaacsim.github.io/IsaacLab/v2.0.0/source/setup/installation/pip_installation.html#installingisaac-sim 
+使用 pip 安装 isaacsim 4.5
 
+# 3. 仓库依赖
+./isaaclab.sh --install
 
-## Contributing to Isaac Lab
+# 4. thirdparty 子模块同步
+git submodule update --init --recursive
 
-We wholeheartedly welcome contributions from the community to make this framework mature and useful for everyone.
-These may happen as bug reports, feature requests, or code contributions. For details, please check our
-[contribution guidelines](https://isaac-sim.github.io/IsaacLab/main/source/refs/contributing.html).
+# 5. 安装关键 thirdparty（必须）
+pip install -e thirdparty/lerobot
+pip install -e thirdparty/MocapApi
+pip install -e thirdparty/robot-retargeting
 
-## Show & Tell: Share Your Inspiration
+# SAM2 + Cutie（object_tracking 技能必需）
+cd thirdparty
+git clone https://github.com/facebookresearch/sam2.git sam2
+cd sam2 && pip install -e . && cd ..
 
-We encourage you to utilize our [Show & Tell](https://github.com/isaac-sim/IsaacLab/discussions/categories/show-and-tell) area in the
-`Discussions` section of this repository. This space is designed for you to:
+git clone https://github.com/hkchengrex/Cutie.git Cutie
+cd Cutie && pip install -e . && python cutie/utils/download_models.py && cd ../..
 
-* Share the tutorials you've created
-* Showcase your learning content
-* Present exciting projects you've developed
+pip install -r ImagePipeline/requirements.txt
+```
 
-By sharing your work, you'll inspire others and contribute to the collective knowledge
-of our community. Your contributions can spark new ideas and collaborations, fostering
-innovation in robotics and simulation.
+## 数字资产准备（必须步骤）
 
-## Troubleshooting
+```bash
+# 创建资产目录
+mkdir -p env_assets
 
-Please see the [troubleshooting](https://isaac-sim.github.io/IsaacLab/main/source/refs/troubleshooting.html) section for
-common fixes or [submit an issue](https://github.com/isaac-sim/IsaacLab/issues).
+# 下载并解压环境资产（包含所有 URDF、场景、纹理等）
+文件名：env.zip
+下载链接：https://bhpan.buaa.edu.cn/link/AAD702EA32A1DC476A980D59E6177CC145
+提取码：OMCN
 
-For issues related to Isaac Sim, we recommend checking its [documentation](https://docs.omniverse.nvidia.com/app_isaacsim/app_isaacsim/overview.html)
-or opening a question on its [forums](https://forums.developer.nvidia.com/c/agx-autonomous-machines/isaac/67).
+unzip env.zip -d env_assets
+```
 
-## Support
-
-* Please use GitHub [Discussions](https://github.com/isaac-sim/IsaacLab/discussions) for discussing ideas, asking questions, and requests for new features.
-* Github [Issues](https://github.com/isaac-sim/IsaacLab/issues) should only be used to track executable pieces of work with a definite scope and a clear deliverable. These can be fixing bugs, documentation issues, new features, or general updates.
-
-## Connect with the NVIDIA Omniverse Community
-
-Have a project or resource you'd like to share more widely? We'd love to hear from you! Reach out to the
-NVIDIA Omniverse Community team at OmniverseCommunity@nvidia.com to discuss potential opportunities
-for broader dissemination of your work.
-
-Join us in building a vibrant, collaborative ecosystem where creativity and technology intersect. Your
-contributions can make a significant impact on the Isaac Lab community and beyond!
-
-## License
-
-The Isaac Lab framework is released under [BSD-3 License](LICENSE). The `isaaclab_mimic` extension and its corresponding standalone scripts are released under [Apache 2.0](LICENSE-mimic). The license files of its dependencies and assets are present in the [`docs/licenses`](docs/licenses) directory.
-
-## Acknowledgement
-
-Isaac Lab development initiated from the [Orbit](https://isaac-orbit.github.io/) framework. We would appreciate if you would cite it in academic publications as well:
+**重要：路径替换**  
+编辑 `configs/ur5_lunar_base.yaml`（或其他使用的任务 config），将文件中所有出现的老路径：
 
 ```
-@article{mittal2023orbit,
-   author={Mittal, Mayank and Yu, Calvin and Yu, Qinxi and Liu, Jingzhou and Rudin, Nikita and Hoeller, David and Yuan, Jia Lin and Singh, Ritvik and Guo, Yunrong and Mazhar, Hammad and Mandlekar, Ajay and Babich, Buck and State, Gavriel and Hutter, Marco and Garg, Animesh},
-   journal={IEEE Robotics and Automation Letters},
-   title={Orbit: A Unified Simulation Framework for Interactive Robot Learning Environments},
-   year={2023},
-   volume={8},
-   number={6},
-   pages={3740-3747},
-   doi={10.1109/LRA.2023.3270034}
-}
+/home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/
 ```
+
+替换为你本地的实际路径，例如：
+
+```
+$(pwd)/env_assets/
+```
+
+保存后确保无残留旧路径。
+
+## 启动方式（两种模式）
+
+### 模式一：推荐（Client 自动启动 Server）—— 日常使用
+
+```bash
+python scripts/run_robot_brain_system.py
+```
+
+Client 会自动通过 `./isaaclab.sh -p ...` 启动 Server 子进程并完成连接。  
+这是最简单、最稳定的方式，无需手动管理进程。
+
+### 模式二：手动启动 Server + Client —— 仅用于调试 Server 本身
+
+如果你需要单独调试 `isaac_lab_server_shm.py`（例如加 print、查看仿真窗口、修改 warmup 逻辑等），请严格按以下两步操作：
+
+**终端 1：手动启动纯仿真 Server**
+```bash
+./isaaclab.sh -p robot_brain_system/launcher/isaac_lab_server_shm.py
+```
+Server 会创建 `/tmp/isaac.sock` 和共享内存 `isaac_shm`，然后卡在 `accept()` 等待 Client 连接。
+
+**终端 2：启动 Client 并关闭自动拉起功能**
+```bash
+python scripts/run_robot_brain_system.py simulator.auto_start=false
+```
+或在配置文件中强制覆盖：
+```bash
+python scripts/run_robot_brain_system.py +simulator.auto_start=false
+```
+
+- 手动模式下 **必须** 加 `simulator.auto_start=false`  
+- 否则会出现 “Address already in use” 或共享内存重复创建导致 Client 直接崩溃  
+- 两个进程使用的 socket 路径和共享内存名前缀必须一致（默认都是 `/tmp/isaac.sock` 和 `isaac_shm`）
+
+
+## 核心组件路径说明
+
+| 组件            | 文件路径                                              |
+| --------------- | ----------------------------------------------------- |
+| 主入口          | `scripts/run_robot_brain_system.py`                   |
+| 纯仿真 Server   | `robot_brain_system/launcher/isaac_lab_server_shm.py` |
+| 系统状态机      | `robot_brain_system/core/system.py`                   |
+| Brain 实现      | `robot_brain_system/core/brain.py`                    |
+| 技能执行器      | `robot_brain_system/core/skill_executor_client.py`    |
+| 本地化 Env 接口 | `robot_brain_system/core/env_proxy.py`                |
+| 技能注册表      | `robot_brain_system/core/skill_manager.py`            |
+| 所有技能实现    | `robot_brain_system/skills/`                          |
+| 主配置文件      | `robot_brain_system/conf/config.yaml`                 |
+
+## 已实现技能列表
+
+| 技能名                          | ExecutionMode | 说明                                     |
+| ------------------------------- | ------------- | ---------------------------------------- |
+| `object_tracking`               | PREACTION     | SAM2+Cutie 实时目标检测，写入 `xxx_aabb` |
+| `move_to_target_object`         | STEPACTION    | 移动到目标物体中心                       |
+| `move_to_target_pose`           | STEPACTION    | 移动到指定位姿                           |
+| `grasp_spanner`                 | STEPACTION    | 专用抓取策略                             |
+| `open_box`                      | STEPACTION    | 按按钮打开箱子                           |
+| `move_box_to_suitable_position` | STEPACTION    | 调整箱子位置                             |
+
+## 调试常用命令
+
+```python
+# 在任意位置（技能、断点）快速查看
+env_proxy.scene.keys()                    # 当前场景物体
+env_proxy.peek_observation_buffer(n=10)   # 最近10帧观测
+system.state.status                       # 系统状态
+skill_executor.status                     # 当前技能状态
+```
+
+## 常见问题
+
+| 问题                      | 原因与解决方案                               |
+| ------------------------- | -------------------------------------------- |
+| 场景加载失败 / 物体找不到 | 未正确解压 env.zip 或 config 中路径未替换    |
+| `object_tracking` 无输出  | 未下载 Cutie 权重或 `target_object` 拼写错误 |
+| Client 连接不到 Server    | Server 未启动，或 socket 路径不一致          |
+| 动作无响应                | 共享内存名称不匹配，或 Server 已崩溃         |
+
+

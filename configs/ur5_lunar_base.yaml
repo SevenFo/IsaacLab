@@ -1,19 +1,34 @@
 scene:
   ROOM_set:
     spawn:
-      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0819/ROOM_set.no.ur5.box.desk_clean_version.usd
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0403/Collected_ROOM_set/ROOM_set.no.ur5.box.desk_clean_version.usd
   desk:
     spawn:
-      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_Desk/Desk.usd
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0403/Desk.usd
   robot:
     spawn:
       usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ur5_with_gripper_drive_fix/ur5_with_gripper_drive_fix.usd
   box:
     spawn:
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0409/red_toolbox.usd
+  heavy_box:
+    spawn:
       usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_red_toolbox/red_toolbox.usd
   spanner:
     spawn:
-      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_spanner/spanner.usd
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0409/spanner.usd
   alice:
     spawn:
-      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Alice/PN_Stickman_v12_ThumbInward_joint.usd
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Alice/PN_Stickman_v12_ThumbInward_joint_link.usd
+  plan_1:
+    spawn:
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0403/plane_1.usd
+  plan_2:
+    spawn:
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0403/plane_2.usd
+  plan_3:
+    spawn:
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0403/plane_3.usd
+  plan_4:
+    spawn:
+      usd_path: /home/ps/Projects/isaac-lab-workspace/IsaacLabLatest/IsaacLab/env_assets/Collected_ROOM_set_fix_0403/plane_4.usd
