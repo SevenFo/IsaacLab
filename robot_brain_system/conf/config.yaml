@@ -17,7 +17,11 @@ skills:
     visualize: false
     debug_save: false
     banned_cameras: ["camera_wrist", "camera_side","camera_top"]
-  pressbutton:
+  open_box:
     model_path: "assets/skills/press_rgb.pth"
-  graspspanner:
+    success_item: "box_open"
+  grasp_spanner:
     model_path: "assets/skills/grasp_rgb.pth"
+    success_item: "leave_spanner"
+  move_box_to_suitable_position:
+    success_item: "lift_eef"

@@ -25,7 +25,12 @@ from isaaclab.assets import (
     RigidObjectCollection,
     RigidObjectCollectionCfg,
 )
-from isaaclab.sensors import ContactSensorCfg, FrameTransformerCfg, SensorBase, SensorBaseCfg
+from isaaclab.sensors import (
+    ContactSensorCfg,
+    FrameTransformerCfg,
+    SensorBase,
+    SensorBaseCfg,
+)
 from isaaclab.terrains import TerrainImporter, TerrainImporterCfg
 
 from .interactive_scene_cfg import InteractiveSceneCfg
@@ -112,11 +117,11 @@ class InteractiveScene:
         self.cfg = cfg
         # initialize scene elements
         self._terrain = None
-        self._articulations:dict[str,Articulation] = dict()
+        self._articulations: dict[str, Articulation] = dict()
         self._deformable_objects = dict()
         self._rigid_objects = dict()
         self._rigid_object_collections = dict()
-        self._sensors:dict[str,SensorBase] = dict()
+        self._sensors: dict[str, SensorBase] = dict()
         self._extras = dict()
         # obtain the current stage
         self.stage = omni.usd.get_context().get_stage()
@@ -125,7 +130,9 @@ class InteractiveScene:
         # prepare cloner for environment replication
         self.cloner = GridCloner(spacing=self.cfg.env_spacing)
         self.cloner.define_base_env(self.env_ns)
-        self.env_prim_paths = self.cloner.generate_paths(f"{self.env_ns}/env", self.cfg.num_envs)
+        self.env_prim_paths = self.cloner.generate_paths(
+            f"{self.env_ns}/env", self.cfg.num_envs
+        )
         # create source prim
         self.stage.DefinePrim(self.env_prim_paths[0], "Xform")
 
@@ -140,7 +147,9 @@ class InteractiveScene:
                 copy_from_source=True,
                 enable_env_ids=self.cfg.filter_collisions,  # this won't do anything because we are not replicating physics
             )
-            self._default_env_origins = torch.tensor(env_origins, device=self.device, dtype=torch.float32)
+            self._default_env_origins = torch.tensor(
+                env_origins, device=self.device, dtype=torch.float32
+            )
         else:
             # otherwise, environment origins will be initialized during cloning at the end of environment creation
             self._default_env_origins = None
@@ -206,7 +215,9 @@ class InteractiveScene:
 
         # in case of heterogeneous cloning, the env origins is specified at init
         if self._default_env_origins is None:
-            self._default_env_origins = torch.tensor(env_origins, device=self.device, dtype=torch.float32)
+            self._default_env_origins = torch.tensor(
+                env_origins, device=self.device, dtype=torch.float32
+            )
 
     def filter_collisions(self, global_prim_paths: list[str] | None = None):
         """Filter environments collisions.
@@ -258,10 +269,14 @@ class InteractiveScene:
             for prim in self.stage.Traverse():
                 if prim.HasAPI(PhysxSchema.PhysxSceneAPI):
                     self._physics_scene_path = prim.GetPrimPath().pathString
-                    omni.log.info(f"Physics scene prim path: {self._physics_scene_path}")
+                    omni.log.info(
+                        f"Physics scene prim path: {self._physics_scene_path}"
+                    )
                     break
             if self._physics_scene_path is None:
-                raise RuntimeError("No physics scene found! Please make sure one exists.")
+                raise RuntimeError(
+                    "No physics scene found! Please make sure one exists."
+                )
         return self._physics_scene_path
 
     @property
@@ -364,7 +379,9 @@ class InteractiveScene:
         """
         return self.get_state(is_relative=False)
 
-    def get_state(self, is_relative: bool = False) -> dict[str, dict[str, dict[str, torch.Tensor]]]:
+    def get_state(
+        self, is_relative: bool = False
+    ) -> dict[str, dict[str, dict[str, torch.Tensor]]]:
         """Returns the state of the scene entities.
 
         Args:
@@ -458,7 +475,9 @@ class InteractiveScene:
             # joint state
             joint_position = asset_state["joint_position"].clone()
             joint_velocity = asset_state["joint_velocity"].clone()
-            articulation.write_joint_state_to_sim(joint_position, joint_velocity, env_ids=env_ids)
+            articulation.write_joint_state_to_sim(
+                joint_position, joint_velocity, env_ids=env_ids
+            )
             articulation.set_joint_position_target(joint_position, env_ids=env_ids)
             articulation.set_joint_velocity_target(joint_velocity, env_ids=env_ids)
         # deformable objects
@@ -469,7 +488,9 @@ class InteractiveScene:
                 nodal_position[:, :3] += self.env_origins[env_ids]
             nodal_velocity = asset_state["nodal_velocity"].clone()
             deformable_object.write_nodal_pos_to_sim(nodal_position, env_ids=env_ids)
-            deformable_object.write_nodal_velocity_to_sim(nodal_velocity, env_ids=env_ids)
+            deformable_object.write_nodal_velocity_to_sim(
+                nodal_velocity, env_ids=env_ids
+            )
         # rigid objects
         for asset_name, rigid_object in self._rigid_objects.items():
             asset_state = state["rigid_object"][asset_name]
@@ -563,7 +584,9 @@ class InteractiveScene:
                 return out
             all_keys += list(asset_family.keys())
         # if not found, raise error
-        raise KeyError(f"Scene entity with key '{key}' not found. Available Entities: '{all_keys}'")
+        raise KeyError(
+            f"Scene entity with key '{key}' not found. Available Entities: '{all_keys}'"
+        )
 
     """
     Internal methods.
@@ -571,7 +594,10 @@ class InteractiveScene:
 
     def _is_scene_setup_from_cfg(self):
         return any(
-            not (asset_name in InteractiveSceneCfg.__dataclass_fields__ or asset_cfg is None)
+            not (
+                asset_name in InteractiveSceneCfg.__dataclass_fields__
+                or asset_cfg is None
+            )
             for asset_name, asset_cfg in self.cfg.__dict__.items()
         )
 
@@ -583,11 +609,16 @@ class InteractiveScene:
         for asset_name, asset_cfg in self.cfg.__dict__.items():
             # skip keywords
             # note: easier than writing a list of keywords: [num_envs, env_spacing, lazy_sensor_update]
-            if asset_name in InteractiveSceneCfg.__dataclass_fields__ or asset_cfg is None:
+            if (
+                asset_name in InteractiveSceneCfg.__dataclass_fields__
+                or asset_cfg is None
+            ):
                 continue
             # resolve regex
             if hasattr(asset_cfg, "prim_path"):
-                asset_cfg.prim_path = asset_cfg.prim_path.format(ENV_REGEX_NS=self.env_regex_ns)
+                asset_cfg.prim_path = asset_cfg.prim_path.format(
+                    ENV_REGEX_NS=self.env_regex_ns
+                )
             # create asset
             if isinstance(asset_cfg, TerrainImporterCfg):
                 # terrains are special entities since they define environment origins
@@ -602,24 +633,37 @@ class InteractiveScene:
                 self._rigid_objects[asset_name] = asset_cfg.class_type(asset_cfg)
             elif isinstance(asset_cfg, RigidObjectCollectionCfg):
                 for rigid_object_cfg in asset_cfg.rigid_objects.values():
-                    rigid_object_cfg.prim_path = rigid_object_cfg.prim_path.format(ENV_REGEX_NS=self.env_regex_ns)
-                self._rigid_object_collections[asset_name] = asset_cfg.class_type(asset_cfg)
+                    rigid_object_cfg.prim_path = rigid_object_cfg.prim_path.format(
+                        ENV_REGEX_NS=self.env_regex_ns
+                    )
+                self._rigid_object_collections[asset_name] = asset_cfg.class_type(
+                    asset_cfg
+                )
                 for rigid_object_cfg in asset_cfg.rigid_objects.values():
-                    if hasattr(rigid_object_cfg, "collision_group") and rigid_object_cfg.collision_group == -1:
-                        asset_paths = sim_utils.find_matching_prim_paths(rigid_object_cfg.prim_path)
+                    if (
+                        hasattr(rigid_object_cfg, "collision_group")
+                        and rigid_object_cfg.collision_group == -1
+                    ):
+                        asset_paths = sim_utils.find_matching_prim_paths(
+                            rigid_object_cfg.prim_path
+                        )
                         self._global_prim_paths += asset_paths
             elif isinstance(asset_cfg, SensorBaseCfg):
                 # Update target frame path(s)' regex name space for FrameTransformer
                 if isinstance(asset_cfg, FrameTransformerCfg):
                     updated_target_frames = []
                     for target_frame in asset_cfg.target_frames:
-                        target_frame.prim_path = target_frame.prim_path.format(ENV_REGEX_NS=self.env_regex_ns)
+                        target_frame.prim_path = target_frame.prim_path.format(
+                            ENV_REGEX_NS=self.env_regex_ns
+                        )
                         updated_target_frames.append(target_frame)
                     asset_cfg.target_frames = updated_target_frames
                 elif isinstance(asset_cfg, ContactSensorCfg):
                     updated_filter_prim_paths_expr = []
                     for filter_prim_path in asset_cfg.filter_prim_paths_expr:
-                        updated_filter_prim_paths_expr.append(filter_prim_path.format(ENV_REGEX_NS=self.env_regex_ns))
+                        updated_filter_prim_paths_expr.append(
+                            filter_prim_path.format(ENV_REGEX_NS=self.env_regex_ns)
+                        )
                     asset_cfg.filter_prim_paths_expr = updated_filter_prim_paths_expr
 
                 self._sensors[asset_name] = asset_cfg.class_type(asset_cfg)
@@ -634,10 +678,17 @@ class InteractiveScene:
                     )
                 # store xform prim view corresponding to this asset
                 # all prims in the scene are Xform prims (i.e. have a transform component)
-                self._extras[asset_name] = XFormPrim(asset_cfg.prim_path, reset_xform_properties=False)
+                self._extras[asset_name] = XFormPrim(
+                    asset_cfg.prim_path, reset_xform_properties=False
+                )
             else:
-                raise ValueError(f"Unknown asset config type for {asset_name}: {asset_cfg}")
+                raise ValueError(
+                    f"Unknown asset config type for {asset_name}: {asset_cfg}"
+                )
             # store global collision paths
-            if hasattr(asset_cfg, "collision_group") and asset_cfg.collision_group == -1:
+            if (
+                hasattr(asset_cfg, "collision_group")
+                and asset_cfg.collision_group == -1
+            ):
                 asset_paths = sim_utils.find_matching_prim_paths(asset_cfg.prim_path)
                 self._global_prim_paths += asset_paths

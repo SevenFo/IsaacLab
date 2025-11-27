@@ -1,102 +1,386 @@
 """
-Isaac Lab simulator interface.
-Runs Isaac simulation in a subprocess with direct environment access
-and in-process skill execution.
+Isaac Lab simulator interface - Shared Memory + Unix Socket version.
+Runs Isaac simulation in a completely independent process with:
+- Unix Socket for control commands (small, infrequent)
+- Shared Memory for data transfer (large, frequent - observations, actions)
+
+This ensures AppLauncher is imported first and provides high-performance data transfer.
 """
 
-import multiprocessing as mp
+import socket
+import struct
+import pickle
 import threading
-from typing import (
-    Dict,
-    Any,
-    Optional,
-    Tuple,
-)
-from multiprocessing.connection import Pipe, Connection
+import tempfile
+import json
+import os
+import time
 import traceback
-import pickle  # For pickle.UnpicklingError
-import math
+import subprocess
+from typing import Dict, Any, Optional, Tuple, List
+from pathlib import Path
+from multiprocessing import shared_memory
+from omegaconf import DictConfig, OmegaConf
 
 # robot_brain_system imports
 from robot_brain_system.core.types import (
     Action,
     Observation,
-    SkillStatus,
-)  # Assuming these are used for IPC if needed
+)
 from robot_brain_system.utils.retry_utils import retry
 
-mp.set_start_method("spawn", force=True)  # Ensure spawn method for subprocesses
 
+class SharedMemoryManager:
+    """Manager for shared memory buffers used for high-performance data transfer."""
 
-# --- Retry Decorator Definition ---
+    def __init__(self, name_prefix: str):
+        self.name_prefix = name_prefix
+        self.shm_obs: Optional[shared_memory.SharedMemory] = None
+        self.shm_action: Optional[shared_memory.SharedMemory] = None
+        self.shm_metadata: Optional[shared_memory.SharedMemory] = None
+
+    def create_buffers(
+        self,
+        obs_size: int = 10 * 1024 * 1024,
+        action_size: int = 16 * 1024,
+        metadata_size: int = 4096,
+    ):
+        """Create shared memory buffers (called by server)."""
+        self.shm_obs = shared_memory.SharedMemory(
+            name=f"{self.name_prefix}_obs", create=True, size=obs_size
+        )
+        self.shm_action = shared_memory.SharedMemory(
+            name=f"{self.name_prefix}_action", create=True, size=action_size
+        )
+        self.shm_metadata = shared_memory.SharedMemory(
+            name=f"{self.name_prefix}_metadata", create=True, size=metadata_size
+        )
+        # Initialize metadata
+        self._write_metadata({"ready": False, "obs_size": 0, "action_size": 0})
+
+    def connect_buffers(self):
+        """Connect to existing shared memory buffers (called by client)."""
+        from multiprocessing import resource_tracker
+
+        self.shm_obs = shared_memory.SharedMemory(name=f"{self.name_prefix}_obs")
+        self.shm_action = shared_memory.SharedMemory(name=f"{self.name_prefix}_action")
+        self.shm_metadata = shared_memory.SharedMemory(
+            name=f"{self.name_prefix}_metadata"
+        )
+
+        # Unregister from resource_tracker - server is responsible for cleanup
+        # This prevents "leaked shared_memory objects" warnings
+        resource_tracker.unregister(f"{self.name_prefix}_obs", "shared_memory")
+        resource_tracker.unregister(f"{self.name_prefix}_action", "shared_memory")
+        resource_tracker.unregister(f"{self.name_prefix}_metadata", "shared_memory")
+
+    def cleanup(self):
+        """Clean up shared memory buffers."""
+        for shm in [self.shm_obs, self.shm_action, self.shm_metadata]:
+            if shm:
+                try:
+                    shm.close()
+                    shm.unlink()
+                except Exception:
+                    pass
+
+    def close(self):
+        """Close shared memory buffers without unlinking."""
+        for shm in [self.shm_obs, self.shm_action, self.shm_metadata]:
+            if shm:
+                try:
+                    shm.close()
+                except Exception:
+                    pass
+
+    def _write_metadata(self, metadata: Dict[str, Any]):
+        """Write metadata to shared memory."""
+        if not self.shm_metadata:
+            raise RuntimeError("Metadata shared memory not initialized")
+        data = pickle.dumps(metadata)
+        size = len(data)
+        self.shm_metadata.buf[:4] = struct.pack("!I", size)
+        self.shm_metadata.buf[4 : 4 + size] = data
+
+    def _read_metadata(self) -> Dict[str, Any]:
+        """Read metadata from shared memory."""
+        if not self.shm_metadata:
+            raise RuntimeError("Metadata shared memory not initialized")
+        size = struct.unpack("!I", bytes(self.shm_metadata.buf[:4]))[0]
+        data = bytes(self.shm_metadata.buf[4 : 4 + size])
+        return pickle.loads(data)
+
+    def write_observation(self, obs_data: Any):
+        """Write observation to shared memory."""
+        if not self.shm_obs:
+            raise RuntimeError("Observation shared memory not initialized")
+        data = pickle.dumps(obs_data)
+        size = len(data)
+        if size > len(self.shm_obs.buf) - 4:
+            raise ValueError(
+                f"Observation too large: {size} > {len(self.shm_obs.buf) - 4}"
+            )
+        self.shm_obs.buf[:4] = struct.pack("!I", size)
+        self.shm_obs.buf[4 : 4 + size] = data
+        # Update metadata
+        metadata = self._read_metadata()
+        metadata["obs_size"] = size
+        metadata["obs_timestamp"] = time.time()
+        self._write_metadata(metadata)
+
+    def read_observation(self) -> Any:
+        """Read observation from shared memory."""
+        if not self.shm_obs:
+            raise RuntimeError("Observation shared memory not initialized")
+
+        # 读取前4个字节获取大小
+        # memoryview 也可以直接切片读取，避免 bytes() 拷贝
+        size_data = self.shm_obs.buf[:4]
+        size = struct.unpack("!I", size_data)[0]
+
+        if size == 0:
+            return None
+
+        # === 优化前 (旧代码) ===
+        # data = bytes(self.shm_obs.buf[4 : 4 + size]) # <--- 罪魁祸首！这会创建一个全新的 10MB 字节串
+        # return pickle.loads(data)
+
+        # === 优化后 (新代码) ===
+        # 直接使用 memoryview 切片，这是一个“引用”，不占用额外内存
+        # pickle.loads 支持直接从 buffer/memoryview 读取
+        data_view = self.shm_obs.buf[4 : 4 + size]
+        return pickle.loads(data_view)
+
+    def write_action(self, action_data: Any):
+        """Write action to shared memory."""
+        if not self.shm_action:
+            raise RuntimeError("Action shared memory not initialized")
+        data = pickle.dumps(action_data)
+        size = len(data)
+        if size > len(self.shm_action.buf) - 4:
+            raise ValueError(
+                f"Action too large: {size} > {len(self.shm_action.buf) - 4}"
+            )
+        self.shm_action.buf[:4] = struct.pack("!I", size)
+        self.shm_action.buf[4 : 4 + size] = data
+
+    def read_action(self) -> Any:
+        """Read action from shared memory."""
+        if not self.shm_action:
+            raise RuntimeError("Action shared memory not initialized")
+
+        size_data = self.shm_action.buf[:4]
+        size = struct.unpack("!I", size_data)[0]
+
+        if size == 0:
+            return None
+
+        # === 同样优化这里 ===
+        data_view = self.shm_action.buf[4 : 4 + size]
+        return pickle.loads(data_view)
 
 
 class IsaacSimulator:
-    """Isaac Lab simulator with subprocess execution for direct environment access."""
+    """Isaac Lab simulator with independent process execution via shared memory + Unix socket."""
 
     def __init__(
         self,
         sim_config: Optional[Dict[str, Any]] = None,
     ):
-        self.sim_config = sim_config or {}  # General sim configuration
-        self.process: Optional[mp.Process] = None
-        self.parent_conn: Optional[Connection] = None
-        # child_conn is only used in the subprocess context
+        self.sim_config = sim_config or {}
+        self.socket: Optional[socket.socket] = None
+        self.socket_path: Optional[str] = None
+        self.process: Optional[subprocess.Popen] = None
         self.is_running = False
-        self.is_initialized = False  # Added initialization status
-        self.device = self.sim_config.get("device", "cpu")  # Get device from config
-        self.num_envs = self.sim_config.get("num_envs", 1)  # Get num_envs from config
+        self.is_initialized = False
+        self.device = self.sim_config.get("device", "cpu")
+        self.num_envs = self.sim_config.get("num_envs", 1)
         self._command_lock = threading.Lock()
+        self._sim_lock = threading.Lock()
+        self._config_file: Optional[str] = None
 
-    def initialize(
-        self,
-    ) -> bool:  # Changed from start() to initialize() for consistency
+        # Shared memory manager
+        self.shm_name = f"isaac_sim_{os.getpid()}_{int(time.time())}"
+        self.shm_manager = SharedMemoryManager(self.shm_name)
+
+        # For API compatibility
+        self.action_space_info: Optional[Dict] = None
+        self.observation_space_info: Optional[Dict] = None
+
+    def _send_message(self, message: Dict[str, Any]) -> None:
+        """Send a control message via Unix socket."""
+        if not self.socket:
+            raise ConnectionError("Socket not connected")
+        data = pickle.dumps(message)
+        length = struct.pack("!I", len(data))
+        self.socket.sendall(length + data)
+
+    def _receive_message(self) -> Dict[str, Any]:
+        """Receive a control message via Unix socket."""
+        if not self.socket:
+            raise ConnectionError("Socket not connected")
+
+        # Read 4-byte length prefix
+        raw_length = b""
+        while len(raw_length) < 4:
+            chunk = self.socket.recv(4 - len(raw_length))
+            if not chunk:
+                raise ConnectionError("Socket connection closed")
+            raw_length += chunk
+
+        length = struct.unpack("!I", raw_length)[0]
+
+        # Read the message data
+        data = b""
+        while len(data) < length:
+            chunk = self.socket.recv(min(length - len(data), 4096))
+            if not chunk:
+                raise ConnectionError("Socket connection closed")
+            data += chunk
+
+        return pickle.loads(data)
+
+    def initialize(self) -> bool:
         """Start the Isaac simulation subprocess and initialize it."""
         if self.is_initialized:
             print("[IsaacSimulator] Simulator already initialized and running.")
             return True
 
         try:
-            from robot_brain_system.utils.isaac_launcher import isaac_process_entry
+            # Create Unix socket path in temp directory
+            temp_dir = tempfile.gettempdir()
+            self.socket_path = os.path.join(temp_dir, f"isaac_sim_{os.getpid()}.sock")
 
-            # Create communication pipe
-            self.parent_conn, child_conn = Pipe()
+            # Remove socket file if it exists
+            if os.path.exists(self.socket_path):
+                os.unlink(self.socket_path)
 
-            # Start subprocess
-            self.process = mp.Process(
-                target=isaac_process_entry,
-                args=(
-                    child_conn,
-                    self.sim_config,
-                ),  # Pass sim_config
+            print(f"[IsaacSimulator] Using Unix socket: {self.socket_path}")
+
+            # Write config to a temporary file
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as f:
+                if isinstance(self.sim_config, DictConfig):
+                    # Convert DictConfig to regular dict
+                    self.sim_config = OmegaConf.to_container(
+                        self.sim_config, resolve=True
+                    )
+                json.dump(self.sim_config, f, indent=2)
+                self._config_file = f.name
+
+            print(f"[IsaacSimulator] Config written to {self._config_file}")
+
+            # Get the path to the server script
+            server_script = (
+                Path(__file__).parent.parent / "launcher" / "isaac_lab_server_shm.py"
             )
-            self.process.daemon = True  # Ensure subprocess closes with parent
-            self.process.start()
+            if not server_script.exists():
+                raise FileNotFoundError(f"Server script not found: {server_script}")
 
-            # Wait for initialization signal from subprocess
-            if self.parent_conn.poll(
-                timeout=480
-            ):  # Increased timeout for Isaac Lab init
-                response = self.parent_conn.recv()
-                if response.get("status") == "ready":
-                    self.is_running = True
-                    self.is_initialized = True
-                    # Store env info if sent back
-                    self.action_space_info = response.get("action_space")
-                    self.observation_space_info = response.get("observation_space")
-                    print(
-                        "[IsaacSimulator] Simulation subprocess started and environment ready."
+            # Get the workspace root to use isaaclab.sh
+            workspace_root = Path(__file__).parent.parent.parent
+            isaaclab_sh = workspace_root / "isaaclab.sh"
+
+            if not isaaclab_sh.exists():
+                raise FileNotFoundError(f"isaaclab.sh not found: {isaaclab_sh}")
+
+            # Launch the server process using isaaclab.sh
+            launch_command = (
+                f"{isaaclab_sh} -p {server_script} "
+                f"--socket {self.socket_path} "
+                f"--config {self._config_file} "
+                f"--shm-name {self.shm_name}"
+            )
+
+            print(f"[IsaacSimulator] Launching server: {launch_command}")
+
+            self.process = subprocess.Popen(
+                launch_command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+            # Start threads to read and display server output in real-time
+            def stream_output(pipe, prefix):
+                """Read from pipe and print with prefix."""
+                try:
+                    for line in iter(pipe.readline, ""):
+                        if line:
+                            print(f"[Server {prefix}] {line.rstrip()}")
+                except Exception as e:
+                    print(f"[Server {prefix}] Stream error: {e}")
+
+            stdout_thread = threading.Thread(
+                target=stream_output, args=(self.process.stdout, "OUT"), daemon=True
+            )
+            stderr_thread = threading.Thread(
+                target=stream_output, args=(self.process.stderr, "ERR"), daemon=True
+            )
+            stdout_thread.start()
+            stderr_thread.start()
+
+            # Give the server a moment to start and create the socket
+            print("[IsaacSimulator] Waiting for server to initialize...")
+            time.sleep(5)  # Increased wait time for Isaac Lab initialization
+
+            # Connect to the server via Unix socket
+            print(f"[IsaacSimulator] Connecting to server via {self.socket_path}...")
+            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+            # Try to connect with retries
+            max_retries = 120  # 120 seconds timeout for Isaac Lab startup
+            for i in range(max_retries):
+                # Check if process is still alive
+                if self.process.poll() is not None:
+                    # Process has terminated
+                    returncode = self.process.returncode
+                    raise RuntimeError(
+                        f"Server process terminated unexpectedly with code {returncode}. "
+                        f"Check the server output above for errors."
                     )
-                    return True
-                else:
-                    error_msg = response.get("error", "Unknown initialization error")
-                    print(
-                        f"[IsaacSimulator] Subprocess initialization failed: {error_msg}"
-                    )
-                    self._cleanup_process()
-                    return False
+
+                try:
+                    self.socket.connect(self.socket_path)
+                    print("[IsaacSimulator] Connected to server successfully!")
+                    break
+                except (ConnectionRefusedError, FileNotFoundError):
+                    if i == max_retries - 1:
+                        raise RuntimeError(
+                            f"Failed to connect to server after {max_retries} retries. "
+                            f"Socket file: {self.socket_path}. "
+                            f"Process status: {'running' if self.process.poll() is None else 'terminated'}"
+                        )
+                    if i % 10 == 0:  # Print every 10 seconds
+                        print(
+                            f"[IsaacSimulator] Waiting for server socket... ({i + 1}/{max_retries})"
+                        )
+                    time.sleep(1)
+
+            # Connect to shared memory buffers
+            print("[IsaacSimulator] Connecting to shared memory buffers...")
+            self.shm_manager.connect_buffers()
+            print("[IsaacSimulator] Connected to shared memory")
+
+            # Wait for initialization signal from server
+            self.socket.settimeout(480)  # Long timeout for Isaac Lab init
+            response = self._receive_message()
+
+            if response.get("status") == "ready":
+                self.is_running = True
+                self.is_initialized = True
+                self.action_space_info = response.get("action_space")
+                self.observation_space_info = response.get("observation_space")
+                print(
+                    "[IsaacSimulator] Simulation subprocess started and environment ready."
+                )
+                return True
             else:
-                print("[IsaacSimulator] Simulation subprocess initialization timeout.")
+                error_msg = response.get("error", "Unknown initialization error")
+                print(f"[IsaacSimulator] Subprocess initialization failed: {error_msg}")
                 self._cleanup_process()
                 return False
 
@@ -107,17 +391,44 @@ class IsaacSimulator:
             return False
 
     def _cleanup_process(self):
-        if self.process and self.process.is_alive():
-            self.process.terminate()
-            self.process.join(timeout=5)
-        if self.parent_conn:
-            self.parent_conn.close()
-        self.process = None
-        self.parent_conn = None
+        """Clean up all resources."""
+        if self.socket:
+            try:
+                self.socket.close()
+            except Exception:
+                pass
+            self.socket = None
+
+        if self.socket_path and os.path.exists(self.socket_path):
+            try:
+                os.unlink(self.socket_path)
+            except Exception:
+                pass
+
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            self.process = None
+
+        # Clean up shared memory
+        self.shm_manager.close()
+
+        if self._config_file and os.path.exists(self._config_file):
+            try:
+                os.unlink(self._config_file)
+            except Exception:
+                pass
+
         self.is_running = False
         self.is_initialized = False
 
-    def shutdown(self):  # Changed from stop() to shutdown()
+    def shutdown(self):
         """Stop the Isaac simulation subprocess."""
         print("[IsaacSimulator] Initiating shutdown...")
         if not self.is_running and not self.is_initialized:
@@ -125,18 +436,21 @@ class IsaacSimulator:
             return
 
         try:
-            if self.parent_conn:
-                self.parent_conn.send({"command": "shutdown"})
-                # Wait for acknowledgment or timeout
-                if self.parent_conn.poll(timeout=10):
-                    ack = self.parent_conn.recv()
+            if self.socket:
+                self._send_message({"command": "shutdown"})
+                # Wait for acknowledgment
+                try:
+                    self.socket.settimeout(10)
+                    ack = self._receive_message()
                     print(
                         f"[IsaacSimulator] Shutdown acknowledged by subprocess: {ack}"
                     )
-                else:
+                except socket.timeout:
                     print(
                         "[IsaacSimulator] No shutdown acknowledgment from subprocess."
                     )
+                except Exception as e:
+                    print(f"[IsaacSimulator] Error receiving shutdown ack: {e}")
 
             self._cleanup_process()
             print("[IsaacSimulator] Simulation shutdown completed.")
@@ -144,182 +458,170 @@ class IsaacSimulator:
         except Exception as e:
             print(f"[IsaacSimulator] Error during simulation shutdown: {e}")
             traceback.print_exc()
-            # Force cleanup if error during graceful shutdown
             self._cleanup_process()
+
+    # ==================== Environment Operations (Pure) ====================
 
     @staticmethod
     def _should_retry_command(response: Optional[Dict[str, Any]]) -> bool:
+        """Check if a command should be retried based on the response."""
         if isinstance(response, dict) and response.get("success") is False:
             error_message = response.get("error", "").lower()
-            # Retry specifically on "Timeout"
             if "timeout" in error_message:
                 print(
                     f"[IsaacSimulator._should_retry_command] Detected retryable error: {error_message}"
                 )
                 return True
-            # Do NOT retry on "Pipe broken" because shutdown() is already called.
-            # if "pipe broken" in error_message:
-            #     return True # Careful: if shutdown() is called, retrying might be complex
         return False
 
     @retry(
         max_attempts=3,
-        delay_seconds=0.5,  # Start with a shorter delay for local pipes
+        delay_seconds=0.5,
         backoff_factor=1.5,
         max_delay_seconds=5.0,
-        exceptions_to_retry=(
-            pickle.UnpicklingError,
-            TimeoutError,
-        ),  # TimeoutError if poll() itself times out, pickle for bad data
-        retry_on_return_value_condition=_should_retry_command,  # Pass the method itself
+        exceptions_to_retry=(pickle.UnpicklingError, TimeoutError),
+        retry_on_return_value_condition=_should_retry_command,
     )
     def _send_command_and_recv(
         self, command: Dict[str, Any], timeout: float = 60
     ) -> Optional[Dict[str, Any]]:
+        """Send a command and receive response with retries."""
         acquired = self._command_lock.acquire(timeout=60)
-        if acquired:
-            if not self.is_initialized or not self.parent_conn:
+        if not acquired:
+            print("[IsaacSimulator] Failed to acquire command lock within timeout.")
+            return {"success": False, "error": "Command lock acquisition failed"}
+
+        try:
+            if not self.is_initialized or not self.socket:
                 print("[IsaacSimulator] Simulator not initialized or connection lost.")
                 return {"success": False, "error": "Simulator not initialized"}
-            try:
-                self.parent_conn.send(command)
-                if self.parent_conn.poll(timeout):
-                    response = self.parent_conn.recv()
-                    if "error" in response:
-                        print(
-                            f"[IsaacSimulator] Error from subprocess for command {command.get('command')}: {response['error']}"
-                        )
-                    return response
-                else:
-                    print(
-                        f"[IsaacSimulator] Timeout waiting for response to command: {command.get('command')}"
-                    )
-                    return {"success": False, "error": "Timeout"}
-            except (EOFError, BrokenPipeError) as e:
+
+            self._send_message(command)
+            self.socket.settimeout(timeout)
+            response = self._receive_message()
+
+            if "error" in response:
                 print(
-                    f"[IsaacSimulator] Communication pipe broken: {e}. Shutting down simulator."
+                    f"[IsaacSimulator] Error from subprocess for command {command.get('command')}: {response['error']}"
                 )
-                self.shutdown()
-                return {"success": False, "error": f"Pipe broken: {e}"}
-            except Exception as e:
-                print(
-                    f"[IsaacSimulator] Error sending/receiving command {command.get('command')}: {e}"
-                )
-                return {"success": False, "error": str(e)}
-            finally:
-                self._command_lock.release()
-        else:
-            print("[IsaacSimulator] Failed to acquire command lock within timeout.")
-            return {
-                "success": False,
-                "error": "Command lock acquisition failed",
-            }
+            return response
 
-    def execute_skill_blocking(
-        self, skill_name: str, parameters: Dict[str, Any]
-    ) -> bool:
-        """Execute a skill in the simulation subprocess (blocks until skill completion)."""
-        response = self._send_command_and_recv(
-            {
-                "command": "execute_skill_blocking",
-                "skill_name": skill_name,
-                "parameters": parameters,
-            },
-            timeout=parameters.get("timeout", 60.0) + 5.0,
-        )  # Add buffer to timeout
-        return response.get("success", False) if response else False
+        except socket.timeout:
+            print(
+                f"[IsaacSimulator] Timeout waiting for response to command: {command.get('command')}"
+            )
+            return {"success": False, "error": "Timeout"}
+        except (EOFError, BrokenPipeError, ConnectionError) as e:
+            print(
+                f"[IsaacSimulator] Communication pipe broken: {e}. Shutting down simulator."
+            )
+            self.shutdown()
+            return {"success": False, "error": f"Pipe broken: {e}"}
+        except Exception as e:
+            print(
+                f"[IsaacSimulator] Error sending/receiving command {command.get('command')}: {e}"
+            )
+            return {"success": False, "error": str(e)}
+        finally:
+            self._command_lock.release()
 
-    def start_skill_non_blocking(
-        self, skill_name: str, parameters: Dict[str, Any], timeout: float = 60.0
-    ) -> bool:
-        """Start a skill execution in the simulation subprocess (non-blocking)."""
+    def set_env_decimation(self, decimation: int) -> bool:
+        """Set the environment decimation factor."""
         response = self._send_command_and_recv(
-            {
-                "command": "start_skill_non_blocking",
-                "skill_name": skill_name,
-                "parameters": parameters,
-            },
-            timeout=timeout,
+            {"command": "set_env_decimation", "decimation": decimation}
         )
-        return response.get("success", False) if response else False
-
-    def get_skill_executor_status(self) -> Dict[str, Any]:
-        """Get current skill executor status from the subprocess."""
-        response = self._send_command_and_recv({"command": "get_skill_executor_status"})
-        return response or {"status": "error", "error": "No response"}
-
-    def terminate_current_skill(
-        self, skill_status: SkillStatus = SkillStatus.INTERRUPTED, status_info: str = ""
-    ) -> bool:
-        """Terminate current skill execution in the subprocess."""
-        response = self._send_command_and_recv(
-            {
-                "command": "terminate_current_skill",
-                "skill_status": skill_status,
-                "status_info": status_info,
-            }
-        )
-        return response.get("success", False) if response else False
-
-    def pause_current_skill(self) -> bool:
-        """Terminate current skill execution in the subprocess."""
-        response = self._send_command_and_recv(
-            {"command": "change_current_skill_status", "status": SkillStatus.PAUSED}
-        )
-        return response.get("success", False) if response else False
-
-    def recovery_current_skill(self) -> bool:
-        """Terminate current skill execution in the subprocess."""
-        response = self._send_command_and_recv(
-            {"command": "change_current_skill_status", "status": SkillStatus.RUNNING}
-        )
-        return response.get("success", False) if response else False
-
-    def change_current_skill_status(self, status: SkillStatus) -> bool:
-        """Change current skill execution status in the subprocess."""
-        response = self._send_command_and_recv(
-            {"command": "change_current_skill_status_force", "status": status}
-        )
-        return response.get("success", False) if response else False
-
-    def get_observation(self) -> Optional[list[Observation]]:
-        """Requests and retrieves the current observation from the simulator subprocess."""
-        response = self._send_command_and_recv({"command": "get_observation"})
-        obss = []
         if response and response.get("success"):
-            obs_data = response.get("observation_data")
-            for obs in obs_data:
-                obss.append(Observation(**obs))
-                # Assuming obs_data is a dict that can initialize Observation
-            return obss
+            print(f"[IsaacSimulator] Environment decimation set to {decimation}")
+            return True
+        return False
+
+    # ==================== Environment Query Operations ====================
+
+    def get_scene_info(self) -> Dict[str, Any]:
+        """Get scene state information (object positions, robot state, etc.)."""
+        response = self._send_command_and_recv({"command": "get_scene_info"})
+        if response and response.get("success"):
+            return response.get("scene_info", {})
+        return {}
+
+    def get_scene_state(
+        self, target_name: str, state_names: List[str]
+    ) -> Dict[str, Any]:
+        """Get scene state information (object positions, robot state, etc.)."""
+        response = self._send_command_and_recv(
+            {
+                "command": "get_scene_state",
+                "target_name": target_name,
+                "state_names": state_names,
+            }
+        )
+        if response and response.get("success"):
+            failed_state = response.get("failed_state", [])
+            # if failed_state:
+            #     print(
+            #         f"[IsaacSimulator] Warning: Failed to get states {failed_state} for target {target_name}"
+            #     )
+            return response.get("state_data", {})
+        return {}
+
+    def get_robot_state(self) -> Dict[str, Any]:
+        """Get robot state (joint positions, velocities, end effector pose)."""
+        response = self._send_command_and_recv({"command": "get_robot_state"})
+        if response and response.get("success"):
+            return response.get("robot_state", {})
+        return {}
+
+    def get_observation(self) -> Optional[List[Observation]]:
+        """Requests and retrieves the current observation from the simulator subprocess."""
+        # Use shared memory for observation data (high performance)
+        response = self._send_command_and_recv({"command": "get_observation"})
+        if response and response.get("success"):
+            # Read from shared memory - returns a single observation dict
+            obs_data = self.shm_manager.read_observation()
+            if obs_data:
+                # Return as list for compatibility (single observation wrapped in list)
+                return [Observation(**obs_data)]
         return None
 
     def get_current_observation(self) -> Optional[Observation]:
+        """Get the current observation from the simulator."""
         response = self._send_command_and_recv({"command": "get_current_observation"})
         if response and response.get("success"):
-            obs_data = response.get("observation_data")
-            return Observation(**obs_data)
+            # Read from shared memory
+            obs_data = self.shm_manager.read_observation()
+            if obs_data:
+                return Observation(**obs_data)
+        return None
+
+    def update(self, return_obs: bool = True) -> Optional[Observation]:
+        """this is not a proxy method, it bundles multiple simulator calls into one for efficiency. useful for stepping env without actions."""
+        response = self._send_command_and_recv({"command": "step_sim","return_obs": return_obs})
+        if response and response.get("success") and return_obs:
+            obs_data = self.shm_manager.read_observation()
+            obs = Observation(**obs_data) if obs_data else None
+            return obs
         return None
 
     def step_env(
         self, action: Action
     ) -> Optional[Tuple[Observation, float, bool, bool, Dict[str, Any]]]:
         """Manually step the environment with a given action. For testing/direct control."""
-        response = self._send_command_and_recv(
-            {
-                "command": "step_env",
-                "action_data": action.data.tolist()
-                if hasattr(action.data, "tolist")
-                else action.data,  # Convert numpy to list
-                "action_metadata": action.metadata,
-            }
-        )
+        # Write action to shared memory
+        action_dict = {
+            "data": action.data.tolist()
+            if hasattr(action.data, "tolist")
+            else action.data,
+            "metadata": action.metadata,
+        }
+        self.shm_manager.write_action(action_dict)
+
+        # Send command via socket (control only)
+        response = self._send_command_and_recv({"command": "step_env"})
+
         if response and response.get("success"):
-            obs = (
-                Observation(**response["observation_data"])
-                if response.get("observation_data")
-                else None
-            )
+            # Read observation from shared memory
+            obs_data = self.shm_manager.read_observation()
+            obs = Observation(**obs_data) if obs_data else None
             return (
                 obs,
                 response.get("reward"),
@@ -329,512 +631,222 @@ class IsaacSimulator:
             )
         return None
 
-    def reset_env(self) -> Optional[Observation]:
+    def reset_env(self) -> bool:
         """Reset the simulation environment(s)."""
         response = self._send_command_and_recv({"command": "reset_env"})
         if response and response.get("success"):
-            obs_data = response.get("observation_data")
-            return Observation(**obs_data) if obs_data else None
-        return None
-
-    @staticmethod
-    def _isaac_simulation_entry(
-        child_conn: Connection,
-        app_launcher: Any,
-        app_launcher_params,
-    ):
-        """Entry point for Isaac simulation subprocess with direct environment access."""
-        env = None
-        skill_executor = None
-        simulation_app = app_launcher.app
-
-        try:
-            import gymnasium as gym
-            from isaaclab_tasks.utils import parse_env_cfg
-            from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
-            from argparse import Namespace
-            import yaml
-            import torch  # We can import torch here again if we want to be strict
-            import numpy as np
-            import queue
-            import time
-            import traceback
-
-            from robot_brain_system.core.skill_manager import (
-                SkillExecutor,
-                get_skill_registry,
-            )
-            from robot_brain_system.utils import dynamic_set_attr
-            import robot_brain_system.skills  # noqa: F401
-            from robot_brain_system.skills.manipulation_skills import AliceControl
-
-            print(
-                "[IsaacSubprocess] Isaac App was launched by launcher. Continuing initialization."
-            )
-            cli_args = Namespace(
-                **app_launcher_params
-            )  # Create Namespace from the same comprehensive dict
-
-            print("[Isaac Process] Initializing environment...")
-            env_cfg = parse_env_cfg(
-                cli_args.task,
-                device=cli_args.device,
-                num_envs=cli_args.num_envs,
-                use_fabric=not cli_args.disable_fabric,
-            )
-            # Load custom config if provided
-            if hasattr(cli_args, "env_config_file"):
-                with open(cli_args.env_config_file, "r") as f:
-                    env_new_cfg = yaml.safe_load(f)
-                    dynamic_set_attr(env_cfg, env_new_cfg, path=["env_cfg"])
-
-            env = gym.make(cli_args.task, cfg=env_cfg)
-            _env: DirectRLEnv | ManagerBasedRLEnv = env.unwrapped
-            _sim = _env.sim
-            _sim.set_camera_view(
-                (-2.08, -1.12, 3.95),
-                (0.6, -2.0, 2.818),
-            )
-
-            obs_queue = queue.Queue()
-            obs, info = env.reset()
-
-            # -- WARM-UP CORRECTION START --
-            print("[IsaacSubprocess] Starting environment warm-up...")
-            # Check if the unwrapped environment has an action_manager and total_action_dim
-            # This is the robust way to get the action dimension for ManagerBasedRLEnv.
-            if hasattr(_env, "action_manager") and hasattr(
-                _env.action_manager, "total_action_dim"
-            ):
-                # Get the correct action dimension directly from the action manager.
-                action_dim = _env.action_manager.total_action_dim
-
-                # Create a zero action tensor with the correct shape: (num_envs, total_action_dim)
-                zero_action = torch.zeros(
-                    (_env.num_envs, action_dim),
-                    device=_env.device,
-                    dtype=torch.float32,
-                )
-                zero_action[..., -1] = 1  # Ensure gripper is open
-                # joint InitialStateCfg not working, so we set it manually
-                init_alice_joint_position_target = torch.zeros_like(
-                    _env.scene["alice"].data.joint_pos_target
-                )
-                init_alice_joint_position_target[:, :9] = torch.tensor(
-                    [
-                        0.0,  # D6Joint_1:0
-                        math.radians(66.7),  # D6Joint_1:1
-                        math.radians(50.7),  # D6Joint_1:2
-                        0.0,  # D6Joint_2:0
-                        math.radians(25.9),  # D6Joint_2:1
-                        math.radians(-23.2),  # D6Joint_2:2
-                        math.radians(-141.8),  # D6Joint_3:0
-                        math.radians(-11.0),  # D6Joint_3:1
-                        math.radians(-41.7),  # D6Joint_3:2
-                    ],
-                    device=_env.device,
-                )
-                _env.scene["alice"].set_joint_position_target(
-                    init_alice_joint_position_target,
-                )
-                # write the joint state to sim to directly change the joint position at one step
-                _env.scene["alice"].write_joint_state_to_sim(
-                    init_alice_joint_position_target,
-                    torch.zeros_like(
-                        init_alice_joint_position_target, device=_env.device
-                    ),
-                )
-                alice_control = AliceControl(
-                    alice_right_forearm_rigid_entity=_env.scene["alice"],
-                    policy_device=_env.device,
-                )
-                for i in range(cli_args.warmup_steps):
-                    # Step the environment with the correctly shaped zero action
-                    # alice_control.apply_action(_env)
-                    obs, reward, terminated, truncated, info = env.step(zero_action)
-                    print(
-                        f"[IsaacSubprocess] Warm-up step {i + 1}/{cli_args.warmup_steps}, action: {zero_action}"
-                    )
-                    print(
-                        f"[IsaacSubprocess] Warm-up step {i + 1}/{cli_args.warmup_steps}, obs: {obs['policy']['gripper_pos'].clone()}"
-                    )
-
-                print(
-                    f"[IsaacSubprocess] Warm-up complete after {cli_args.warmup_steps} steps with action shape {zero_action.shape}."
-                )
-            else:
-                print(
-                    "[IsaacSubprocess] Skipping warm-up: could not determine action dimension from action_manager."
-                )
-
-            alice_articulator = _env.scene["alice"]
-            print(
-                f"[IsaacSubprocess] Alice articulator joint_names: {alice_articulator.joint_names}"
-            )
-            # The 'obs' variable now holds the observation from the final warm-up step.
-            # -- WARM-UP CORRECTION END --
-
-            obs_payload = {
-                "data": obs,  # Assuming obs is already in a dict-like format
-                "metadata": "None",
-                "timestamp": time.time(),
-            }  # Add metadata and timestamp
-            obs_queue.put(obs_payload)
-            print(f"[IsaacSubprocess] Environment reset complete, obs {obs}")
-            latest_obs_payload = obs_payload  # Store latest obs
-            print(
-                f"[Isaac Process] Environment '{cli_args.task}' created. Device: {_env.device}"
-            )
-            # Initialize skill system
-            # Ensure skills are discoverable from the subprocess
-            # This might require setting sys.path or using absolute package imports for skills
-            # For simplicity, assuming skills are in a package accessible via robot_brain_system.skills
-
-            skill_registry = (
-                get_skill_registry()
-            )  # Gets the global one, populated by decorators
-            print(
-                f"[IsaacSubprocess] Found {len(skill_registry.list_skills())} skills."
-            )
-
-            skill_executor = SkillExecutor(skill_registry, env=env)
-            print("[IsaacSubprocess] SkillExecutor initialized.")
-
-            # Send ready signal with env info
-            action_space_info = {
-                "shape": env.action_space.shape,
-                "dtype": str(env.action_space.dtype),
-            }  # Basic info
-            obs_space_info = {
-                "shape": env.observation_space.shape,
-                "dtype": str(env.observation_space.dtype),
-            }  # Basic info
-
-            child_conn.send(
-                {
-                    "status": "ready",
-                    "action_space": action_space_info,
-                    "observation_space": obs_space_info,
-                }
-            )
-            print("[IsaacSubprocess] Sent 'ready' to parent.")
-
-            # Main loop
-            active = True
-
-            def _get_observation():
-                if isinstance(_env, ManagerBasedRLEnv):
-                    return _env.observation_manager.compute()
-                elif isinstance(_env, DirectRLEnv):
-                    return _env._get_observations
-                else:
-                    raise TypeError(
-                        f"Unsupport unwrapped enviroment type: {type(_env)}"
-                    )
-
-            obs_dict = obs
-            print(
-                f"[IsaacSubprocess] Initial observation eef_pos_gripper: {obs_dict['policy']['eef_pos_gripper'].clone()}"
-            )
-            inner_skills = []
-            # inner_skills.append(
-            #     AliceControl(
-            #         alice_right_forearm_rigid_entity=_env.scene["alice_right_forearm"],
-            #         policy_device=_env.device,
-            #     )
-            # )
-            # set_boxjoint_pose(
-            #     env=_env,
-            #     env_ids=torch.arange(_env.num_envs),
-            #     target_joint_pos=0.33,
-            #     asset_cfg=SceneEntityCfg("box"),
-            # )
-            while active:
-                try:
-                    # Handle commands from parent process
-                    if child_conn.poll(0.001):  # Non-blocking check for 1ms
-                        command_data = child_conn.recv()
-                        cmd = command_data.get("command")
-
-                        if cmd == "shutdown":
-                            print("[IsaacSubprocess] Received shutdown command.")
-                            active = False
-                            child_conn.send({"status": "shutdown_ack"})
-                            break
-                        elif cmd == "execute_skill_blocking":
-                            assert False, "Unsupported now!"
-                        elif cmd == "start_skill_non_blocking":
-                            skill_name = command_data["skill_name"]
-                            params = command_data["parameters"]
-                            print(
-                                f"[IsaacSubprocess] Starting skill (non-blocking): {skill_name}"
-                            )
-                            success, obs_dict = skill_executor.initialize_skill(
-                                skill_name, params, obs_dict=obs_dict
-                            )
-                            child_conn.send(
-                                {
-                                    "success": success,
-                                    "status": skill_executor.status.value,
-                                }
-                            )
-                        elif cmd == "get_skill_executor_status":
-                            child_conn.send(skill_executor.get_status_info())
-                        elif cmd == "terminate_current_skill":
-                            skill_status = command_data["skill_status"]
-                            status_info = command_data.get("status_info", "")
-                            success = skill_executor.terminate_current_skill(
-                                skill_status, status_info=status_info
-                            )
-                            child_conn.send({"success": success})
-                        elif cmd == "change_current_skill_status":
-                            skill_status = command_data["status"]
-                            success = skill_executor.change_current_skill_status(
-                                skill_status=skill_status
-                            )
-                            child_conn.send({"success": success})
-                        elif cmd == "change_current_skill_status_force":
-                            skill_status = command_data["status"]
-                            success = skill_executor._change_current_skill_status_force(
-                                skill_status=skill_status
-                            )
-                            child_conn.send({"success": success})
-                        elif cmd == "get_observation":
-                            obss = []
-                            try:
-                                while True:
-                                    obss.append(obs_queue.get_nowait())
-                                    obs_queue.task_done()
-                            except queue.Empty:
-                                print("Queue is empty")
-                            child_conn.send(
-                                {
-                                    "success": True,
-                                    "observation_data": obss,
-                                }
-                            )
-                        elif cmd == "get_current_observation":
-                            child_conn.send(
-                                {
-                                    "success": True,
-                                    "observation_data": latest_obs_payload,
-                                    "info": info,
-                                }
-                            )
-
-                        elif cmd == "step_env":
-                            assert False, "Unsupported now!"
-                            action_data_np = np.array(command_data["action_data"])
-                            action_tensor = (
-                                torch.from_numpy(action_data_np)
-                                .to(env.device)
-                                .unsqueeze(0)
-                            )  # Batch for single env
-
-                            obs_dict, reward, terminated, truncated, info = env.step(
-                                action_tensor
-                            )
-
-                            obs_payload = {
-                                "data": obs_dict,  # TODO test
-                                "metadata": "None",
-                                "timestamp": time.time(),
-                            }
-                            obs_queue.put(obs_payload)
-                            latest_obs_payload = obs_payload  # Store latest obs
-
-                            child_conn.send(
-                                {
-                                    "success": True,
-                                    "observation_data": obs_payload,
-                                    "reward": float(
-                                        reward.item()
-                                    ),  # Assuming single env reward
-                                    "terminated": bool(terminated.item()),
-                                    "truncated": bool(truncated.item()),
-                                    "info": info,  # This might need serialization too
-                                }
-                            )
-                        elif cmd == "reset_env":
-                            assert False
-                            obs_queue = queue.Queue()  # Reset obs queue
-                            obs_dict, info = env.reset()
-                            obs_payload = {
-                                "data": obs_dict,  # TODO test
-                                "metadata": "None",
-                                "timestamp": time.time(),
-                            }
-                            obs_queue.put(obs_payload)
-                            latest_obs_payload = obs_payload  # Store latest obs
-                            child_conn.send(
-                                {
-                                    "success": True,
-                                    "observation_data": obs_payload,
-                                    "info": info,
-                                }
-                            )
-                        else:
-                            child_conn.send(
-                                {
-                                    "error": f"Unknown command: {cmd}",
-                                    "success": False,
-                                }
-                            )
-
-                    # Step non-blocking skill if one is running
-                    if skill_executor.is_running():
-                        skill_exec_result = skill_executor.step(
-                            obs_dict
-                        )  # env is passed during start_skill
-                        obs_dict, reward, terminated, truncated, info = (
-                            skill_exec_result
-                        )
-                        if skill_executor.is_running():
-                            obs_dict_in = {obs_key: {} for obs_key in obs_dict.keys()}
-                            obs_dict_in["policy"].update(
-                                {
-                                    key: val.clone()
-                                    for key, val in obs_dict["policy"].items()
-                                    if isinstance(val, torch.Tensor)
-                                }
-                            )
-                            obs_payload = {
-                                "data": obs_dict_in,
-                                "metadata": "None",
-                                "timestamp": time.time(),
-                            }
-                            obs_queue.put(obs_payload)
-                            latest_obs_payload = obs_payload  # Store latest obs
-                        else:
-                            obs_dict = latest_obs_payload["data"]  # Use last obs
-                        # print(
-                        #     f"[IsaacSubprocess] obs_shape: { {key: val.shape for key, val in obs_dict['policy'].items() if isinstance(val, torch.Tensor)} }, "
-                        # )
-                    # Small delay to prevent tight loop if no commands and no active skill
-                    else:
-                        obs_dict = _get_observation()
-                        # _sim.set_render_mode(_sim.RenderMode.FULL_RENDERING)
-                        # _sim.step(render=True)
-                    if not child_conn.poll(0) and not skill_executor.is_running():
-                        time.sleep(0.001)
-
-                except EOFError:  # Pipe closed by parent
-                    print("[IsaacSubprocess] Parent connection closed.")
-                    active = False
-                except BrokenPipeError:
-                    print("[IsaacSubprocess] Pipe broken.")
-                    active = False
-                except Exception as loop_e:
-                    print(f"[IsaacSubprocess] Error in main loop: {loop_e}")
-                    traceback.print_exc()
-                    try:
-                        child_conn.send({"error": str(loop_e), "success": False})
-                    except:
-                        pass  # Can't send if pipe is broken
-                    # Decide if to continue or break based on error severity
-                    # For now, continue unless it's a pipe error handled above
-                    time.sleep(0.1)  # Avoid fast error loop
-
-        except Exception as e:
-            print(f"[IsaacSubprocess] Subprocess initialization or critical error: {e}")
-            traceback.print_exc()
-            try:
-                child_conn.send({"status": "error", "error": str(e)})
-            except:
-                pass  # If conn is already broken
-
-        finally:
-            print("[IsaacSubprocess] Cleaning up...")
-            if env is not None:
-                try:
-                    env.close()
-                    print("[IsaacSubprocess] Environment closed.")
-                except Exception as e_close:
-                    print(f"[IsaacSubprocess] Error closing environment: {e_close}")
-            if "simulation_app" in locals() and simulation_app.is_running():
-                try:
-                    simulation_app.close()  # Close the Isaac Sim application
-                    print("[IsaacSubprocess] Isaac App closed.")
-                except Exception as e_sim_close:
-                    print(
-                        f"[IsaacSubprocess] Error closing Isaac Sim App: {e_sim_close}"
-                    )
-            if child_conn:
-                child_conn.close()
-            print("[IsaacSubprocess] Terminated.")
+            return True
+        return False
 
 
 if __name__ == "__main__":
-    ...
+    """
+    Comprehensive API test for IsaacSimulator (Pure Environment Client).
+    Tests environment operations only - no skill execution (moved to robot_brain_system).
+    """
+    import time
+    from pathlib import Path
+    from robot_brain_system.utils.config_utils import load_config
 
-    # print("Isaac Simulator Tets")
-    # isim = IsaacSimulator(sim_config=DEVELOPMENT_CONFIG)
-    # result = isim.initialize()
-    # assert result, "Failed to initialize Isaac Simulator"
-    # print("Isaac Simulator initialized successfully.")
+    print("=" * 80)
+    print("IsaacSimulator API Test Suite (Pure Environment Client)")
+    print("=" * 80)
 
-    # # reset test
-    # obs = isim.reset_env()
-    # assert obs is not None, "Failed to reset Isaac Simulator environment"
-    # print("Isaac Simulator environment reset successfully.")
+    # Load default configuration from robot_brain_system/conf
+    config_path = Path(__file__).parent.parent / "conf" / "config.yaml"
+    print(f"Loading configuration from: {config_path}")
+    test_config = load_config(config_path=config_path)
+    print(f"Using task: {test_config.simulator.task}")
+    print(f"Device: {test_config.simulator.device}")
 
-    # # Get observation test
-    # obs = isim.get_observation()
-    # assert obs is not None, "Failed to get observation from Isaac Simulator"
-    # print("Observation retrieved successfully:", obs)
+    # Convert simulator config to dict for IsaacSimulator
+    from omegaconf import OmegaConf
+    from typing import cast, Dict
 
-    # skill_status = isim.get_skill_executor_status()
-    # assert skill_status.get("status") == "idle", (
-    #     f"Skill executor status should be 'idle', but got {skill_status.get('status')}"
-    # )
+    sim_config_dict = cast(
+        Dict[str, Any], OmegaConf.to_container(test_config.simulator, resolve=True)
+    )
 
-    # result = isim.start_skill_non_blocking(
-    #     "assemble_object",
-    #     {
-    #         "checkpoint_path": "assets/model_epoch_4000.pth",
-    #         "horizon": 1000,
-    #     },
-    # )
-    # assert result, "Failed to start skill in Isaac Simulator"
-    # print("Skill started successfully.")
+    test_results = {
+        "passed": [],
+        "failed": [],
+    }
 
-    # while isim.get_skill_executor_status().get("status") == "running":
-    #     time.sleep(1)
-    #     print("Waiting for skill to complete...")
-    # skill_finish_status = isim.get_skill_executor_status()
-    # print(f"Skill finished with status: {skill_finish_status.get('status', 'unknown')}")
+    def test_step(name: str, test_func):
+        """Run a test step and record results."""
+        print(f"\n[TEST] {name}...")
+        try:
+            test_func()
+            print("  ✅ PASSED")
+            test_results["passed"].append(name)
+            return True
+        except AssertionError as e:
+            print(f"  ❌ FAILED: {e}")
+            test_results["failed"].append(name)
+            return False
+        except Exception as e:
+            print(f"  ❌ ERROR: {e}")
+            import traceback
 
-    # # Terminate skill test
-    # isim.start_skill_non_blocking(
-    #     "assemble_object",
-    #     {
-    #         "checkpoint_path": "assets/model_epoch_4000.pth",
-    #         "horizon": 1000,
-    #     },
-    # )
-    # time.sleep(5)  # Give it some time to start
-    # print("Attempting to terminate current skill...")
-    # result = isim.terminate_current_skill()
-    # assert result, "Failed to terminate skill in Isaac Simulator"
-    # skill_status = isim.get_skill_executor_status()
-    # assert skill_status.get("status") == "interrupted", (
-    #     f"Skill executor status should be 'interrupted' after termination, but got {skill_status.get('status')}"
-    # )
-    # print(
-    #     "Skill terminated successfully, current skill status:",
-    #     isim.get_skill_executor_status().get("status"),
-    # )
+            traceback.print_exc()
+            test_results["failed"].append(name)
+            return False
 
-    # isim.shutdown()
+    simulator = None
 
-    # # Step environment test
-    # for i in range(5):
-    #     action = Action(data=np.random.rand(), metadata={})
-    #     step_result = isim.step_env(action)
-    #     assert step_result is not None, (
-    #         "Failed to step Isaac Simulator environment"
-    #     )
-    #     obs, reward, terminated, truncated, info = step_result
-    #     print(
-    #         f"Step {i + 1}: Obs: {obs}, Reward: {reward}, Terminated: {terminated}, Truncated: {truncated}, Info: {info}"
-    #     )
+    try:
+        # Test 1: Initialization
+        def test_initialization():
+            global simulator
+            simulator = IsaacSimulator(sim_config=sim_config_dict)
+            assert simulator is not None, "Failed to create simulator instance"
+            assert not simulator.is_initialized, (
+                "Simulator should not be initialized yet"
+            )
+            assert not simulator.is_running, "Simulator should not be running yet"
+
+        test_step("1. Simulator instantiation", test_initialization)
+
+        # Test 2: Initialize (start simulator)
+        def test_initialize():
+            result = simulator.initialize()
+            assert result, "Simulator initialization failed"
+            assert simulator.is_initialized, "Simulator should be marked as initialized"
+            assert simulator.is_running, "Simulator should be marked as running"
+            assert simulator.socket is not None, "Socket should be connected"
+            assert simulator.shm_manager.shm_obs is not None, (
+                "Observation shared memory should be connected"
+            )
+            assert simulator.action_space_info is not None, (
+                "Action space info should be retrieved"
+            )
+            assert simulator.observation_space_info is not None, (
+                "Observation space info should be retrieved"
+            )
+
+        if not test_step("2. Initialize simulator", test_initialize):
+            print("\n⚠️  Cannot continue tests without successful initialization")
+            exit(1)
+
+        # Test 3: Reset environment
+        def test_reset_env():
+            result = simulator.reset_env()
+            assert result, "Environment reset failed"
+
+        test_step("3. Reset environment", test_reset_env)
+
+        # Test 4: Get current observation (via shared memory)
+        def test_get_current_observation():
+            obs = simulator.get_current_observation()
+            assert obs is not None, "Failed to get current observation"
+            assert hasattr(obs, "data"), "Observation should have 'data' attribute"
+            assert hasattr(obs, "timestamp"), (
+                "Observation should have 'timestamp' attribute"
+            )
+            print(f"     Observation timestamp: {obs.timestamp}")
+
+        test_step(
+            "4. Get current observation (shared memory)", test_get_current_observation
+        )
+
+        # Test 5: Get observation list
+        def test_get_observation():
+            time.sleep(0.5)  # Let some observations accumulate
+            obss = simulator.get_observation()
+            print(f"     Retrieved {len(obss) if obss else 0} observations from queue")
+
+        test_step("5. Get observation list", test_get_observation)
+
+        # Test 6: Get scene info
+        def test_get_scene_info():
+            scene_info = simulator.get_scene_info()
+            assert isinstance(scene_info, dict), "Scene info should be a dictionary"
+            print(f"     Scene info keys: {list(scene_info.keys())[:5]}...")
+
+        test_step("6. Get scene info", test_get_scene_info)
+
+        # Test 7: Get robot state
+        def test_get_robot_state():
+            robot_state = simulator.get_robot_state()
+            assert isinstance(robot_state, dict), "Robot state should be a dictionary"
+            print(f"     Robot state keys: {list(robot_state.keys())[:5]}...")
+
+        test_step("7. Get robot state", test_get_robot_state)
+
+        # Test 8: Step environment (requires action via shared memory)
+        def test_step_env():
+            # Create a dummy action based on action space info
+            action_dim = simulator.action_space_info.get("shape", [1])[-1]
+            import numpy as np
+
+            dummy_action = Action(
+                data=np.zeros(action_dim, dtype=np.float32),
+                metadata={"info": "test action"},
+            )
+            result = simulator.step_env(dummy_action)
+            assert result is not None, "Step environment returned None"
+            obs, reward, terminated, truncated, info = result
+            breakpoint()
+            assert isinstance(obs, Observation), "Returned observation is not valid"
+            assert isinstance(reward, float), "Reward should be a float"
+            assert isinstance(terminated, bool), "Terminated flag should be bool"
+            assert isinstance(truncated, bool), "Truncated flag should be bool"
+            assert isinstance(info, dict), "Info should be a dictionary"
+            print(
+                f"     Step result - Reward: {reward}, Terminated: {terminated}, Truncated: {truncated}"
+            )
+
+        test_step("8. Step environment", test_step_env)
+
+        # Test 9: Double initialization (should be idempotent)
+        def test_double_initialization():
+            result = simulator.initialize()
+            assert result, "Re-initialization should return True (idempotent)"
+            assert simulator.is_initialized, "Simulator should still be initialized"
+
+        test_step("9. Re-initialization (idempotent)", test_double_initialization)
+
+    finally:
+        # Test 10: Shutdown
+        def test_shutdown():
+            if simulator:
+                simulator.shutdown()
+                assert not simulator.is_initialized, (
+                    "Simulator should be marked as not initialized"
+                )
+                assert not simulator.is_running, (
+                    "Simulator should be marked as not running"
+                )
+
+        print("\n" + "=" * 80)
+        test_step("10. Shutdown simulator", test_shutdown)
+
+    # Print summary
+    print("\n" + "=" * 80)
+    print("TEST SUMMARY")
+    print("=" * 80)
+    print(
+        f"✅ Passed: {len(test_results['passed'])}/{len(test_results['passed']) + len(test_results['failed'])}"
+    )
+    print(
+        f"❌ Failed: {len(test_results['failed'])}/{len(test_results['passed']) + len(test_results['failed'])}"
+    )
+
+    if test_results["passed"]:
+        print("\nPassed tests:")
+        for test in test_results["passed"]:
+            print(f"  ✅ {test}")
+
+    if test_results["failed"]:
+        print("\nFailed tests:")
+        for test in test_results["failed"]:
+            print(f"  ❌ {test}")
+
+    print("\n" + "=" * 80)
+
+    if len(test_results["failed"]) == 0:
+        print("🎉 ALL TESTS PASSED! Pure environment client API is working.")
+        exit(0)
+    else:
+        print(f"⚠️  {len(test_results['failed'])} test(s) failed.")
+        exit(1)

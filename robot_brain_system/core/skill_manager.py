@@ -12,6 +12,7 @@ from .types import (
     ExecutionMode,
     Action,
     SkillStatus,  # Make sure SkillStatus is defined in types.py
+    SkillInitError,
 )
 
 
@@ -108,8 +109,6 @@ class SkillRegistry:
 
         return "".join(formated_descriptions)
 
-    # _register_skills_from_module is effectively replaced by the decorator's direct registration
-
     def clear_registry(self):
         """Clear all registered skills."""
         self.skills.clear()
@@ -145,10 +144,13 @@ def skill_register(
     requires_env: bool = False,
     criterion: Dict[str, str] | None = None,  # 新增参数
     enable_monitoring: bool = True,  # 是否启用监控
+    enable: bool = True,
 ):
     """Decorator to register a function as a skill."""
 
     def decorator(func):
+        if not enable:
+            return func
         # Automatically register the skill with the global registry
         registry = get_skill_registry()
         registry.register_skill(
@@ -197,6 +199,7 @@ class SkillExecutor:
         self.status_info: str = ""
         self.env = env
         self.env_device = env.unwrapped.device
+        self.skill_success_item_map = {}
 
     def initialize_skill(
         self,
@@ -204,6 +207,8 @@ class SkillExecutor:
         parameters: Dict[str, Any],
         policy_device=None,
         obs_dict: dict = {},
+        success_item=None,
+        timeout_item=None,
     ):
         self.status = SkillStatus.NOT_STARTED
         self.status_info = ""
@@ -227,8 +232,14 @@ class SkillExecutor:
         try:
             if skill_def.execution_mode == ExecutionMode.STEPACTION:
                 self.current_skill = skill_def.function(policy_device, **parameters)
-                if skill_name == "grasp_spanner":
-                    obs_dict = self.current_skill.initialize(self.env.unwrapped)
+                obs_dict = (
+                    self.current_skill.initialize(
+                        self.env.unwrapped,
+                        success_item=success_item,
+                        timeout_item=timeout_item,
+                    )
+                    or obs_dict
+                )
                 self.current_skill_name = skill_name
                 self.current_skill_params = parameters
                 self.status = SkillStatus.RUNNING
@@ -260,13 +271,20 @@ class SkillExecutor:
                 print(f"[SkillExecutor] Unknown execution mode for skill {skill_name}")
                 self.status = SkillStatus.FAILED
                 return False, obs_dict
-        except Exception as e:
+        except SkillInitError as e:
             # TODO 技能初始化失败也要作为反馈信息的一部分！！
-            print(f"[SkillExecutor] Error initialize skill {skill_name}: {e}")
+            print(f"[SkillExecutor] Error initializing skill {skill_name}: {e}")
+            feedback = str(e)
+            self.status = SkillStatus.FAILED
+            self.status_info = feedback
+            return False, obs_dict
+        except Exception as e:
+            print(f"[SkillExecutor] Error initializing skill {skill_name}: {e}")
             import traceback
 
             traceback.print_exc()
             self.status = SkillStatus.FAILED
+            self.status_info = ""
             return False, obs_dict
 
     def step(self, obs) -> Tuple:
@@ -291,6 +309,7 @@ class SkillExecutor:
             print(f"[SkillExecutor] Error stepping skill {self.current_skill_name}")
             self.status = SkillStatus.FAILED
             # self._reset_current_skill_state()
+
             return step_result
         elif action_info == "finished":
             print(
@@ -302,22 +321,62 @@ class SkillExecutor:
                 step_result = self.env.step(action_data)
             self.status = SkillStatus.COMPLETED
             # self._reset_current_skill_state()
+
             return step_result
         elif action_info == "timeout":
             print(f"[SkillExecutor] Skill {self.current_skill_name} timed out.")
             self.status = SkillStatus.TIMEOUT
             # self._reset_current_skill_state()
+
             return (None, None, None, None, None)
         else:
+            MAX_CHUNK_SIZE = 15 if self.current_skill_name != "grasp_spanner" else 10
+            if self.current_skill_name == "grasp_spanner":
+                self.env.cfg.decimation = 5
+            else:
+                self.env.cfg.decimation = 10
             action_data = action.data.to(self.env_device)
-            step_result = self.env.step(action_data)
+            if len(action_data.shape) == 2:  # no chunk
+                # add a chunk dimension
+                action_data = action_data.reshape(
+                    action_data.shape[0], 1, action_data.shape[1]
+                )
+            for i in range(action_data.shape[1]):
+                success_item = self.skill_success_item_map.get(
+                    self.current_skill_name, {}
+                ).get("success_item", None)
+                timeout_item = self.skill_success_item_map.get(
+                    self.current_skill_name, {}
+                ).get("timeout_item", None)
+                single_action = action_data[:, i, :]
+                step_result = self.env.step(single_action)
+                if (
+                    success_item is not None
+                    and success_item.func(self.env, **success_item.params)[0].item()
+                ):
+                    print(
+                        f"[SkillExecutor] Skill {self.current_skill_name} succeeded, finishing execution."
+                    )
+                    self.status = SkillStatus.COMPLETED
+
+                    return step_result
+                elif (timeout_item is not None) and timeout_item.func(
+                    self.env, **timeout_item.params
+                )[0].item():
+                    print(
+                        f"[SkillExecutor] {self.current_skill_name} Timeout reached, stopping skill execution."
+                    )
+                    self.status = SkillStatus.TIMEOUT
+
+                    return step_result
+                if i >= MAX_CHUNK_SIZE:
+                    break
             # TODO 或许需要判断step后的情况？按道理来说应该是大模型来判断的！至少应该加一个超时判断
         return step_result
 
     def change_current_skill_status(
         self, skill_status: SkillStatus = SkillStatus.INTERRUPTED
     ) -> bool:
-        """Terminate the current non-blocking skill execution."""
         if self.current_skill is not None and (
             self.status == SkillStatus.RUNNING or self.status == SkillStatus.PAUSED
         ):
@@ -351,7 +410,8 @@ class SkillExecutor:
             print(
                 f"[SkillExecutor] Terminating skill: {self.current_skill_name} with status: {skill_status} and info: {status_info}"
             )
-            # self._reset_current_skill_state()
+            # self._reset_current_skill_state() # reset 会导致 brain/system 中的 last skill name 和 skill manager 中的 current skill name 不一致
+            # 按道理来说，这里的 self.current_skill 应该改名叫做 latest_skill 更合适一些
             self.status = skill_status
             self.status_info = status_info
         else:
@@ -380,7 +440,11 @@ class SkillExecutor:
             "is_running": self.is_running(),
         }
 
-    def reset_executor(self):  # Renamed from reset
+    def cleanup_skill(self):
+        if hasattr(self.current_skill, "cleanup"):
+            self.current_skill.cleanup()
+
+    def reset_executor(self):
         """Reset the executor to initial state."""
         self.terminate_current_skill()
         self.status = SkillStatus.IDLE

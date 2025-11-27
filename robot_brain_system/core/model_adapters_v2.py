@@ -80,9 +80,6 @@ class BaseModelAdapter(ABC):
         pass
 
 
-# --- 四种适配器实现（修正版） ---
-
-
 class TransformersAdapter(BaseModelAdapter):
     """
     基于 Hugging Face `transformers` 库的适配器。
@@ -219,7 +216,6 @@ class VLLMAdapter(BaseModelAdapter):
         self.llm = LLM(model=model_path, **vllm_kwargs)
         self.model_path = model_path
 
-        # --- NEW: Qwen-specific setup ---
         self.is_qwen_model = "qwen" in model_path.lower()
         if self.is_qwen_model:
             print(
@@ -620,25 +616,26 @@ class OpenAIAdapter(BaseModelAdapter):
                         nframes += 1
                     # 保持文本内容不变，但跳过视频帧的描述文本
                     else:
+                        if muilt_frames_begin:
+                            muilt_frames_begin = False
+                            new_content.append(
+                                {
+                                    "type": "image",
+                                    "image": f"<image: {nframes} frames>",
+                                }
+                            )
+                            nframes = 0
+
                         if part.get("type") == "text":
                             new_content.append(part)
                         else:
                             new_content.append(part)  # 保留其他所有部分
 
-                        if muilt_frames_begin:
-                            muilt_frames_begin = False
-                            new_content.append(
-                                {
-                                    "type": "text",
-                                    "text": f"<image: {nframes} frames>",
-                                }
-                            )
-                            nframes = 0
                 if nframes > 0:
                     new_content.append(
                         {
-                            "type": "text",
-                            "text": f"<image: {nframes} frames>",
+                            "type": "image",
+                            "image": f"<image: {nframes} frames>",
                         }
                     )
                 message["content"] = new_content
@@ -653,6 +650,7 @@ class OpenAIAdapter(BaseModelAdapter):
     def generate(
         self, history: List[Dict[str, Any]], max_tokens: int = 2048, **kwargs
     ) -> Tuple[str, Any]:
+        thinking = kwargs.pop("thinking", False)
         messages = self._convert_history_to_openai_input(history)
         sanitized_messages_for_log = self._sanitize_payload_for_logging(messages)
         print("\n--- [OpenAIAdapter] Sending Payload ---")
@@ -665,11 +663,33 @@ class OpenAIAdapter(BaseModelAdapter):
             print(sanitized_messages_for_log)
         print("-------------------------------------\n")
         completion = self.client.chat.completions.create(
-            model=self.model_name, messages=messages, max_tokens=max_tokens, **kwargs
+            model=self.model_name,
+            messages=messages,
+            extra_body={
+                "chat_template_kwargs": {"enable_thinking": thinking},
+            },
+            max_completion_tokens=max_tokens,
+            **kwargs,
         )
         response = completion.choices[0].message.content or ""
-        print(f"\n--- [OpenAIAdapter] Received Response ---\n{response.strip()}\n")
-        return response.strip(), completion
+        is_thinking = response.find("</think>")
+        if is_thinking >= 0:
+            reasoning_content = response[: response.find("</think>")]
+            content = response[response.find("</think>") + len("</think>") :].strip()
+        else:
+            reasoning_content = ""
+            content = response
+        usage = completion.usage
+        finish_reason = completion.choices[0].finish_reason
+        print("\n--- [OpenAIAdapter] Received Response ---")
+        if reasoning_content:
+            print(f"[think]\n{reasoning_content}\n")
+        print(f"[content]\n{content}\n")
+        print(
+            f"[usage] Prompt: {usage.prompt_tokens}, Completion: {usage.completion_tokens}, Total: {usage.total_tokens}"
+        )
+        print(f"[finish_reason] {finish_reason}")
+        return content, completion
 
 
 def resize_image_by_short_side(image: Image.Image, target_size: int) -> Image.Image:

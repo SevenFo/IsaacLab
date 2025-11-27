@@ -91,3 +91,20 @@ class with_metrics:
             return result
 
         return wrapper
+
+
+def with_time(func):
+    """
+    一个用于测量函数执行时间的简单装饰器。
+    """
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(self, *args, **kwargs)
+        end_time = time.perf_counter()
+        elapsed = end_time - start_time
+        print(f"⏱️  Function '{func.__name__}' executed in {elapsed:.4f} seconds")
+        return result
+
+    return wrapper

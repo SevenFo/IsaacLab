@@ -49,7 +49,7 @@ def main(cfg: DictConfig):
     print("\n--- System is running, executing high-level task... ---")
     task_instruction = "grasp the spanner in the red box, home position is [1.1279, -3.7576,  3.5571, -0.6167,  0.3308, -0.3199, -0.6386]"
     task_instruction = "move to the red box"
-    task_instruction = "grasp the spanner in the red box, then move the grasp to the palm, home position is [1.1283, -3.8319,  3.6731, -0.6167,  0.3308, -0.3199, -0.6386]"
+    task_instruction = "先调整箱子的位置和方向，然后 grasp the spanner in the red box, then move the spanner to the white hand palm, and release it there."
 
     if not system.execute_task(task_instruction):
         print(
@@ -62,6 +62,9 @@ def main(cfg: DictConfig):
     # 6. 监控系统状态，直到任务完成或被中断
     print("\n--- Monitoring task execution... (Press Ctrl+C to interrupt) ---")
     try:
+        running_times = 30
+        success_times = 0
+        failed_times = 0
         while system.state.is_running:
             time.sleep(2)  # 降低打印频率，让日志更清晰
             status = system.get_status()
@@ -81,7 +84,15 @@ def main(cfg: DictConfig):
             # 改进的退出条件：当系统和大脑都空闲时，任务才算完成
             if system_op == "idle" and brain_op == "idle":
                 print("\n--- Task completed: System and Brain are both idle. ---")
-                break
+                success_times += 1
+                system.reset()
+                if not system.execute_task(task_instruction):
+                    print(
+                        f"\nFailed to start task: '{task_instruction}'. System might be busy or an error occurred."
+                    )
+                    # 根据情况决定是否需要关闭系统
+                    # system.shutdown()
+                    # return
 
             # 增加一个错误状态的退出条件
             if "error" in system_op.lower() or "error" in brain_op.lower():
@@ -91,7 +102,19 @@ def main(cfg: DictConfig):
                 print(
                     f"\n--- System entered ERROR state: {error_msg}. Shutting down. ---"
                 )
+                failed_times += 1
+                system.reset()
+                if not system.execute_task(task_instruction):
+                    print(
+                        f"\nFailed to start task: '{task_instruction}'. System might be busy or an error occurred."
+                    )
+                    # 根据情况决定是否需要关闭系统
+                    # system.shutdown()
+                    # return
+            if success_times + failed_times == running_times:
                 break
+            print(f"robot brain system: {success_times}/{failed_times}")
+        print(f"robot brain system: {success_times}/{failed_times}")
 
     except KeyboardInterrupt:
         print("\n--- Keyboard interrupt received. Shutting down system... ---")

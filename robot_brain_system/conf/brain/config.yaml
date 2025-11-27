@@ -3,16 +3,17 @@ defaults:
 
 adapter:
   model: "InternVL3-8B"
-  api_key: ""
-  base_url: ""
   model_path: "/quick_data/model--OpenGVLab-InternVL3-8B"
   adapter_type: "lmdeploy"
-  max_tokens: 2048
+  max_tokens: 4096
   device: "auto"
   lmd_adapter_args:
     model_format: "awq"
   vllm_adapter_args:
     tensor_parallel_size: "2"
     max_model_len: 8192
+  args:
+    api_key: ""
+    base_url: ""
 
 max_retries: 3

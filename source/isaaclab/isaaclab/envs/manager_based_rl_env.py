@@ -251,26 +251,29 @@ class ManagerBasedRLEnv(ManagerBasedEnv, gym.Env):
         # -- step interval events
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
-
+        # TODO: This is a temporary solution to handle the "press" event.
         if "press" in self.event_manager.available_modes:
             # apply step events
-            pressed = self.observation_manager.compute_group("subtask_terms")["press"]
+            obs = self.observation_manager.compute_group("subtask_terms")
+            # extract the "press" term
+            if "press" in obs:
+                pressed = obs["press"]
 
-            # 初始化上一步状态
-            if not hasattr(self, "_last_pressed"):
-                self._last_pressed = torch.zeros_like(
-                    pressed, dtype=torch.bool, device=pressed.device
-                )
+                # 初始化上一步状态
+                if not hasattr(self, "_last_pressed"):
+                    self._last_pressed = torch.zeros_like(
+                        pressed, dtype=torch.bool, device=pressed.device
+                    )
 
-            # 检测 rising edge（从 False 变 True）
-            newly_pressed = (~self._last_pressed) & pressed
+                # 检测 rising edge（从 False 变 True）
+                newly_pressed = (~self._last_pressed) & pressed
 
-            if newly_pressed.any():
-                env_ids = newly_pressed.nonzero(as_tuple=False).squeeze(-1)
-                self.event_manager.apply(mode="press", env_ids=env_ids)
+                if newly_pressed.any():
+                    env_ids = newly_pressed.nonzero(as_tuple=False).squeeze(-1)
+                    self.event_manager.apply(mode="press", env_ids=env_ids)
 
-            # 更新上一步状态
-            self._last_pressed = pressed.clone()
+                # 更新上一步状态
+                self._last_pressed = pressed.clone()
 
         # -- compute observations
         # note: done after reset to get the correct observations for reset envs

@@ -218,12 +218,12 @@ class DifferentialIKController:
         """
         R_world_to_base = torch.tensor(
             [
-                # [0, -1, 0],  # 世界X → 基Y
-                # [1, 0, 0],  # 世界Y → 基-X
-                # [0, 0, 1],  # 世界Z → 基Z
-                [1, 0, 0],  # 世界X → 基Y
-                [0, 1, 0],  # 世界Y → 基-X
+                [0, -1, 0],  # 世界X → 基Y
+                [1, 0, 0],  # 世界Y → 基-X
                 [0, 0, 1],  # 世界Z → 基Z
+                # [1, 0, 0],  # 世界X → 基Y
+                # [0, 1, 0],  # 世界Y → 基-X
+                # [0, 0, 1],  # 世界Z → 基Z
             ],
             device=delta_pose.device,
             dtype=delta_pose.dtype,

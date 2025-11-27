@@ -7,12 +7,16 @@ import open3d as o3d
 from PIL import Image
 
 from robot_brain_system.core.skill_manager import skill_register
-from robot_brain_system.core.types import SkillType, ExecutionMode, BaseSkill
+from robot_brain_system.core.types import (
+    SkillType,
+    ExecutionMode,
+    BaseSkill,
+    SkillInitError,
+)
 from robot_brain_system.core.model_adapters_v2 import OpenAIAdapter
 from robot_brain_system.skills.imagepipleline import ImagePipeline
 from robot_brain_system.utils.visualization_utils import visualize_all
 from robot_brain_system.utils.config_utils import hydra_context_base
-from robot_brain_system.skills.manipulation_skills import AliceControl
 from cutie.utils.get_default_model import get_default_model
 
 
@@ -22,6 +26,7 @@ from cutie.utils.get_default_model import get_default_model
     execution_mode=ExecutionMode.PREACTION,
     enable_monitoring=False,  # Disable monitoring for this skill
     requires_env=True,
+    enable=False,  # Temporarily enabled for testing with EnvProxy
 )
 class ObjectTracking(BaseSkill):
     """Adding a a tracker for the specific object in the environment, so that other skill can retrieve the pose information of the object from the observation.
@@ -43,26 +48,24 @@ class ObjectTracking(BaseSkill):
         if self.target_object is None:
             raise ValueError("target_object must be specified.")
         self.pipeline_instance: dict[str, ImagePipeline] = {}
-        banned_cameras = self.cfg.get("banned_cameras", [])
-        print(f"[ObjectTracking] Banned cameras: {banned_cameras}")
+        self.banned_cameras = self.cfg.get("banned_cameras", [])
+        print(f"[ObjectTracking] Banned cameras: {self.banned_cameras}")
         # handle alice
-        print("[ObjectTracking] Initializing AliceControl")
-        alice_control = AliceControl(
-            alice_right_forearm_rigid_entity=env.scene["alice"],
-            policy_device=env.device,
-        )
-        # TODO zero action 可以用 sim 的直接 update 来代替
-        zero_action = torch.zeros(
-            (env.num_envs, env.action_manager.total_action_dim),
-            device=env.device,
-            dtype=torch.float32,
-        )
-        obs_dict = alice_control.initialize(env, zero_action)
+        self.policy_device = policy_device
 
+    def initialize(self, env):
+        super().initialize(env)
+        obs = env.update(return_obs=True)
+        obs_dict = obs.data
+        frame = (
+            obs_dict["policy"]["camera_left"][0].cpu().numpy()
+        )  # Ensure the observation is processed
+        Image.fromarray(frame).save("obs_tracking_initialization.png")
         cameras_data = {
             camera_name: data[0].cpu().numpy()
             for camera_name, data in obs_dict["policy"].items()
-            if camera_name.startswith("camera_") and camera_name not in banned_cameras
+            if camera_name.startswith("camera_")
+            and camera_name not in self.banned_cameras
         }
         self.vlm = OpenAIAdapter(
             "qwen2.5-vl-32b-awq",
@@ -76,7 +79,7 @@ class ObjectTracking(BaseSkill):
         _init_success = []
         for key in cameras_data:
             self.pipeline_instance[key] = ImagePipeline(
-                policy_device,
+                self.policy_device,
                 sam_checkpoint,
                 sam_model_config,
                 cutie_default_model,
@@ -97,9 +100,21 @@ class ObjectTracking(BaseSkill):
                 )
                 pass
         if len(_init_success) == 0:
-            raise ValueError(
+            print(
                 f"[ObjectTracking] No camera initialized successfully for {self.target_object}. Please check the camera data."
             )
+            raise SkillInitError(
+                f"Target {self.target_object} not found in any camera view currently, you can try to call this skill later when just before the interaction with the object."
+            )
+        return obs_dict
+
+    def cleanup(self):
+        for instance in self.pipeline_instance.values():
+            instance.cleanup()
+
+    def execute(self, obs_dict: dict) -> Any:
+        """Execute method for PREACTION skills - wraps __call__."""
+        return self.__call__(obs_dict)
 
     def __call__(
         self,
@@ -164,8 +179,13 @@ class ObjectTracking(BaseSkill):
         pcd.points = o3d.utility.Vector3dVector(points_np)
 
         # 异常值去除和下采样
-        pcd_filtered, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2)
-        pcd_downsampled = pcd_filtered.voxel_down_sample(voxel_size=0.01)
+        pcd_filtered1, _ = pcd.remove_statistical_outlier(
+            nb_neighbors=40, std_ratio=1.0
+        )
+        pcd_filtered2, _ = pcd_filtered1.remove_radius_outlier(
+            nb_points=16, radius=0.03
+        )
+        pcd_downsampled = pcd_filtered2.voxel_down_sample(voxel_size=0.01)
 
         # 获取 AABB
         aabb = pcd_downsampled.get_axis_aligned_bounding_box()

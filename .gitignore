@@ -67,3 +67,7 @@ assets/
 env_assets/
 
 robot_brain_system/conf/override
+
+*.pt
+*.tar*
+*.pkl

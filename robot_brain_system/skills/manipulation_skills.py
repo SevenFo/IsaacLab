@@ -4,22 +4,30 @@ Primarily features the 'assemble_object' skill using a pre-trained policy.
 """
 
 import numpy as np
+import requests
 import torch
 import math
+import random
+import time
+import msgpack
+import msgpack_numpy as msgnp
 from torchvision.transforms import Compose
 from torchvision.transforms.functional import convert_image_dtype
 from scipy.spatial.transform import Rotation as R
 
+msgnp.patch()  # 服务端也要启用 numpy 支持
+
 # Ensure os module is imported if not already
-import os
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import isaaclab.utils.math as math_utils
+
 # TODO 不要包含 isaacsim 相关的package，后续可以从 sub process 获取 skill description
 # from isaaclab.assets.rigid_object import RigidObject
 
 from ..core.types import SkillType, ExecutionMode, Action, BaseSkill
 from ..core.skill_manager import skill_register, get_skill_registry
+from ..skills.observation_skills import ObjectTracking
 
 # Attempt to import Robomimic, make it optional
 ROBOMIMIC_AVAILABLE = False
@@ -39,7 +47,7 @@ if TYPE_CHECKING:
     pass  # Or the specific env type you use
 
 
-def HWC_to_CHW(image: torch.Tensor) -> torch.Tensor:
+def HWC_to_CHW(image: torch.Tensor, normalize=False) -> torch.Tensor:
     """
     Convert an image tensor from HWC (Height, Width, Channels) format to CHW (Channels, Height, Width).
     This is often required for compatibility with PyTorch models.
@@ -50,8 +58,7 @@ def HWC_to_CHW(image: torch.Tensor) -> torch.Tensor:
         image = image.permute(0, 3, 1, 2)  # Change to BCHW format
     else:
         raise ValueError("Input tensor must be either HWC or BCHW format.")
-    return image
-    return pixcel_normalize(image)  # Normalize the image to [0, 1] range
+    return pixcel_normalize(image) if normalize else image
 
 
 def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
@@ -64,6 +71,68 @@ def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
         return image
 
     return convert_image_dtype(image, dtype=torch.float32)  # Normalize to [0, 1] range
+
+
+def _sample_object_poses(
+    pose_range: dict[str, tuple[float, float]] = {},
+):
+    range_list = [
+        pose_range.get(key, (0.0, 0.0))
+        for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+    ]
+    pose_list = []
+
+    sample = [random.uniform(range[0], range[1]) for range in range_list]
+    pose_list.append(sample)
+
+    return pose_list
+
+
+def quat_normalize(quat):
+    return quat / (torch.norm(quat, dim=-1, keepdim=True) + 1e-8)
+
+
+class GO1Client:
+    def __init__(self, host: str, port: int):
+        self.host = host
+        self.port = port
+
+    def predict_action(self, payload: Dict[str, Any]) -> np.ndarray | None:
+        """使用 msgpack 传输 numpy 数据，效率高且支持二进制"""
+        try:
+            # 1. 使用 msgpack 序列化（自动处理 numpy 数组）
+            packed = msgpack.packb(payload, use_bin_type=True)
+        except Exception as e:
+            print(f"[GO1Client] Failed to serialize payload: {e}")
+            return None
+
+        # 2. 发送二进制数据
+        response = requests.post(
+            f"http://{self.host}:{self.port}/act",
+            data=packed,
+            headers={"Content-Type": "application/msgpack"},
+            timeout=10.0,  # 添加超时保护
+        )
+
+        if response.status_code != 200:
+            print(f"[GO1Client] Request failed: {response.status_code}")
+            print(f"[GO1Client] Error: {response.text}")
+            return None
+
+        # 3. 解包响应
+        try:
+            action = msgpack.unpackb(response.content, raw=False)
+
+            action = np.array(action, copy=True)
+
+            # action[...,0], action[...,1] = action[...,1], -action[...,0]
+            # action[...,3], action[...,4] = action[...,4], -action[3]
+
+            return action
+
+        except Exception as e:
+            print(f"[GO1Client] Failed to deserialize response: {e}")
+            return None
 
 
 @skill_register(
@@ -81,8 +150,10 @@ def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
     requires_env=True,
 )
 class PressButton(BaseSkill):
-    """This skill is used for openning a red box by moving the end-effector, It will automatically move the end-effector to the red box and open it by pressing the yellow button on the box.
-    红色箱子盖子上有一个黑色的把手，箱子的盖子可以左右滑动，按下红色的按钮之后，箱子的盖子会滑开，里面有一把黄色的扳手
+    """这个技能能够自动控制机械臂的末端执行器移动到红色箱子前方，并按下箱子上的按钮，从而打开箱子。
+    这个技能的执行前提是箱子位于绿色的标志框中，并且按钮朝向正对机械臂。
+    执行该技能无需先移动到红色箱子上方。
+    红色箱子盖子上有一个黑色的把手，箱子的盖子可以左右滑动，按下红色的按钮之后，箱子的盖子会滑开，里面有一把黄色的扳手。
     Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
     """
 
@@ -90,40 +161,198 @@ class PressButton(BaseSkill):
         super().__init__()
         self.policy_device = policy_device
         self.running_params = running_params
-        if not ROBOMIMIC_AVAILABLE:
+
+        print("[Skill: PressButton] Starting...")
+
+        self.action_client = GO1Client(
+            host=self.cfg.get("host", "localhost"), port=self.cfg.get("port", 2000)
+        )
+        self.ctrl_freq = 10.0
+
+        print("[Skill: PressButton] Policy loaded")
+        self.num_steps = 0
+        self.trans_fn = Compose([lambda x: x])
+        self.camera_keys = {
+            "camera_side": "top",
+            "camera_wrist": "left",
+        }  # isaaclab obs -> policy input
+        self.state_key = "joint_pos"
+        self.state_index = (..., [0, 1, 2, 3, 4, 5, -1])
+
+    def switch_to_heavy_box(
+        self,
+    ):
+        """Switch the light box to heavy box in specified envs."""
+        env = self.env.unwrapped
+        if getattr(env, "switch_heavybox", None) is not None:
             print(
-                "[Skill: press_button] Robomimic library not available. Cannot execute."
+                f"[Skill: PressButton] Environment already switched to heavy box. env.switch_heavybox={getattr(env, 'switch_heavybox')}"
             )
-            return None
+            return
+        light_box = env.scene["box"]
+        heavy_box = env.scene["heavy_box"]
+        spanner = env.scene["spanner"]
+        cur_env = 0
+        # Get the current pose and velocity of the light box
+        light_box_pos = light_box.data.root_pos_w[cur_env : cur_env + 1]
+        light_box_quat = light_box.data.root_quat_w[cur_env : cur_env + 1]
+        light_box_lin_vel = light_box.data.root_lin_vel_w[cur_env : cur_env + 1]
+        light_box_ang_vel = light_box.data.root_ang_vel_w[cur_env : cur_env + 1]
 
-        print("[Skill: press_button] Starting...")
+        # Get heavy box default state
+        heavy_box_default_state = heavy_box.data.default_root_state[
+            cur_env : cur_env + 1
+        ].clone()
 
-        checkpoint_path = self.cfg.get("model_path", "assets/skills/press.pth")
-        if not os.path.exists(checkpoint_path):
-            print(
-                f"[Skill: press_button] Error: Checkpoint path '{checkpoint_path}' does not exist."
+        # Set the heavy box to the same pose and velocity
+        heavy_box_target_pose = torch.cat([light_box_pos, light_box_quat], dim=-1)
+
+        # 设置扳手的位置
+        spanner_rel_pos = torch.tensor(
+            [0, -0.04, 0.001], device=env.device
+        )  # asset2相对于asset1的位置偏移
+        spanner_rel_rot = (
+            math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
+                torch.tensor([0.0], device=env.device),
+                torch.tensor([0.0], device=env.device),
+                torch.tensor([math.pi / 2], device=env.device),
             )
-            return None
+        )
+        spanner_pos = heavy_box_target_pose[:, :3] - spanner_rel_pos.unsqueeze(0)
+        # 旋转 = asset1的旋转 * 相对旋转
+        spanner_orient = math_utils.quat_mul(
+            heavy_box_target_pose[:, 3:7], spanner_rel_rot
+        )
 
-        print(f"[Skill: press_button] Using policy device: {policy_device}")
-        print(f"[Skill: press_button] Loading policy from: {checkpoint_path}")
+        heavy_box.write_root_pose_to_sim(
+            heavy_box_target_pose,
+            env_ids=torch.tensor([cur_env], device=env.device),
+        )
+        heavy_box.write_root_velocity_to_sim(
+            torch.zeros(1, 6, device=env.device),
+            env_ids=torch.tensor([cur_env], device=env.device),
+        )
+        # Move light box to heavy box's default position
+        light_box.write_root_pose_to_sim(
+            heavy_box_default_state[:, :7],
+            env_ids=torch.tensor([cur_env], device=env.device),
+        )
+        light_box.write_root_velocity_to_sim(
+            torch.zeros(1, 6, device=env.device),
+            env_ids=torch.tensor([cur_env], device=env.device),
+        )
+        # # 设置asset2的位姿
+        spanner.write_root_pose_to_sim(
+            torch.cat([spanner_pos, spanner_orient], dim=-1),
+            env_ids=torch.tensor([0], device=env.device),
+        )
+        spanner.write_root_velocity_to_sim(
+            torch.zeros(1, 6, device=env.device),
+            env_ids=torch.tensor([0], device=env.device),
+        )
+        setattr(env, "switch_heavybox", True)
 
-        try:
-            policy, _ = FileUtils.policy_from_checkpoint(
-                ckpt_path=checkpoint_path, device=policy_device, verbose=True
+    def initialize(self, *args, **kwargs):
+        """
+        Initialize the skill by setting up the environment and zero action.
+        This method is called before the skill starts executing.
+        """
+        print(f"[Skill: PressButton] Initializing skill with:{args},{kwargs}")
+        super().initialize(*args, **kwargs)
+        self.switch_to_heavy_box()
+        env = self.env
+        robot = env.scene["robot"]
+        joint_pos = robot.data.default_joint_pos
+        joint_vel = robot.data.default_joint_vel
+
+        robot.set_joint_position_target(joint_pos)
+        robot.set_joint_velocity_target(joint_vel)
+
+        robot.write_joint_state_to_sim(
+            joint_pos,
+            torch.zeros_like(joint_vel, device=env.device),
+        )
+        self.zero_action = torch.zeros(
+            (env.num_envs, env.action_manager.total_action_dim),
+            device=env.device,
+            dtype=torch.float32,
+        )
+        self.zero_action[..., -1] = +1.0  # Ensure gripper is open
+        print("[Skill: PressButton] switched to heavy box")
+        for i in range(5):
+            obs, reward, terminated, truncated, info = env.step(self.zero_action)
+            time.sleep(0.1)
+        print("[Skill: PressButton] Initialization complete.")
+        return obs
+
+    def reset_env(self, random_reset=True):
+        # reset spanner pos
+        env = self.env
+        spanner = env.scene["spanner"]
+        box = env.scene["box"]
+        # 定义asset2相对于asset1的初始位置偏移和旋转
+        rel_pos = torch.tensor(
+            [0.0, -0.04, 0.001], device=env.device
+        )  # asset2相对于asset1的位置偏移
+        rel_rot = math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
+            torch.tensor([0.0], device=env.device),
+            torch.tensor([0.0], device=env.device),
+            torch.tensor([math.pi / 2], device=env.device),
+        )
+        pose1 = _sample_object_poses(
+            pose_range={
+                "x": (1.215, 1.215),
+                "y": (-3.45, -3.45),
+                "z": (2.9, 2.9),
+                "yaw": (0, 0),
+            }
+        )[0]
+        pose_tensor1 = torch.tensor([pose1], device=env.device)
+        positions1 = (
+            box.data.root_state_w[0:1, 0:3]
+            if not random_reset
+            else pose_tensor1[:, 0:3] + env.scene.env_origins[0, 0:3]
+        )
+        orientations1 = (
+            box.data.root_state_w[0:1, 3:7]
+            if not random_reset
+            else math_utils.quat_from_euler_xyz(
+                pose_tensor1[:, 3], pose_tensor1[:, 4], pose_tensor1[:, 5]
             )
-        except Exception as e:
-            print(f"[Skill: press_button] Error: Failed to load policy: {e}")
-            return None
+        )
+        if random_reset:
+            # 设置asset1的位姿
+            box.write_root_pose_to_sim(
+                torch.cat([positions1, orientations1], dim=-1),
+                env_ids=torch.tensor([0], device=env.device),
+            )
+            box.write_root_velocity_to_sim(
+                torch.zeros(1, 6, device=env.device),
+                env_ids=torch.tensor([0], device=env.device),
+            )
+        for i in range(1):
+            obs, reward, terminated, truncated, info = env.step(self.zero_action)
+            time.sleep(0.1)
 
-        print("[Skill: press_button] Policy loaded")
-        self.num_steps = 0  # Initialize step counter
-        self.policy = policy
-        self.policy.start_episode()
-        self.resize_fn = Compose([HWC_to_CHW, pixcel_normalize])
+        positions2 = positions1 - rel_pos.unsqueeze(0)
+        # 旋转 = asset1的旋转 * 相对旋转
+        orientations2 = math_utils.quat_mul(orientations1, rel_rot)
+
+        # # 设置asset2的位姿
+        spanner.write_root_pose_to_sim(
+            torch.cat([positions2, orientations2], dim=-1),
+            env_ids=torch.tensor([0], device=env.device),
+        )
+        spanner.write_root_velocity_to_sim(
+            torch.zeros(1, 6, device=env.device),
+            env_ids=torch.tensor([0], device=env.device),
+        )
+        for i in range(5):
+            obs, reward, terminated, truncated, info = env.step(self.zero_action)
+            time.sleep(0.1)
 
     def select_action(self, obs_dict: dict) -> Action:
-        if self.num_steps >= 100:
+        if self.num_steps >= 200:
             print(
                 "[Skill: PressButton] Maximum steps reached, stopping skill execution."
             )
@@ -140,29 +369,29 @@ class PressButton(BaseSkill):
             )
 
         policy_input_source = obs_dict[policy_obs_key]
-        # Resize rgb obs to match policy input requirements
         rgb_obs_keys = [
-            key for key in policy_input_source.keys() if key.startswith("camera_")
+            key for key in policy_input_source.keys() if key in self.camera_keys.keys()
         ]
-        for rbg_key in rgb_obs_keys:
-            policy_input_source[rbg_key] = self.resize_fn(policy_input_source[rbg_key])
-            # print(
-            #     f"[Skill: PressButton] Resized {rbg_key} to shape {policy_input_source[rbg_key].shape}, min, max: {policy_input_source[rbg_key].min()} - {policy_input_source[rbg_key].max()}"
-            # )
-
         current_policy_obs = OrderedDict()
-        for key, tensor_val in policy_input_source.items():
-            if not isinstance(tensor_val, torch.Tensor):
-                print(
-                    f"[Skill: PressButton] Warning: Obs value for key '{key}' is not a Tensor."
-                )
-                continue  # Or handle appropriately
-            current_policy_obs[key] = tensor_val.squeeze(0).to(
-                self.policy_device
-            )  # Robomimic expects squeeze
+        for rgb_obs_key in rgb_obs_keys:
+            current_policy_obs[self.camera_keys[rgb_obs_key]] = self.trans_fn(
+                policy_input_source[rgb_obs_key]
+            )
+        current_policy_obs["state"] = policy_input_source[self.state_key][
+            self.state_index
+        ][:, None, :]
 
-        with torch.no_grad():
-            action_np = self.policy(current_policy_obs)  # Get action from policy
+        # 转换为 numpy 数组（msgpack 可以直接处理）
+        for key, tensor_val in current_policy_obs.items():
+            if isinstance(tensor_val, torch.Tensor):
+                current_policy_obs[key] = tensor_val.squeeze(0).cpu().numpy()
+
+        current_policy_obs["ctrl_freqs"] = np.array([self.ctrl_freq], dtype=np.float32)
+        current_policy_obs["instruction"] = "Press the button attached to the box."
+
+        action_np = self.action_client.predict_action(
+            current_policy_obs
+        )  # Get action from policy
 
         if not isinstance(action_np, np.ndarray):
             print(
@@ -183,7 +412,7 @@ class PressButton(BaseSkill):
     timeout=300.0,  # 5 minutes, adjust as needed
     criterion={
         # "successed": "the spanner is graspped by the gripper and moving above the box, the spanner must be high enough to avoid collision with the box.",
-        "successed": "机械臂抓夹抓住黄色扳手，并离桌面一定距离，避免与箱子发生碰撞。",
+        "successed": "机械臂抓夹抓住黄色扳手即可",
         "failed": "".join(
             [
                 "grasp has closed while not graspping the spanner (if the gripper is not closed, it will be considered as progress). The prerequisite for failed is that the gripper has already closed."
@@ -195,14 +424,8 @@ class PressButton(BaseSkill):
 )
 class GraspSpanner(BaseSkill):
     """
-    GRAB & LIFT SPANNER: Grasp tool from red box and lift it
+    GRAB & LIFT SPANNER: Grasp tool from red box and lift it, this skill can not move spanner to any other position. If you want to move spanner to other position, plz call other skill
 
-    [HARD RULE] REQUIRED BEFORE EXECUTION:
-    MUST HAVE `move end effector to home` TO THIS SPOT AS LAST STEP!
-    Which means cant insert anyother skill between `move_to_home` and `grasp_spanner`, anyother skill only canbe inserted before `move_to_home` or after `grasp_spanner`.
-    Right example: open_box -> move_to_home -> grasp_spanner -> other skill -> move_to_home -> grasp_spanner
-    Wrong example: move_to_home -> open_box -> grasp_spanner -> other skill -> grasp_spanner
-    Once you want to execute grasp_spanner, you must have `move_to_home` (or near the home is ok) as last step, otherwise it will fail.
     PARAMETERS: None
     """
 
@@ -210,46 +433,41 @@ class GraspSpanner(BaseSkill):
         super().__init__()
         self.policy_device = policy_device
         self.running_params = running_params
-        if not ROBOMIMIC_AVAILABLE:
-            print(
-                "[Skill: GraspSpanner] Robomimic library not available. Cannot execute."
-            )
-            return None
 
         print("[Skill: GraspSpanner] Starting...")
 
-        checkpoint_path = self.cfg.get("model_path", "assets/skills/grasp.pth")
-
-        if not os.path.exists(checkpoint_path):
-            print(
-                f"[Skill: GraspSpanner] Error: Checkpoint path '{checkpoint_path}' does not exist."
-            )
-            return None
-
-        print(f"[Skill: GraspSpanner] Using policy device: {policy_device}")
-        print(f"[Skill: GraspSpanner] Loading policy from: {checkpoint_path}")
-
-        try:
-            policy, _ = FileUtils.policy_from_checkpoint(
-                ckpt_path=checkpoint_path, device=policy_device, verbose=True
-            )
-        except Exception as e:
-            print(f"[Skill: GraspSpanner] Error: Failed to load policy: {e}")
-            return None
+        self.action_client = GO1Client(
+            host=self.cfg.get("host", "localhost"), port=self.cfg.get("port", 2000)
+        )
+        self.ctrl_freq = 10.0
 
         print("[Skill: GraspSpanner] Policy loaded")
 
-        self.policy = policy
-        self.policy.start_episode()
-        self.num_steps = 0  # Initialize step counter
-        self.resize_fn = Compose([HWC_to_CHW, pixcel_normalize])
+        self.num_steps = 0
+        self.trans_fn = Compose([lambda x: x])
+        self.camera_keys = {
+            "camera_side": "top",
+            "camera_wrist": "left",
+        }  # isaaclab obs -> policy input
+        self.state_key = "joint_pos"
+        self.state_index = (..., [0, 1, 2, 3, 4, 5, -1])
 
-    def initialize(self, env):
+    def initialize(self, *args, **kwargs):
         """
         Initialize the skill by setting up the environment and zero action.
         This method is called before the skill starts executing.
         """
-        print("[Skill: GraspSpanner] Initializing skill...")
+        print(
+            "[Skill: GraspSpanner] Initializing skill make joints move to default positions..."
+        )
+        super().initialize(*args, **kwargs)
+        env = self.env
+        self.zero_action = torch.zeros(
+            (env.num_envs, env.action_manager.total_action_dim),
+            device=env.device,
+            dtype=torch.float32,
+        )
+        self.zero_action[..., -1] = +1.0  # Ensure gripper is open
 
         robot = env.scene["robot"]
 
@@ -262,27 +480,85 @@ class GraspSpanner(BaseSkill):
             joint_pos,
             torch.zeros_like(joint_vel, device=env.device),
         )
-        zero_action = torch.zeros(
-            (env.num_envs, env.action_manager.total_action_dim),
-            device=env.device,
-            dtype=torch.float32,
-        )
-        zero_action[..., -1] = +1.0  # Ensure gripper is open
         for i in range(30):
-            # Step the environment with the correctly shaped zero action
-            # alice_control.apply_action(_env)
-            obs, reward, terminated, truncated, info = env.step(zero_action)
+            obs, reward, terminated, truncated, info = env.step(self.zero_action)
+
         return obs
 
+    def reset_env(self, random_reset=True):
+        # reset spanner pos
+        env = self.env
+        spanner = env.scene["spanner"]
+        box = env.scene["box"]
+        # 定义asset2相对于asset1的初始位置偏移和旋转
+        rel_pos = torch.tensor(
+            [0.0, -0.04, 0.001], device=env.device
+        )  # asset2相对于asset1的位置偏移
+        rel_rot = math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
+            torch.tensor([0.0], device=env.device),
+            torch.tensor([0.0], device=env.device),
+            torch.tensor([math.pi / 2], device=env.device),
+        )
+        pose1 = _sample_object_poses(
+            pose_range={
+                "x": (1.215, 1.215),
+                "y": (-3.45, -3.45),
+                "z": (2.9, 2.9),
+                "yaw": (0, 0),
+            }
+        )[0]
+        pose_tensor1 = torch.tensor([pose1], device=env.device)
+        positions1 = (
+            box.data.root_state_w[0:1, 0:3]
+            if not random_reset
+            else pose_tensor1[:, 0:3] + env.scene.env_origins[0, 0:3]
+        )
+        orientations1 = (
+            box.data.root_state_w[0:1, 3:7]
+            if not random_reset
+            else math_utils.quat_from_euler_xyz(
+                pose_tensor1[:, 3], pose_tensor1[:, 4], pose_tensor1[:, 5]
+            )
+        )
+        if random_reset:
+            # 设置asset1的位姿
+            box.write_root_pose_to_sim(
+                torch.cat([positions1, orientations1], dim=-1),
+                env_ids=torch.tensor([0], device=env.device),
+            )
+            box.write_root_velocity_to_sim(
+                torch.zeros(1, 6, device=env.device),
+                env_ids=torch.tensor([0], device=env.device),
+            )
+        for i in range(1):
+            obs, reward, terminated, truncated, info = env.step(self.zero_action)
+            time.sleep(0.1)
+
+        positions2 = positions1 - rel_pos.unsqueeze(0)
+        # 旋转 = asset1的旋转 * 相对旋转
+        orientations2 = math_utils.quat_mul(orientations1, rel_rot)
+
+        # # 设置asset2的位姿
+        spanner.write_root_pose_to_sim(
+            torch.cat([positions2, orientations2], dim=-1),
+            env_ids=torch.tensor([0], device=env.device),
+        )
+        spanner.write_root_velocity_to_sim(
+            torch.zeros(1, 6, device=env.device),
+            env_ids=torch.tensor([0], device=env.device),
+        )
+        for i in range(5):
+            obs, reward, terminated, truncated, info = env.step(self.zero_action)
+            time.sleep(0.1)
+
     def select_action(self, obs_dict: dict) -> Action:
-        if self.num_steps >= 400:
+        if self.num_steps >= 300:
             print(
                 "[Skill: GraspSpanner] Maximum steps reached, stopping skill execution."
             )
             return Action(
                 [], metadata={"info": "timeout", "reason": "max_steps_reached"}
             )
-        # 早期版本的 GraspSpanner 没有使用和 button 相关的特征，需要进行转化
         policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
             print(
@@ -294,41 +570,164 @@ class GraspSpanner(BaseSkill):
 
         policy_input_source = obs_dict[policy_obs_key]
         rgb_obs_keys = [
-            key for key in policy_input_source.keys() if key.startswith("camera_")
+            key for key in policy_input_source.keys() if key in self.camera_keys.keys()
         ]
-        for rbg_key in rgb_obs_keys:
-            # from PIL import Image
-
-            # frame = Image.fromarray(
-            #     policy_input_source[rbg_key].cpu().squeeze(0).numpy().astype(np.uint8)
-            # )
-            # frame.show(f"{rbg_key}")
-            # input(f"Press Enter to continue after viewing {rbg_key}...")
-            policy_input_source[rbg_key] = self.resize_fn(policy_input_source[rbg_key])
-        # policy_input_source["object"] = torch.cat(
-        #     [
-        #         policy_input_source["object"][..., 0:7],
-        #         policy_input_source["object"][..., 14:33],
-        #     ],
-        #     dim=-1,
-        # )
         current_policy_obs = OrderedDict()
-        for key, tensor_val in policy_input_source.items():
-            if not isinstance(tensor_val, torch.Tensor):
-                print(
-                    f"[Skill: GraspSpanner] Warning: Obs value for key '{key}' is not a Tensor."
-                )
-                continue  # Or handle appropriately
-            current_policy_obs[key] = tensor_val.squeeze(0).to(
-                self.policy_device
-            )  # Robomimic expects squeeze
+        for rgb_obs_key in rgb_obs_keys:
+            current_policy_obs[self.camera_keys[rgb_obs_key]] = self.trans_fn(
+                policy_input_source[rgb_obs_key]
+            )
+        current_policy_obs["state"] = policy_input_source[self.state_key][
+            self.state_index
+        ][:, None, :]
 
-        with torch.no_grad():
-            action_np = self.policy(current_policy_obs)  # Get action from policy
+        # 转换为 numpy 数组（msgpack 可以直接处理）
+        for key, tensor_val in current_policy_obs.items():
+            if isinstance(tensor_val, torch.Tensor):
+                current_policy_obs[key] = tensor_val.squeeze(0).cpu().numpy()
+
+        current_policy_obs["ctrl_freqs"] = np.array([self.ctrl_freq], dtype=np.float32)
+        current_policy_obs["instruction"] = "Grasp the spanner inside the box"
+
+        action_np = self.action_client.predict_action(
+            current_policy_obs
+        )  # Get action from policy
 
         if not isinstance(action_np, np.ndarray):
             print(
                 f"[Skill: GraspSpanner] Error: Policy output is not a numpy array (got {type(action_np)})."
+            )
+            raise ValueError(f"Expected numpy array from policy, got {type(action_np)}")
+        self.num_steps += 1
+        return Action(
+            torch.from_numpy(action_np).unsqueeze(0),
+            metadata={"info": "success", "reason": "none"},
+        )
+
+
+@skill_register(
+    name="move_box_to_suitable_position",
+    skill_type=SkillType.POLICY,  # Could be SkillType.POLICY if you have a separate handler
+    execution_mode=ExecutionMode.STEPACTION,
+    timeout=300.0,  # 5 minutes, adjust as needed
+    criterion={
+        # "successed": "the spanner is graspped by the gripper and moving above the box, the spanner must be high enough to avoid collision with the box.",
+        "successed": "箱子位于桌面的绿色的标志框中",
+        "failed": "".join([""]),
+        "progress": "箱子被提起并且正在移动到目标位置等合理的状态",
+    },
+    requires_env=True,
+)
+class LiftAndMoveBox(BaseSkill):
+    """这个技能用于将箱子提起并移动到目标框中，并且让箱子的朝向转动到易于机械臂按下按钮打开箱子的方向
+
+    Expected params: None, NO NEED TO PASS ANY PARAMS.
+    """
+
+    def __init__(self, policy_device: str = "cuda", **running_params):
+        super().__init__()
+        self.policy_device = policy_device
+        self.running_params = running_params
+
+        print("[Skill: LiftAndMoveBox] Starting...")
+
+        self.action_client = GO1Client(
+            host=self.cfg.get("host", "localhost"), port=self.cfg.get("port", 2000)
+        )
+
+        print("[Skill: LiftAndMoveBox] Policy loaded")
+
+        self.num_steps = 0
+        self.trans_fn = Compose([lambda x: x])
+        self.camera_keys = {
+            "camera_side": "top",
+            "camera_wrist": "left",
+        }  # isaaclab obs -> policy input
+        self.state_key = "joint_pos"
+        self.state_index = (..., [0, 1, 2, 3, 4, 5, -1])
+
+    def initialize(self, *args, **kwargs):
+        """
+        Initialize the skill by setting up the environment and zero action.
+        This method is called before the skill starts executing.
+        """
+        print(
+            "[Skill: LiftAndMoveBox] Initializing skill make joints move to default positions..."
+        )
+        super().initialize(*args, **kwargs)
+        env = self.env
+        zero_action = torch.zeros(
+            (env.num_envs, env.action_manager.total_action_dim),
+            device=env.device,
+            dtype=torch.float32,
+        )
+        zero_action[..., -1] = +1.0  # Ensure gripper is open
+
+        robot = env.scene["robot"]
+
+        joint_pos = robot.data.default_joint_pos
+        joint_vel = robot.data.default_joint_vel
+
+        robot.set_joint_position_target(joint_pos)
+        robot.set_joint_velocity_target(joint_vel)
+        robot.write_joint_state_to_sim(
+            joint_pos,
+            torch.zeros_like(joint_vel, device=env.device),
+        )
+        for i in range(1):
+            obs, reward, terminated, truncated, info = env.step(zero_action)
+
+        self.ctrl_freq = 10.0
+        # print(
+        #     f"[Skill: LiftAndMoveBox] env decimation: {env.cfg.decimation}, dim_dt: {env.cfg.sim.dt}"
+        # )
+        self.max_steps = int(self.cfg.get("timeout", 60.0) * self.ctrl_freq)
+        return obs
+
+    def select_action(self, obs_dict: dict) -> Action:
+        if self.num_steps >= self.max_steps:
+            print(
+                "[Skill: LiftAndMoveBox] Maximum steps reached, stopping skill execution."
+            )
+            return Action(
+                [], metadata={"info": "timeout", "reason": "max_steps_reached"}
+            )
+        policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
+        if policy_obs_key not in obs_dict:
+            print(
+                f"[Skill: LiftAndMoveBox] Error: Key '{policy_obs_key}' not found in initial observations."
+            )
+            raise ValueError(
+                f"Expected key '{policy_obs_key}' not found in obs_dict: {obs_dict.keys()}"
+            )
+
+        policy_input_source = obs_dict[policy_obs_key]
+        rgb_obs_keys = [
+            key for key in policy_input_source.keys() if key in self.camera_keys.keys()
+        ]
+        current_policy_obs = OrderedDict()
+        for rgb_obs_key in rgb_obs_keys:
+            current_policy_obs[self.camera_keys[rgb_obs_key]] = self.trans_fn(
+                policy_input_source[rgb_obs_key]
+            )
+        current_policy_obs["state"] = policy_input_source[self.state_key][
+            self.state_index
+        ][:, None, :]
+        # 转换为 numpy 数组（msgpack 可以直接处理）
+        for key, tensor_val in current_policy_obs.items():
+            if isinstance(tensor_val, torch.Tensor):
+                current_policy_obs[key] = tensor_val.squeeze(0).cpu().numpy()
+
+        current_policy_obs["ctrl_freqs"] = np.array([self.ctrl_freq], dtype=np.float32)
+        current_policy_obs["instruction"] = "Move the object to the target position."
+
+        action_np = self.action_client.predict_action(
+            current_policy_obs
+        )  # Get action from policy
+
+        if not isinstance(action_np, np.ndarray):
+            print(
+                f"[Skill: LiftAndMoveBox] Error: Policy output is not a numpy array (got {type(action_np)})."
             )
             raise ValueError(f"Expected numpy array from policy, got {type(action_np)}")
         self.num_steps += 1
@@ -389,8 +788,8 @@ class MoveToTarget(BaseSkill):
         if "target_pose" not in running_params:
             assert "target_object" in running_params, "No moving target is specified."
         target_object = running_params.get("target_object", None)
-        self.gripper_state: float = running_params.get(
-            "gripper_state", 1.0
+        self.gripper_state: float = int(
+            running_params.get("gripper_state", 1.0)
         )  # gripper_state (float, optional): Command for the gripper. Defaults to 0.0.
         pos_gain: float = running_params.get(
             "pos_gain", 1.0
@@ -404,12 +803,14 @@ class MoveToTarget(BaseSkill):
         max_rot_vel: float = running_params.get(
             "max_rot_vel", 0.5
         )  # max_rot_vel (float, optional): Maximum angular velocity (rad/s). Defaults to 0.5.
-        offset: List[float] = running_params.get("offset", 0.1)
+        offset: List[float] = running_params.get("offset", 0.08)
+        self.dt = running_params.get("dt", 0.3)  # 默认 50Hz
         self.z_offset = offset
         enable_verification: bool = True
         print("[Skill: MoveToTarget] Initializing...")
         self.device = policy_device
         self.enable_verification = enable_verification
+        self.target_object = target_object
         if target_object is None:
             target_pose: List[float] = running_params["target_pose"]
             if not isinstance(target_pose, list) or len(target_pose) != 7:
@@ -435,15 +836,32 @@ class MoveToTarget(BaseSkill):
         self.max_rot_vel = max_rot_vel
         self.epsilon = 1e-6
         self.control_mode = "relative"  # Default control mode
-        self.delay_steps = 10  # Number of steps to delay before ending the skill
+        self.delay_steps = 2  # Number of steps to delay before ending the skill
         self.step_counter = 0  # Initialize step counter
-
+        self.finishing = False
         if self.enable_verification:
             print(
                 "[Skill: MoveToTarget] VERIFICATION MODE IS ENABLED. SciPy will be used to check torch results."
             )
 
         print("[Skill: MoveToTarget] Initialized successfully.")
+
+    def initialize(self, *args, **kwargs):
+        """
+        Initialize the skill by setting up the environment and zero action.
+        This method is called before the skill starts executing.
+        """
+        print(
+            "[Skill: GraspSpanner] Initializing skill make joints move to default positions..."
+        )
+        obs_dict = super().initialize(*args, **kwargs)
+        env = self.env
+        if self.target_object is not None:
+            self.obj_tracker = ObjectTracking(env=env, target_object=self.target_object)
+            obs_dict = self.obj_tracker.initialize(env)
+        self.filtered_target_pos = None
+        self.filtered_target_quat = None
+        return obs_dict
 
     def _verify_rotation_calculation(
         self, torch_rot_vec: torch.Tensor, error_quat: torch.Tensor
@@ -470,6 +888,8 @@ class MoveToTarget(BaseSkill):
         )
 
     def select_action(self, obs_dict: dict) -> Action:
+        if self.target_object is not None:
+            obs_dict = self.obj_tracker(obs_dict)
         self.step_counter += 1
         eef_pose_key = ["eef_pos_gripper", "eef_quat"]
         if "policy" not in obs_dict or not all(
@@ -487,9 +907,11 @@ class MoveToTarget(BaseSkill):
             )
 
         # 直接获取位置和姿态，无需先拼接再分割
-        current_pos = obs_dict["policy"]["eef_pos_gripper"].clone()
-        current_quat = obs_dict["policy"]["eef_quat"].clone()
-        current_gripper_pos = obs_dict["policy"]["gripper_pos"].clone()
+        current_pos = obs_dict["policy"]["eef_pos_gripper"].clone().to(self.env.device)
+        current_quat = obs_dict["policy"]["eef_quat"].clone().to(self.env.device)
+        current_gripper_pos = (
+            obs_dict["policy"]["gripper_pos"].clone().to(self.env.device)
+        )
 
         # 确保维度正确并移动到设备
         if current_pos.dim() == 1:
@@ -499,6 +921,8 @@ class MoveToTarget(BaseSkill):
 
         current_pos = current_pos.to(self.device)
         current_quat = current_quat.to(self.device)
+
+        alpha = self.cfg.get("target_smoothing_alpha", 0.3)
 
         # --- Position Control ---
         if self.target_pose is None:
@@ -518,24 +942,52 @@ class MoveToTarget(BaseSkill):
             target_aabb = obs_dict["policy"][_k]
             target_center = target_aabb.get_center()
             target_center[2] += self.z_offset  # Add z offset
-            target_pos = torch.tensor(target_center, device=self.device).unsqueeze(
+            raw_target_pos = torch.tensor(target_center, device=self.device).unsqueeze(
                 0
             )  # [x, y, z]
-            target_quat = current_quat.clone()
+            # self.env.move_target_visualizer.visualize(target_center[None, ...])
+            raw_target_quat = current_quat.clone()
             if self.cfg.get("visualize", False):
-                print(
-                    f"[Skill: MoveToTarget] Target AABB 8p: {np.array2string(np.asarray(target_aabb.get_box_points()), precision=2, separator=', ')}"
-                )
+                # print(
+                #     f"[Skill: MoveToTarget] Target AABB 8p: {np.array2string(np.asarray(target_aabb.get_box_points()), precision=2, separator=', ')}"
+                # )
+                ...
         else:
-            target_pos = self.target_pos.clone()
-            target_quat = self.target_quat.clone()
+            raw_target_pos = self.target_pos.clone()
+            raw_target_quat = self.target_quat.clone()
+
+        # --- 初始化平滑目标（如果尚未初始化）---
+        if not hasattr(self, "filtered_target_pos") or self.filtered_target_pos is None:
+            self.filtered_target_pos = raw_target_pos.clone()
+        if (
+            not hasattr(self, "filtered_target_quat")
+            or self.filtered_target_quat is None
+        ):
+            self.filtered_target_quat = raw_target_quat.clone()
+
+        self.filtered_target_pos = (
+            alpha * raw_target_pos + (1 - alpha) * self.filtered_target_pos
+        )
+        self.filtered_target_quat = (
+            alpha * raw_target_quat + (1 - alpha) * self.filtered_target_quat
+        )
+
+        self.filtered_target_quat = quat_normalize(self.filtered_target_quat)
+        # 使用平滑后的目标
+        target_pos = raw_target_pos
+        target_quat = raw_target_quat
+
         if self.cfg.get("visualize", False):
-            print(
-                f"[Skill: MoveToTarget] Current position: {current_pos.cpu().numpy().tolist()}, Target position: {target_pos.cpu().numpy().tolist()}"
-            )
-            print(
-                f"[Skill: MoveToTarget] Current quaternion: {current_quat.cpu().numpy().tolist()}, Target quaternion: {target_quat.cpu().numpy().tolist()}"
-            )
+            # print(
+            #     f"[Skill: MoveToTarget] Current position: {np.array2string(current_pos.cpu().numpy(), precision=2)}, Target position: {np.array2string(target_pos.cpu().numpy(), precision=2)}"
+            # )
+            # print(
+            #     f"[Skill: MoveToTarget] Current quaternion: {np.array2string(current_quat.cpu().numpy(), precision=2)}, Target quaternion: {np.array2string(target_quat.cpu().numpy(), precision=2)}"
+            # )
+            ...
+        self.filtered_target_pos = (
+            alpha * raw_target_pos + (1 - alpha) * self.filtered_target_pos
+        )
 
         pos_error = target_pos - current_pos
         desired_pos_vel = pos_error * self.pos_gain
@@ -564,9 +1016,11 @@ class MoveToTarget(BaseSkill):
 
         # check if the delta is too small
         if (
-            torch.linalg.norm(total_rot_vec, dim=-1) + torch.linalg.norm(delta_pos)
-            < 0.1
+            torch.linalg.norm(total_rot_vec, dim=-1) + torch.linalg.norm(pos_error)
+            < 0.03
+            or self.finishing
         ):
+            self.finishing = True
             if self.control_mode == "relative":
                 zero_action = torch.zeros(
                     size=(current_pos.shape[0], 7), device=self.device
@@ -581,6 +1035,7 @@ class MoveToTarget(BaseSkill):
                 )
             zero_action[..., -1] = self.gripper_state
             print("[Skill: MoveToTarget] Delta is too small, skill finishing.")
+
             if self.delay_steps > 0:
                 self.delay_steps -= 1
                 return Action(
@@ -608,19 +1063,38 @@ class MoveToTarget(BaseSkill):
         delta_rot = scaled_rot_vel
 
         # --- Combine and create final action ---
-        delta_pose_action = torch.cat([delta_pos, delta_rot], dim=1)
+        delta_pose_action = torch.cat([delta_pos * self.dt, delta_rot * self.dt], dim=1)
 
         # 在移动过程中保持当前抓夹状态，而不是设置为期望状态
         # 判断当前抓夹是开着还是关着的：如果平均绝对值大于阈值，说明抓夹是打开的
         current_gripper_open_level = current_gripper_pos.abs().mean(dim=1, keepdim=True)
-        # 保持当前状态：大于0.1认为是关闭的(-1.0)，小于等于0.1认为是打开的(+1.0)
-        gripper_action = torch.where(current_gripper_open_level > 0.1, -1.0, 1.0)
+        # 保持当前状态：大于0.5认为是关闭的(-1.0)，小于等于0.5认为是打开的(+1.0)
+        gripper_action = torch.where(current_gripper_open_level > 0.5, -1.0, 1.0)
+        gripper_action = -torch.ones_like(gripper_action, device=gripper_action.device)
 
+        R_world_to_base = torch.tensor(
+            [
+                [0, -1, 0],  # 世界X → 基Y
+                [1, 0, 0],  # 世界Y → 基-X
+                [0, 0, 1],  # 世界Z → 基Z
+            ],
+            device=delta_pose_action.device,
+            dtype=delta_pose_action.dtype,
+        )
+
+        delta_pose_action[..., :3] = delta_pose_action[..., :3] @ R_world_to_base
+        delta_pose_action[..., 3:] = delta_pose_action[..., 3:] @ R_world_to_base
         action = torch.cat(
             [delta_pose_action, gripper_action],
             dim=1,
         )
+        print(
+            f"[MoveToTarget]: action: {np.array2string(action.cpu().numpy(), precision=2)}"
+        )
         return Action(action, metadata={"info": "success", "reason": "none"})
+
+    def cleanup(self):
+        self.obj_tracker.cleanup()
 
 
 registry = get_skill_registry()
@@ -629,131 +1103,14 @@ registry.register_skill(
     execution_mode=ExecutionMode.STEPACTION,
     name="move_to_target_object",
     function=MoveToTarget,
-    description="""Moves the robot's end-effector to the center pose of the target object.
-This skill can not understand the visual information, only automatically retrieve the target object's center from the environment observation by the specified target object name.
-So the target object related observation must be provided in the environment observation.
-For example, `object_tracking` skill can be used to add the target object tracking information to the environment observation. However you need to call the `object_tracking` skill before this skill.
+    description="""Moves the robot's end-effector to the pose of the target object.
 Args:
     target_object (str): The name of the target object.
-    gripper_state (float, optional): Command for the gripper after arrivival. 1 means open, -1 means close. default is 1.""",
+    gripper_state (float, optional): Command for the gripper after arrivival. 1 means open, -1 means close. default is 1. For example, if you want to drop the object after arrivival, set it to 1. If you want to grasp the object after arrivival, set it to -1.""",
     timeout=300,
     enable_monitoring=False,  # Disable monitoring for this skill
     requires_env=True,
 )
-
-
-class AliceControl(BaseSkill):
-    """Moves the robot's end-effector to a specified target pose. in samecase, this skill can be helpful for trying a failed skill.
-
-    Args:
-        target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
-    """
-
-    def __init__(
-        self,
-        alice_right_forearm_rigid_entity: "RigidObject",
-        policy_device: str = "cuda",
-    ):
-        super().__init__()
-
-        # self.alice_right_forearm_rigid_entity: "RigidObject" = (
-        #     alice_right_forearm_rigid_entity
-        # )
-        # bodies = self.alice_right_forearm_rigid_entity.body_names
-        # print(f"[Skill: AliceControl] Found bodies in Alice's right forearm: {bodies}")
-        # print("[Skill: AliceControl] Initialized successfully.")
-
-    def initialize(self, env, zero_action):
-        alice = env.scene["alice"]
-        alice.write_root_state_to_sim(
-            torch.tensor(
-                [[0.4067, -3.1, 1.7, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
-                device=env.device,
-                dtype=torch.float32,
-            ),
-        )
-        init_alice_joint_position_target = torch.zeros_like(alice.data.joint_pos_target)
-        init_alice_joint_position_target[:, :9] = torch.tensor(
-            [
-                0.0,  # D6Joint_1:0
-                math.radians(66.7),  # D6Joint_1:1
-                math.radians(50.7),  # D6Joint_1:2
-                0.0,  # D6Joint_2:0
-                math.radians(25.9),  # D6Joint_2:1
-                math.radians(-23.2),  # D6Joint_2:2
-                math.radians(-141.8),  # D6Joint_3:0
-                math.radians(-11.0),  # D6Joint_3:1
-                math.radians(-41.7),  # D6Joint_3:2
-            ],
-            device=env.device,
-        )
-        alice.set_joint_position_target(
-            init_alice_joint_position_target,
-        )
-        # write the joint state to sim to directly change the joint position at one step
-        alice.write_joint_state_to_sim(
-            init_alice_joint_position_target,
-            torch.zeros_like(init_alice_joint_position_target, device=env.device),
-        )
-        zero_action[..., -1] = -1.0  # Ensure gripper is closed
-        for i in range(10):
-            # Step the environment with the correctly shaped zero action
-            # alice_control.apply_action(_env)
-            obs, reward, terminated, truncated, info = env.step(zero_action)
-        frame = (
-            obs["policy"]["camera_left"][0].cpu().numpy()
-        )  # Ensure the observation is processed
-        from PIL import Image
-
-        Image.fromarray(frame).save("alice_initialization.png")
-        return obs
-
-    def apply_action(self, env) -> bool:
-        # 获取当前关节目标位置
-        current_target = env.scene["alice"].data.joint_pos_target.clone()
-
-        # D6Joint_1:1 对应的是索引 2
-        joint_idx = 2
-
-        # 定义增量和限制范围（弧度）
-        increment = math.radians(0.1)
-        lower_limit = math.radians(55)
-        upper_limit = math.radians(75)
-
-        # 初始化或检查方向张量（每个实例一个方向）
-        if (
-            not hasattr(self, "direction")
-            or self.direction.shape[0] != current_target.shape[0]
-        ):
-            self.direction = torch.ones(
-                current_target.shape[0], device=env.device, dtype=torch.float32
-            )
-
-        # 获取当前角度
-        current_angles = current_target[:, joint_idx]
-
-        # 计算下一个角度
-        next_angles = current_angles + increment * self.direction
-
-        # 检测是否超出边界并反转方向
-        exceeded_upper = next_angles > upper_limit
-        exceeded_lower = next_angles < lower_limit
-
-        # 更新方向（到达边界则反转）
-        self.direction[exceeded_upper | exceeded_lower] *= -1
-
-        # 限制角度在范围内
-        next_angles = torch.clamp(next_angles, lower_limit, upper_limit)
-
-        # 更新目标角度
-        current_target[:, joint_idx] = next_angles
-
-        # 将目标位置设置回环境
-        env.scene["alice"].set_joint_position_target(current_target)
-
-        # 写入模拟器，立即生效
-        env.scene["alice"].write_joint_state_to_sim(
-            current_target,
-            torch.zeros_like(current_target, device=env.device),
-        )
-        return True
+# For example, `object_tracking` skill can be used to add the target object tracking information to the environment observation. However you need to call the `object_tracking` skill before this skill, so that the necessary observation information can be available when this skill starts.
+# This skill can not understand the visual information, only automatically retrieve the target object's pose from the environment observation by the specified target object name.
+# So the target object related observation must be provided in the environment observation.

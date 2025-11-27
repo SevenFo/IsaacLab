@@ -3,6 +3,7 @@ import json_repair
 import numpy as np
 import base64
 import time
+import gc
 from PIL import Image
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
@@ -43,6 +44,7 @@ class ImagePipeline:
         vl_adapter: 视觉语言模型适配器实例（QwenVLAdapter）
         """
         self.device = device
+        self.device = "cuda:0"
 
         print(f"[ImagePipeline] Initializing with device: {self.device}")
 
@@ -92,7 +94,7 @@ class ImagePipeline:
         """
 
         def validate_bbox(bbox, frame_shape):
-            """验证边界框是否在图像范围内"""
+            """验证边界框是否在图像范围内（像素坐标）"""
             if len(bbox) != 4:
                 return False
             x1, y1, x2, y2 = bbox
@@ -102,6 +104,53 @@ class ImagePipeline:
                 and 0 < x2 <= frame_shape[1]
                 and 0 < y2 <= frame_shape[0]
             )
+
+        def convert_relative_to_pixel(bbox, frame_shape):
+            """
+            支持三种输入格式并转换为像素坐标：
+            - 像素坐标 (x1,y1,x2,y2)
+            - 归一化坐标 [0,1]
+            - 相对坐标 [0,1000]（用户说明的 case）
+            返回整数像素 bbox
+            """
+            x1, y1, x2, y2 = bbox
+            h, w = frame_shape[0], frame_shape[1]
+
+            # # 如果已经看起来像像素坐标（任一坐标大于 1 并且接近图像尺寸），直接返回
+            # if max(x1, y1, x2, y2) > 1.5 and max(x1, y1, x2, y2) <= max(w, h) * 1.5:
+            #     return [
+            #         int(max(0, min(w, x1))),
+            #         int(max(0, min(h, y1))),
+            #         int(max(0, min(w, x2))),
+            #         int(max(0, min(h, y2))),
+            #     ]
+
+            # 如果在 [0,1] 范围内，视为归一化坐标
+            if (
+                0.0 <= x1 <= 1.0
+                and 0.0 <= y1 <= 1.0
+                and 0.0 <= x2 <= 1.0
+                and 0.0 <= y2 <= 1.0
+            ):
+                return [int(x1 * w), int(y1 * h), int(x2 * w), int(y2 * h)]
+
+            # 如果在 [0,1000] 范围内，视为相对 coords（按比例映射到图像尺寸）
+            if (
+                0 <= x1 <= 1000
+                and 0 <= y1 <= 1000
+                and 0 <= x2 <= 1000
+                and 0 <= y2 <= 1000
+            ):
+                # 将 0..1000 映射到像素范围
+                return [
+                    int(max(0, min(w, x1 / 1000.0 * w))),
+                    int(max(0, min(h, y1 / 1000.0 * h))),
+                    int(max(0, min(w, x2 / 1000.0 * w))),
+                    int(max(0, min(h, y2 / 1000.0 * h))),
+                ]
+
+            # 无法识别的格式，抛出错误以便上层处理
+            raise ValueError(f"Unsupported bbox format or out-of-range values: {bbox}")
 
         # 构建VL模型输入
         prompt = BrainMemory()
@@ -138,24 +187,20 @@ class ImagePipeline:
             else:
                 raise ValueError("Invalid bbox format or values in response.")
 
-        # 验证bbox格式
+        # 验证并转换 bbox 格式（支持像素 / 归一化 / 0..1000）
         for item in bbox_list:
             bbox = item.get("bbox_2d", [])
-            if len(bbox) == 4 and all(
-                0 <= v <= frame.shape[1] if i % 2 == 0 else 0 <= v <= frame.shape[0]
-                for i, v in enumerate(bbox)
-            ):
-                valid_bboxes.append(bbox)
+            try:
+                pixel_bbox = convert_relative_to_pixel(bbox, frame.shape)
+            except Exception as e:
+                print(f"Invalid bbox: {bbox} in response. Reason: {e}")
+                continue
+            if validate_bbox(pixel_bbox, frame.shape):
+                valid_bboxes.append(pixel_bbox)
             else:
-                # TODO TEST CASE
-                # ```
-                # json_str:
-                # ```json
-                # [
-                #     {"bbox_2d": [245, 22, 504, 298], "label": "red_box"}
-                # ]
-                # ```
-                print(f"Invalid bbox: {bbox} in response.")
+                print(
+                    f"Converted bbox out of bounds: {pixel_bbox} for frame shape {frame.shape}"
+                )
 
         if not valid_bboxes:
             raise ValueError("No valid bounding boxes found in VL model response.")
@@ -298,12 +343,6 @@ class ImagePipeline:
             (current_mask_np == obj_id) for obj_id in self.current_objects
         ]
 
-    def reset(self):
-        """重置管道状态"""
-        self.processor.clear_memory()
-        self.current_objects = []
-        self.is_initialized = False
-
     def add_object(self, frame: np.ndarray, bbox: list) -> np.ndarray:
         """
         动态添加新目标到现有跟踪
@@ -335,9 +374,96 @@ class ImagePipeline:
 
         # 更新处理器状态
         self.current_objects.append(new_id)
+        # 构建 image_tensor（与 update_masks 中的处理一致）
+        if not isinstance(frame, torch.Tensor):
+            image_tensor = to_tensor(rgb_frame).to(self.device)
+        else:
+            if frame.dim() == 3 and frame.shape[0] != 3:
+                image_tensor = frame.permute(2, 0, 1).to(self.device)
+            else:
+                image_tensor = frame.to(self.device)
+            if image_tensor.dtype == torch.uint8 or torch.max(image_tensor) > 1.0:
+                image_tensor = image_tensor.float() / 255.0
+
         self.processor.step(image_tensor, combined_mask, self.current_objects)
 
         return new_mask
+
+    def move_to(self, device: str):
+        """
+        将所有内部模型和处理器移动到指定的设备，但不修改它们的类定义。
+
+        Args:
+            device (str): 目标设备，例如 "cuda:1" 或 "cpu"。
+        """
+        target_device = torch.device(device)
+        if (
+            hasattr(self.predictor.model, "device")
+            and self.predictor.model.device == target_device
+        ):
+            print(f"[ImagePipeline] Already on device: {device}. Nothing to do.")
+            return
+
+        print(f"[ImagePipeline] Moving all components to {device}...")
+
+        # 1. 移动 SAM2 的内部模型
+        # 直接访问并调用 .to() 方法
+        self.predictor.model = self.predictor.model.to(target_device)
+        # 关键一步：移动后必须重置 predictor，以清除旧设备上的特征缓存
+        self.predictor.reset_predictor()
+
+        # 2. 移动 CUTIE 的内部模型
+        self.cutie = self.cutie.to(target_device)
+        # 更新 processor 对模型实例的引用，因为 .to() 可能返回新对象
+        self.processor.network = self.cutie
+        # 关键一步：清除 processor 的内存，因为它包含设备相关的张量
+        self.processor.clear_memory()
+
+        # 4. 更新管道自身的设备状态
+        self.device = device
+        self.is_initialized = False  # 移动后需要重新初始化跟踪状态
+
+        print(
+            f"[ImagePipeline] Successfully moved to {device}. Tracking state has been reset."
+        )
+
+    def cleanup(self):
+        """
+        彻底清理并释放所有占用的资源，特别是GPU显存。
+        """
+        print("[ImagePipeline] Starting cleanup process...")
+
+        # 步骤 1: 将所有模型移到CPU，主动释放GPU张量
+        if "cuda" in self.device:
+            self.move_to("cpu")
+
+        # 步骤 2: 删除对重量级对象的引用
+        print("[ImagePipeline] Deleting model and processor references...")
+        if hasattr(self, "predictor"):
+            del self.predictor
+        if hasattr(self, "cutie"):
+            del self.cutie
+        if hasattr(self, "processor"):
+            del self.processor
+        if hasattr(self, "vl_adapter"):
+            del self.vl_adapter
+
+        # 步骤 3: (关键!) 调用垃圾回收并强制PyTorch清理其缓存
+        gc.collect()
+        if torch.cuda.is_available():
+            print("[ImagePipeline] Clearing PyTorch CUDA cache...")
+            torch.cuda.empty_cache()
+
+        print("[ImagePipeline] Cleanup complete.")
+
+    def reset(self):
+        """重置管道状态"""
+        if hasattr(self, "processor"):
+            self.processor.clear_memory()
+        self.current_objects = []
+        self.is_initialized = False
+        self.instruction = ""
+        print("[ImagePipeline] State has been reset.")
 
 
 # 使用示例
@@ -355,6 +481,8 @@ if __name__ == "__main__":
     import os
 
     os.environ["DISPLAY"] = ":0"  # 设置显示环境变量
-    main_demo()
+    print(
+        "ImagePipeline: no demo available in module context. Import ImagePipeline and call its methods from your application."
+    )
 
     # shutdown_all()
