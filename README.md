@@ -62,10 +62,7 @@ pip install -r ImagePipeline/requirements.txt
 # 创建资产目录
 mkdir -p env_assets
 
-# 下载并解压环境资产（包含所有 URDF、场景、纹理等）
-文件名：env.zip
-下载链接：https://bhpan.buaa.edu.cn/link/AAD702EA32A1DC476A980D59E6177CC145
-提取码：OMCN
+下载并解压环境资产（包含所有 URDF、场景、纹理等）env.zip
 
 unzip env.zip -d env_assets
 ```
