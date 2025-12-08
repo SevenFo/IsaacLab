@@ -5,6 +5,7 @@ Runs in robot_brain_system process, uses EnvProxy to access remote environment.
 
 from datetime import datetime
 import os
+import queue
 import threading
 import time
 from typing import Dict, Any, List, Optional, Callable
@@ -16,6 +17,7 @@ from robot_brain_system.core.skill_manager import SkillRegistry
 from robot_brain_system.core.env_proxy import EnvProxy
 from robot_brain_system.utils.metric_utils import with_time
 from robot_brain_system.skills.alice_control_skills import AliceControl
+from robot_brain_system.ui.console import global_console
 
 
 class SkillExecutorClient:
@@ -29,7 +31,12 @@ class SkillExecutorClient:
     - Skills execute locally, only env queries are remote
     """
 
-    def __init__(self, skill_registry: SkillRegistry, env_proxy: EnvProxy):
+    def __init__(
+        self,
+        skill_registry: SkillRegistry,
+        env_proxy: EnvProxy,
+        input_queue: queue.Queue = None,
+    ):
         """
         Initialize client-side skill executor.
 
@@ -72,6 +79,17 @@ class SkillExecutorClient:
         self.recording_root_dir = ""
         self.recording_idx = 0
 
+        self.skill_specific_queue = queue.Queue()
+
+    def inject_input(self, text: str):
+        """接收外部注入的输入 (由 System 调用)"""
+        # print 改为 console.log 需要引用，或者简单 print
+        self.print(f"Injecting input to skill: {text}")
+        self.skill_specific_queue.put(text)
+
+    def print(self, msg: str):
+        global_console.log("skill-exec", msg)
+
     def initialize_skill(
         self,
         skill_name: str,
@@ -99,18 +117,29 @@ class SkillExecutorClient:
             policy_device = self.env_device
 
         if self.is_running():
-            print(
+            self.print(
                 f"[SkillExecutorClient] Another skill '{self.current_skill_name}' is already running. Terminating it."
             )
             self.terminate_current_skill()
 
         skill_def = self.registry.get_skill(skill_name)
         if not skill_def:
-            print(
+            self.print(
                 f"[SkillExecutorClient] Skill '{skill_name}' not found, available skills: {self.registry.list_skills()}"
             )
             self.status = SkillStatus.FAILED
             return False, obs_dict
+
+        if skill_name == "human_intervention":
+            try:
+                while True:
+                    self.skill_specific_queue.get_nowait()
+            except queue.Empty:
+                pass
+
+            # 将队列通过参数传递给技能实例
+            # 这样技能内部就可以读取 self.params['_input_queue'] 来获取指令
+            parameters["_input_queue"] = self.skill_specific_queue
 
         try:
             from robot_brain_system.core.types import ExecutionMode
@@ -119,9 +148,6 @@ class SkillExecutorClient:
                 self.env_proxy._simulator.set_env_decimation(10)
             else:
                 self.env_proxy._simulator.set_env_decimation(5)
-
-            # if skill_name == "move_to_target_object":
-            #     self.move_alice_to_operation_position()
 
             if skill_def.execution_mode == ExecutionMode.STEPACTION:
                 # Create skill instance (passes env_proxy as 'env')
@@ -142,7 +168,7 @@ class SkillExecutorClient:
                 # Start auto-execution thread
                 self._start_execution_thread()
 
-                print(f"[SkillExecutorClient] Started policy skill: {skill_name}")
+                self.print(f"[SkillExecutorClient] Started policy skill: {skill_name}")
                 return True, obs_dict
 
             elif skill_def.execution_mode == ExecutionMode.PREACTION:
@@ -166,20 +192,22 @@ class SkillExecutorClient:
                 # PREACTION skills complete initialization immediately
                 self.status = SkillStatus.IDLE
                 self.status_info = "PREACTION skill initialized successfully."
-                print(
+                self.print(
                     f"[SkillExecutorClient] Initialized PREACTION skill: {skill_name}"
                 )
                 return True, obs_dict
 
             else:
-                print(
+                self.print(
                     f"[SkillExecutorClient] Unknown execution mode: {skill_def.execution_mode}"
                 )
                 self.status = SkillStatus.FAILED
                 return False, obs_dict
 
         except Exception as e:
-            print(f"[SkillExecutorClient] Error initializing skill '{skill_name}': {e}")
+            self.print(
+                f"[SkillExecutorClient] Error initializing skill '{skill_name}': {e}"
+            )
             import traceback
 
             traceback.print_exc()
@@ -227,6 +255,8 @@ class SkillExecutorClient:
                 new_status = SkillStatus.COMPLETED
             elif info == "timeout":
                 new_status = SkillStatus.TIMEOUT
+            elif info == "interrupted":
+                new_status = SkillStatus.INTERRUPTED
             else:
                 new_status = SkillStatus.RUNNING
 
@@ -236,7 +266,7 @@ class SkillExecutorClient:
             return action, self.status, self.status_info
 
         except Exception as e:
-            print(f"[SkillExecutorClient] Error in skill step: {e}")
+            self.print(f"[SkillExecutorClient] Error in skill step: {e}")
             import traceback
 
             traceback.print_exc()
@@ -259,7 +289,9 @@ class SkillExecutorClient:
             status_info: Additional status information
         """
         if self.current_skill:
-            print(f"[SkillExecutorClient] Terminating skill: {self.current_skill_name}")
+            self.print(
+                f"[SkillExecutorClient] Terminating skill: {self.current_skill_name}"
+            )
 
             # Stop execution thread if running
             self._stop_execution_thread()
@@ -268,7 +300,7 @@ class SkillExecutorClient:
                 if hasattr(self.current_skill, "cleanup"):
                     self.current_skill.cleanup()
             except Exception as e:
-                print(f"[SkillExecutorClient] Error during skill cleanup: {e}")
+                self.print(f"[SkillExecutorClient] Error during skill cleanup: {e}")
 
         self.status = skill_status
         self.status_info = status_info
@@ -283,11 +315,11 @@ class SkillExecutorClient:
         """
         if self.current_skill:
             self.status = status
-            print(
+            self.print(
                 f"[SkillExecutorClient] Changed skill '{self.current_skill_name}' status to {status.value}"
             )
         else:
-            print("[SkillExecutorClient] No active skill to change status")
+            self.print("[SkillExecutorClient] No active skill to change status")
 
     def get_status(self) -> Dict[str, Any]:
         """
@@ -314,7 +346,7 @@ class SkillExecutorClient:
     def _start_execution_thread(self):
         """Start the auto-execution thread for skill."""
         if self.execution_thread and self.execution_thread.is_alive():
-            print("[SkillExecutorClient] Execution thread already running")
+            self.print("[SkillExecutorClient] Execution thread already running")
             return
 
         self.is_executing = True
@@ -322,21 +354,21 @@ class SkillExecutorClient:
             target=self._execution_loop, daemon=True, name="SkillExecutionThread"
         )
         self.execution_thread.start()
-        print("[SkillExecutorClient] Started execution thread")
+        self.print("[SkillExecutorClient] Started execution thread")
 
     def _stop_execution_thread(self):
         """Stop the auto-execution thread."""
         self.is_executing = False
         if self.execution_thread and self.execution_thread.is_alive():
             self.execution_thread.join(timeout=2.0)
-            print("[SkillExecutorClient] Stopped execution thread")
+            self.print("[SkillExecutorClient] Stopped execution thread")
 
     def _execution_loop(self):
         """
         Auto-execution loop that runs in a separate thread.
         This mimics the behavior of the old SERVER-side skill_executor loop.
         """
-        print(
+        self.print(
             f"[SkillExecutorClient] Execution loop started for skill: {self.current_skill_name}"
         )
 
@@ -361,7 +393,7 @@ class SkillExecutorClient:
 
                 # Check if skill finished
                 if new_status != SkillStatus.RUNNING:
-                    print(
+                    self.print(
                         f"[SkillExecutorClient] Skill '{self.current_skill_name}' finished with status: {new_status.value}"
                     )
                     break
@@ -374,45 +406,56 @@ class SkillExecutorClient:
                     if action.metadata is None:
                         action.metadata = {}
                     action.metadata.setdefault("skill_name", self.current_skill_name)
-                    raw_data = action.data
 
-                    if len(raw_data.shape) == 2:
-                        raw_data = raw_data.unsqueeze(1)  # (num_envs, 1, action_dim)
-                    elif len(raw_data.shape) != 3:
-                        raise ValueError(
-                            f"Unsupported action shape {raw_data.shape}, expect 2D tensor"
-                        )
+                    # Check for update_only mode (e.g., HumanIntervention skill)
+                    # In this mode, we only call env_proxy.update() instead of step()
+                    # This lets the server handle zero_action automatically
+                    if action.metadata.get("update_only") and action.data is None:
+                        # Just update simulation without stepping with action
+                        self.env_proxy.update(return_obs=False)
+                    else:
+                        # Normal action execution
+                        raw_data = action.data
 
-                    for chunk_id in range(raw_data.shape[1]):
-                        chunk_action = raw_data[:, chunk_id, :]
-                        action_chunk = ActionType(
-                            data=chunk_action, metadata=action.metadata
-                        )
-                        if self.enable_alice:
-                            self.alice_control.update(
-                                return_obs=False, update_sim=False
+                        if len(raw_data.shape) == 2:
+                            raw_data = raw_data.unsqueeze(
+                                1
+                            )  # (num_envs, 1, action_dim)
+                        elif len(raw_data.shape) != 3:
+                            raise ValueError(
+                                f"Unsupported action shape {raw_data.shape}, expect 2D tensor"
                             )
-                        step_result = self.env_proxy.step(action_chunk)
-                        # Server may return success flag in info
-                        if step_result is not None:
-                            obs, reward, terminated, truncated, info = step_result
-                            if self.is_recording:
-                                self._save_obs_frame(obs)
-                            if isinstance(info, dict) and info.get("skill_success"):
-                                with self.execution_lock:
-                                    self.status = SkillStatus.COMPLETED
-                                    self.status_info = (
-                                        "Succeeded by server success_item"
-                                    )
-                                print(
-                                    f"[SkillExecutorClient] Skill '{self.current_skill_name}' succeeded (server-reported)"
+
+                        for chunk_id in range(raw_data.shape[1]):
+                            chunk_action = raw_data[:, chunk_id, :]
+                            action_chunk = ActionType(
+                                data=chunk_action, metadata=action.metadata
+                            )
+                            if self.enable_alice:
+                                self.alice_control.update(
+                                    return_obs=False, update_sim=False
                                 )
+                            step_result = self.env_proxy.step(action_chunk)
+                            # Server may return success flag in info
+                            if step_result is not None:
+                                obs, reward, terminated, truncated, info = step_result
+                                if self.is_recording:
+                                    self._save_obs_frame(obs)
+                                if isinstance(info, dict) and info.get("skill_success"):
+                                    with self.execution_lock:
+                                        self.status = SkillStatus.COMPLETED
+                                        self.status_info = (
+                                            "Succeeded by server success_item"
+                                        )
+                                    self.print(
+                                        f"[SkillExecutorClient] Skill '{self.current_skill_name}' succeeded (server-reported)"
+                                    )
+                                    break
+                            if chunk_id == 15 or self.is_executing is False:
                                 break
-                        if chunk_id == 15:
-                            break
                 # Check if skill finished
                 if new_status != SkillStatus.RUNNING:
-                    print(
+                    self.print(
                         f"[SkillExecutorClient] Skill '{self.current_skill_name}' finished with status: {new_status.value}"
                     )
                     break
@@ -420,7 +463,7 @@ class SkillExecutorClient:
                 time.sleep(self.skill_step_interval)
 
             except Exception as e:
-                print(f"[SkillExecutorClient] Error in execution loop: {e}")
+                self.print(f"[SkillExecutorClient] Error in execution loop: {e}")
                 import traceback
 
                 traceback.print_exc()
@@ -430,8 +473,15 @@ class SkillExecutorClient:
                 break
         # if self.current_skill_name == "move_to_target_object":
         #     self.env_proxy.release_env_lock()
+        # Skill exited (finished/failed/interrupted). Run skill-level cleanup if provided.
+        try:
+            if self.current_skill and hasattr(self.current_skill, "cleanup"):
+                self.current_skill.cleanup()
+        except Exception as e:
+            self.print(f"[SkillExecutorClient] Error during skill cleanup: {e}")
+
         self.is_executing = False
-        print(
+        self.print(
             f"[SkillExecutorClient] Execution loop stopped for skill: {self.current_skill_name}"
         )
 
@@ -456,14 +506,16 @@ class SkillExecutorClient:
                 os.makedirs(os.path.join(self.recording_root_dir, key), exist_ok=True)
 
             self.is_recording = True
-            print(
+            self.print(
                 f"[SkillExecutor] Start recording {keys} to {self.recording_root_dir}"
             )
 
     def stop_recording(self):
         """停止录制"""
         self.is_recording = False
-        print(f"[SkillExecutor] Stop recording. Saved {self.recording_idx} frames.")
+        self.print(
+            f"[SkillExecutor] Stop recording. Saved {self.recording_idx} frames."
+        )
 
     def _save_obs_frame(self, obs):
         """使用用户指定的简化逻辑保存图片"""
@@ -490,7 +542,7 @@ class SkillExecutorClient:
 
             self.recording_idx += 1
         except Exception as e:
-            print(f"[Recording Error] {e}")
+            self.print(f"[Recording Error] {e}")
 
     @staticmethod
     def create_video_from_folder(
@@ -509,13 +561,13 @@ class SkillExecutorClient:
         )
 
         if not files:
-            print(f"No images found in {folder_path}")
+            global_console.log("info", f"No images found in {folder_path}")
             return
 
         # 读取第一张图获取尺寸
         first_img = cv2.imread(files[0])
         if first_img is None:
-            print("Failed to read first image.")
+            global_console.log("info", "Failed to read first image.")
             return
         height, width, _ = first_img.shape
 
@@ -527,14 +579,16 @@ class SkillExecutorClient:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-        print(f"Generating video: {output_path} with {len(files)} frames...")
+        global_console.log(
+            "info", f"Generating video: {output_path} with {len(files)} frames..."
+        )
         for f in files:
             img = cv2.imread(f)
             if img is not None:
                 out.write(img)
 
         out.release()
-        print("Video generation complete.")
+        global_console.log("info", "Video generation complete.")
 
 
 def create_skill_executor_client(

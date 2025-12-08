@@ -43,7 +43,7 @@ ALICE_CFG = ArticulationCfg(
     # （-141.8， -11.0，-41.7）
     init_state=ArticulationCfg.InitialStateCfg(
         # pos=(0.0, -3.1, 1.6),
-        pos=(-1.8, -1, 2.8),
+        pos=(-1.8, -2.5, 2.8),
         # pos=(0.4067, 10, 1.7),
         rot=(0.5, 0.5, 0.5, 0.5),
         # joint_pos={

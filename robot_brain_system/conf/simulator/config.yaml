@@ -6,8 +6,10 @@ defaults:
 task: "Isaac-Move-Box-UR5-IK-Rel-rot-0923" #"Isaac-Move-Box-UR5-IK-Rel-rot-0923"
 num_envs: 1
 disable_fabric: false
-env_config_file: configs/ur5_lunar_base.yaml
+# env_config_file: configs/ur5_lunar_base.yaml
 auto_start: true
+# scene mode for asset placement (default/missing_box_human_intervention_test)
+scene_mode: default # missing_box_human_intervention_test
 
 # isaaclab config
 # 启用无头模式（无 GUI）

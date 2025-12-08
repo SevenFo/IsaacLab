@@ -18,6 +18,7 @@ from robot_brain_system.skills.imagepipleline import ImagePipeline
 from robot_brain_system.utils.visualization_utils import visualize_all
 from robot_brain_system.utils.config_utils import hydra_context_base
 from cutie.utils.get_default_model import get_default_model
+from robot_brain_system.ui.console import global_console
 
 
 @skill_register(
@@ -42,14 +43,16 @@ class ObjectTracking(BaseSkill):
         **running_params,
     ) -> None:
         super().__init__()
-        print(f"[ObjectTracking] Loaded skill config: {self.cfg}")
-        print(f"[SKILL: ObjectTracking: {running_params}")
+        global_console.log("skill", f"[ObjectTracking] Loaded skill config: {self.cfg}")
+        global_console.log("skill", f"[SKILL: ObjectTracking: {running_params}")
         self.target_object = running_params.get("target_object", None)
         if self.target_object is None:
             raise ValueError("target_object must be specified.")
         self.pipeline_instance: dict[str, ImagePipeline] = {}
         self.banned_cameras = self.cfg.get("banned_cameras", [])
-        print(f"[ObjectTracking] Banned cameras: {self.banned_cameras}")
+        global_console.log(
+            "skill", f"[ObjectTracking] Banned cameras: {self.banned_cameras}"
+        )
         # handle alice
         self.policy_device = policy_device
 
@@ -95,13 +98,15 @@ class ObjectTracking(BaseSkill):
             except ValueError as e:
                 # NO OBJECT IS DETECTED
                 # TODO 如果所有视角都没看到就要抛出错误进行处理
-                print(
-                    f"[ObjectTracking] No object detected in {key}, as {e}, please check the camera data."
+                global_console.log(
+                    "skill",
+                    f"[ObjectTracking] No object detected in {key}, as {e}, please check the camera data.",
                 )
                 pass
         if len(_init_success) == 0:
-            print(
-                f"[ObjectTracking] No camera initialized successfully for {self.target_object}. Please check the camera data."
+            global_console.log(
+                "skill",
+                f"[ObjectTracking] No camera initialized successfully for {self.target_object}. Please check the camera data.",
             )
             raise SkillInitError(
                 f"Target {self.target_object} not found in any camera view currently, you can try to call this skill later when just before the interaction with the object."
@@ -123,7 +128,10 @@ class ObjectTracking(BaseSkill):
         points_list = []
         for instance_key in self.pipeline_instance:
             if not self.pipeline_instance[instance_key].is_initialized:
-                print(f"[ObjectTracking] {instance_key} is not initialized, skipping.")
+                global_console.log(
+                    "skill",
+                    f"[ObjectTracking] {instance_key} is not initialized, skipping.",
+                )
                 continue
             # 更新掩码
             all_mask, mask_list = self.pipeline_instance[instance_key].update_masks(
@@ -132,8 +140,9 @@ class ObjectTracking(BaseSkill):
             )
             assert len(mask_list) == 1, "Only one mask is expected."
             if not all_mask.any():
-                print(
-                    f"[ObjectTracking] No mask found for {self.target_object} in {instance_key}, skipping."
+                global_console.log(
+                    "skill",
+                    f"[ObjectTracking] No mask found for {self.target_object} in {instance_key}, skipping.",
                 )
                 continue
             pointcloud: torch.tensor = obs_dict["policy"][f"pointcloud_{instance_key}"][
@@ -167,8 +176,9 @@ class ObjectTracking(BaseSkill):
 
         # 合并点云并转换为 numpy 数组
         if len(points_list) == 0:
-            print(
-                f"[ObjectTracking] No points found for {self.target_object}, returning empty observation."
+            global_console.log(
+                "skill",
+                f"[ObjectTracking] No points found for {self.target_object}, returning empty observation.",
             )
             # TODO 删除当前观测技能，并进行反馈！一种可能是随着技能的执行，所有视角中已经都看不到 target object 了导致所有视角的 mask 更新结果都为空
             return obs_dict
@@ -194,7 +204,7 @@ class ObjectTracking(BaseSkill):
         if self.cfg.get("visualize", False):
             import open3d.visualization as o3d_vis
 
-            print(f"aabb of {self.target_object}: {aabb}")
+            global_console.log("skill", f"aabb of {self.target_object}: {aabb}")
             o3d_vis.draw_geometries([pcd_downsampled])
 
         if self.cfg.get("debug_save", False):

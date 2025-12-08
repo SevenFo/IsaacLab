@@ -15,6 +15,7 @@ from robot_brain_system.utils.visualization_utils import visualize_all
 from robot_brain_system.utils.retry_utils import retry
 from robot_brain_system.utils.config_utils import hydra_config_context
 from robot_brain_system.core.brain import BrainMemory
+from robot_brain_system.ui.console import global_console
 
 try:
     import pyrealsense2 as rs
@@ -22,7 +23,10 @@ try:
     REALSENSE_AVAILABLE = True
 except ImportError:
     REALSENSE_AVAILABLE = False
-    print("Realsense library not available. Skipping RealsenseCamera functionality.")
+    global_console.log(
+        "info",
+        "Realsense library not available. Skipping RealsenseCamera functionality.",
+    )
 
 
 class ImagePipeline:
@@ -46,7 +50,9 @@ class ImagePipeline:
         self.device = device
         self.device = "cuda:0"
 
-        print(f"[ImagePipeline] Initializing with device: {self.device}")
+        global_console.log(
+            "skill", f"[ImagePipeline] Initializing with device: {self.device}"
+        )
 
         # 使用封装的上下文管理器初始化 SAM2
         with hydra_config_context("pkg://sam2"):
@@ -79,7 +85,7 @@ class ImagePipeline:
         delay_seconds=1.0,
         backoff_factor=2.0,
         exceptions_to_retry=(ValueError,),
-        logger_func=lambda msg: print(f"[ImagePipeline] {msg}"),
+        logger_func=lambda msg: global_console.log("skill", f"[ImagePipeline] {msg}"),
     )
     def get_bbox_from_vl(self, frame: np.ndarray, instruction: str) -> list:
         """
@@ -167,11 +173,11 @@ class ImagePipeline:
 
         response, _ = self.vl_adapter.generate(prompt.history, max_tokens=512)
 
-        print(f"response from vl: \n{response}")
+        global_console.log("skill", f"response from vl: \n{response}")
 
         # 提取JSON部分
         json_str = response[response.find("```json") : response.rfind("```") + 3]
-        print(f"json_str: \n{json_str}")
+        global_console.log("skill", f"json_str: \n{json_str}")
         bbox_list = json_repair.loads(json_str)
 
         valid_bboxes = []
@@ -193,13 +199,16 @@ class ImagePipeline:
             try:
                 pixel_bbox = convert_relative_to_pixel(bbox, frame.shape)
             except Exception as e:
-                print(f"Invalid bbox: {bbox} in response. Reason: {e}")
+                global_console.log(
+                    "skill", f"Invalid bbox: {bbox} in response. Reason: {e}"
+                )
                 continue
             if validate_bbox(pixel_bbox, frame.shape):
                 valid_bboxes.append(pixel_bbox)
             else:
-                print(
-                    f"Converted bbox out of bounds: {pixel_bbox} for frame shape {frame.shape}"
+                global_console.log(
+                    "skill",
+                    f"Converted bbox out of bounds: {pixel_bbox} for frame shape {frame.shape}",
                 )
 
         if not valid_bboxes:
@@ -228,7 +237,7 @@ class ImagePipeline:
         self.instruction = instruction
         bboxes = self.get_bbox_from_vl(frame, instruction)
         if not bboxes:
-            raise ValueError("No valid bounding boxes detected by VL model")
+            raise ValueError(f"No objects found for instruction: {instruction}")
         if visualize:
             visualize_all(
                 frame,
@@ -401,10 +410,14 @@ class ImagePipeline:
             hasattr(self.predictor.model, "device")
             and self.predictor.model.device == target_device
         ):
-            print(f"[ImagePipeline] Already on device: {device}. Nothing to do.")
+            global_console.log(
+                "skill", f"[ImagePipeline] Already on device: {device}. Nothing to do."
+            )
             return
 
-        print(f"[ImagePipeline] Moving all components to {device}...")
+        global_console.log(
+            "skill", f"[ImagePipeline] Moving all components to {device}..."
+        )
 
         # 1. 移动 SAM2 的内部模型
         # 直接访问并调用 .to() 方法
@@ -423,22 +436,25 @@ class ImagePipeline:
         self.device = device
         self.is_initialized = False  # 移动后需要重新初始化跟踪状态
 
-        print(
-            f"[ImagePipeline] Successfully moved to {device}. Tracking state has been reset."
+        global_console.log(
+            "skill",
+            f"[ImagePipeline] Successfully moved to {device}. Tracking state has been reset.",
         )
 
     def cleanup(self):
         """
         彻底清理并释放所有占用的资源，特别是GPU显存。
         """
-        print("[ImagePipeline] Starting cleanup process...")
+        global_console.log("skill", "[ImagePipeline] Starting cleanup process...")
 
         # 步骤 1: 将所有模型移到CPU，主动释放GPU张量
         if "cuda" in self.device:
             self.move_to("cpu")
 
         # 步骤 2: 删除对重量级对象的引用
-        print("[ImagePipeline] Deleting model and processor references...")
+        global_console.log(
+            "skill", "[ImagePipeline] Deleting model and processor references..."
+        )
         if hasattr(self, "predictor"):
             del self.predictor
         if hasattr(self, "cutie"):
@@ -451,10 +467,12 @@ class ImagePipeline:
         # 步骤 3: (关键!) 调用垃圾回收并强制PyTorch清理其缓存
         gc.collect()
         if torch.cuda.is_available():
-            print("[ImagePipeline] Clearing PyTorch CUDA cache...")
+            global_console.log(
+                "skill", "[ImagePipeline] Clearing PyTorch CUDA cache..."
+            )
             torch.cuda.empty_cache()
 
-        print("[ImagePipeline] Cleanup complete.")
+        global_console.log("skill", "[ImagePipeline] Cleanup complete.")
 
     def reset(self):
         """重置管道状态"""
@@ -463,7 +481,7 @@ class ImagePipeline:
         self.current_objects = []
         self.is_initialized = False
         self.instruction = ""
-        print("[ImagePipeline] State has been reset.")
+        global_console.log("skill", "[ImagePipeline] State has been reset.")
 
 
 # 使用示例
@@ -476,13 +494,14 @@ if __name__ == "__main__":
     #     video_source="camera",
     #     video_path="/data/shiqi/ImagePipelien/imagepipeline/output.mp4",
     # ):
-    #     print(centers)
+    #     global_console.log("skill",centers)
 
     import os
 
     os.environ["DISPLAY"] = ":0"  # 设置显示环境变量
-    print(
-        "ImagePipeline: no demo available in module context. Import ImagePipeline and call its methods from your application."
+    global_console.log(
+        "skill",
+        "ImagePipeline: no demo available in module context. Import ImagePipeline and call its methods from your application.",
     )
 
     # shutdown_all()

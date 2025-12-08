@@ -104,7 +104,7 @@ def randomize_object_pose(
 
     # 定义asset2相对于asset1的初始位置偏移和旋转
     rel_pos = torch.tensor(
-        [0.0, -0.04, 2], device=env.device
+        [-10, -0.04, -10], device=env.device
     )  # asset2相对于asset1的位置偏移
     rel_rot = math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
         torch.tensor([0.0], device=env.device),

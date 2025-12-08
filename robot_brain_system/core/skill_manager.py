@@ -5,7 +5,7 @@ Skills execute directly in the Isaac subprocess with direct environment access.
 
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from dataclasses import dataclass
-
+import inspect
 from .types import (
     SkillDefinition,
     SkillType,
@@ -14,6 +14,7 @@ from .types import (
     SkillStatus,  # Make sure SkillStatus is defined in types.py
     SkillInitError,
 )
+from robot_brain_system.ui.console import global_console
 
 
 class SkillRegistry:
@@ -39,8 +40,9 @@ class SkillRegistry:
         name = name or function.__name__
         description = description or function.__doc__ or ""
         if name in self.skills:
-            print(
-                f"[SkillRegistry] Warning: Skill '{name}' already registered. Overwriting."
+            global_console.log(
+                "skill-exec",
+                f"[SkillRegistry] Warning: Skill '{name}' already registered. Overwriting.",
             )
 
         skill_def = SkillDefinition(
@@ -56,8 +58,9 @@ class SkillRegistry:
         )
 
         self.skills[name] = skill_def
-        print(
-            f"[SkillRegistry] Registered skill: {name} ({skill_type.value}, {execution_mode.value})"
+        global_console.log(
+            "skill-exec",
+            f"[SkillRegistry] Registered skill: {name} ({skill_type.value}, {execution_mode.value})",
         )
 
     def get_skill(self, name: str) -> Optional[SkillDefinition]:
@@ -102,10 +105,15 @@ class SkillRegistry:
         The docstring is retrieved from the skill's underlying function.
         """
 
-        formated_descriptions = [
-            f"skill name: {name}: \n skill desc:\n{item.description}\n\n"
-            for name, item in self.skills.items()
-        ]
+        formated_descriptions = []
+        for name, item in self.skills.items():
+            # Clean up docstring indentation for better formatting in prompts
+            cleaned_desc = (
+                inspect.cleandoc(item.description) if item.description else ""
+            )
+            formated_descriptions.append(
+                f"skill name: {name}:\nskill desc: {cleaned_desc}\n\n"
+            )
 
         return "".join(formated_descriptions)
 
@@ -113,7 +121,9 @@ class SkillRegistry:
         """Clear all registered skills."""
         self.skills.clear()
         # self.skill_instances.clear()
-        print("[SkillRegistry] Cleared all registered skills")
+        global_console.log(
+            "skill-exec", "[SkillRegistry] Cleared all registered skills"
+        )
 
 
 # Global skill registry instance
@@ -216,15 +226,17 @@ class SkillExecutor:
         if not policy_device:
             policy_device = self.env_device
         if self.is_running():
-            print(
-                f"[SkillExecutor] Another skill '{self.current_skill_name}' is already running. Terminating it."
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Another skill '{self.current_skill_name}' is already running. Terminating it.",
             )
             self.terminate_current_skill()
 
         skill_def = self.registry.get_skill(skill_name)
         if not skill_def:
-            print(
-                f"[SkillExecutor] Skill '{skill_name}' not found, available skills: {self.registry.list_skills()}"
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Skill '{skill_name}' not found, available skills: {self.registry.list_skills()}",
             )
             self.status = SkillStatus.FAILED
             return False, obs_dict
@@ -243,7 +255,9 @@ class SkillExecutor:
                 self.current_skill_name = skill_name
                 self.current_skill_params = parameters
                 self.status = SkillStatus.RUNNING
-                print(f"[SkillExecutor] Started policy skill: {skill_name}")
+                global_console.log(
+                    "skill-exec", f"[SkillExecutor] Started policy skill: {skill_name}"
+                )
                 return True, obs_dict
             elif skill_def.execution_mode == ExecutionMode.PREACTION:
                 self.current_skill_name = skill_name
@@ -259,8 +273,9 @@ class SkillExecutor:
                 assert False, "Unsupported now!"
                 # Direct execution is inherently blocking, so it completes immediately
                 result = skill_def.function(*args_for_skill)
-                print(
-                    f"[SkillExecutor] Direct skill {skill_name} executed. Result: {result}"
+                global_console.log(
+                    "skill-exec",
+                    f"[SkillExecutor] Direct skill {skill_name} executed. Result: {result}",
                 )
                 self.status = SkillStatus.COMPLETED if result else SkillStatus.FAILED
                 # No ongoing generator for direct skills
@@ -268,18 +283,27 @@ class SkillExecutor:
                 self.current_skill_params = None
                 return bool(result), obs_dict
             else:
-                print(f"[SkillExecutor] Unknown execution mode for skill {skill_name}")
+                global_console.log(
+                    "skill-exec",
+                    f"[SkillExecutor] Unknown execution mode for skill {skill_name}",
+                )
                 self.status = SkillStatus.FAILED
                 return False, obs_dict
         except SkillInitError as e:
             # TODO 技能初始化失败也要作为反馈信息的一部分！！
-            print(f"[SkillExecutor] Error initializing skill {skill_name}: {e}")
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Error initializing skill {skill_name}: {e}",
+            )
             feedback = str(e)
             self.status = SkillStatus.FAILED
             self.status_info = feedback
             return False, obs_dict
         except Exception as e:
-            print(f"[SkillExecutor] Error initializing skill {skill_name}: {e}")
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Error initializing skill {skill_name}: {e}",
+            )
             import traceback
 
             traceback.print_exc()
@@ -306,14 +330,18 @@ class SkillExecutor:
             if not action.data == []:
                 action_data = action.data.to(self.env_device)
                 step_result = self.env.step(action_data)
-            print(f"[SkillExecutor] Error stepping skill {self.current_skill_name}")
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Error stepping skill {self.current_skill_name}",
+            )
             self.status = SkillStatus.FAILED
             # self._reset_current_skill_state()
 
             return step_result
         elif action_info == "finished":
-            print(
-                f"[SkillExecutor] Skill {self.current_skill_name} finished successfully."
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Skill {self.current_skill_name} finished successfully.",
             )
             step_result = (None, None, None, None, None)
             if not action.data == []:
@@ -324,7 +352,10 @@ class SkillExecutor:
 
             return step_result
         elif action_info == "timeout":
-            print(f"[SkillExecutor] Skill {self.current_skill_name} timed out.")
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Skill {self.current_skill_name} timed out.",
+            )
             self.status = SkillStatus.TIMEOUT
             # self._reset_current_skill_state()
 
@@ -354,8 +385,9 @@ class SkillExecutor:
                     success_item is not None
                     and success_item.func(self.env, **success_item.params)[0].item()
                 ):
-                    print(
-                        f"[SkillExecutor] Skill {self.current_skill_name} succeeded, finishing execution."
+                    global_console.log(
+                        "skill-exec",
+                        f"[SkillExecutor] Skill {self.current_skill_name} succeeded, finishing execution.",
                     )
                     self.status = SkillStatus.COMPLETED
 
@@ -363,8 +395,9 @@ class SkillExecutor:
                 elif (timeout_item is not None) and timeout_item.func(
                     self.env, **timeout_item.params
                 )[0].item():
-                    print(
-                        f"[SkillExecutor] {self.current_skill_name} Timeout reached, stopping skill execution."
+                    global_console.log(
+                        "skill-exec",
+                        f"[SkillExecutor] {self.current_skill_name} Timeout reached, stopping skill execution.",
                     )
                     self.status = SkillStatus.TIMEOUT
 
@@ -383,8 +416,9 @@ class SkillExecutor:
             return self._change_current_skill_status_force(skill_status)
         else:
             # this skill is already finished
-            print(
-                "[SkillExecutor] Change current skill status no skill runing, unable to change"
+            global_console.log(
+                "skill-exec",
+                "[SkillExecutor] Change current skill status no skill runing, unable to change",
             )
         return False
 
@@ -393,8 +427,9 @@ class SkillExecutor:
     ) -> bool:
         """Terminate the current non-blocking skill execution."""
         self.status = skill_status
-        print(
-            f"[SkillExecutor] Change current skill status: {self.current_skill_name} with status: {skill_status}"
+        global_console.log(
+            "skill-exec",
+            f"[SkillExecutor] Change current skill status: {self.current_skill_name} with status: {skill_status}",
         )
         return True
 
@@ -407,8 +442,9 @@ class SkillExecutor:
     ) -> bool:
         """Terminate the current non-blocking skill execution."""
         if self.current_skill is not None:
-            print(
-                f"[SkillExecutor] Terminating skill: {self.current_skill_name} with status: {skill_status} and info: {status_info}"
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] Terminating skill: {self.current_skill_name} with status: {skill_status} and info: {status_info}",
             )
             # self._reset_current_skill_state() # reset 会导致 brain/system 中的 last skill name 和 skill manager 中的 current skill name 不一致
             # 按道理来说，这里的 self.current_skill 应该改名叫做 latest_skill 更合适一些
@@ -416,8 +452,9 @@ class SkillExecutor:
             self.status_info = status_info
         else:
             # this skill is already finished
-            print(
-                f"[SkillExecutor] no skill runing, directly setting status to: {skill_status}, info: {status_info}"
+            global_console.log(
+                "skill-exec",
+                f"[SkillExecutor] no skill runing, directly setting status to: {skill_status}, info: {status_info}",
             )
             self.status = skill_status
             self.status_info = status_info
@@ -448,8 +485,8 @@ class SkillExecutor:
         """Reset the executor to initial state."""
         self.terminate_current_skill()
         self.status = SkillStatus.IDLE
-        print("[SkillExecutor] Executor reset.")
+        global_console.log("skill-exec", "[SkillExecutor] Executor reset.")
 
 
 if __name__ == "__main__":
-    print("Skill Exector Test")
+    global_console.log("skill-exec", "Skill Exector Test")

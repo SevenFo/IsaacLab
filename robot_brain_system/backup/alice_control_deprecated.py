@@ -185,5 +185,5 @@ class AliceControlDeprecated(BaseSkill):
             self._apply_fixed_action(env)
         elif self.mode == "dynamic":
             if not self._apply_dynamic_action(env):
-                self.logger.warning("No valid mocap data received, skipping action.")
+                self.logger.warning("id mocap data received, skipping action.")
         return True

@@ -17,6 +17,7 @@ import os
 import time
 import traceback
 import subprocess
+import signal
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 from multiprocessing import shared_memory
@@ -28,6 +29,12 @@ from robot_brain_system.core.types import (
     Observation,
 )
 from robot_brain_system.utils.retry_utils import retry
+from robot_brain_system.ui.console import global_console
+
+
+def log_subprocess(prefix, msg):
+    # 使用 info 或 system 类别，或者自定义样式
+    global_console.log(prefix, f"[{prefix}] {msg}")
 
 
 class SharedMemoryManager:
@@ -60,19 +67,12 @@ class SharedMemoryManager:
 
     def connect_buffers(self):
         """Connect to existing shared memory buffers (called by client)."""
-        from multiprocessing import resource_tracker
 
         self.shm_obs = shared_memory.SharedMemory(name=f"{self.name_prefix}_obs")
         self.shm_action = shared_memory.SharedMemory(name=f"{self.name_prefix}_action")
         self.shm_metadata = shared_memory.SharedMemory(
             name=f"{self.name_prefix}_metadata"
         )
-
-        # Unregister from resource_tracker - server is responsible for cleanup
-        # This prevents "leaked shared_memory objects" warnings
-        resource_tracker.unregister(f"{self.name_prefix}_obs", "shared_memory")
-        resource_tracker.unregister(f"{self.name_prefix}_action", "shared_memory")
-        resource_tracker.unregister(f"{self.name_prefix}_metadata", "shared_memory")
 
     def cleanup(self):
         """Clean up shared memory buffers."""
@@ -243,7 +243,10 @@ class IsaacSimulator:
     def initialize(self) -> bool:
         """Start the Isaac simulation subprocess and initialize it."""
         if self.is_initialized:
-            print("[IsaacSimulator] Simulator already initialized and running.")
+            global_console.log(
+                "isaacsim",
+                "[IsaacSimulator] Simulator already initialized and running.",
+            )
             return True
 
         try:
@@ -255,7 +258,9 @@ class IsaacSimulator:
             if os.path.exists(self.socket_path):
                 os.unlink(self.socket_path)
 
-            print(f"[IsaacSimulator] Using Unix socket: {self.socket_path}")
+            global_console.log(
+                "isaacsim", f"[IsaacSimulator] Using Unix socket: {self.socket_path}"
+            )
 
             # Write config to a temporary file
             with tempfile.NamedTemporaryFile(
@@ -269,7 +274,9 @@ class IsaacSimulator:
                 json.dump(self.sim_config, f, indent=2)
                 self._config_file = f.name
 
-            print(f"[IsaacSimulator] Config written to {self._config_file}")
+            global_console.log(
+                "isaacsim", f"[IsaacSimulator] Config written to {self._config_file}"
+            )
 
             # Get the path to the server script
             server_script = (
@@ -293,8 +300,11 @@ class IsaacSimulator:
                 f"--shm-name {self.shm_name}"
             )
 
-            print(f"[IsaacSimulator] Launching server: {launch_command}")
-
+            global_console.log(
+                "isaacsim", f"[IsaacSimulator] Launching server: {launch_command}"
+            )
+            server_env = os.environ.copy()
+            server_env["PYTHONUNBUFFERED"] = "1"
             self.process = subprocess.Popen(
                 launch_command,
                 shell=True,
@@ -302,6 +312,8 @@ class IsaacSimulator:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                env=server_env,  # 关键：传入环境变量强制子进程无缓冲
+                preexec_fn=os.setsid,  # 创建独立进程组，便于整体终止
             )
 
             # Start threads to read and display server output in real-time
@@ -310,25 +322,36 @@ class IsaacSimulator:
                 try:
                     for line in iter(pipe.readline, ""):
                         if line:
-                            print(f"[Server {prefix}] {line.rstrip()}")
+                            clean_line = line.rstrip()
+                            if clean_line:
+                                log_subprocess(prefix, clean_line)
                 except Exception as e:
-                    print(f"[Server {prefix}] Stream error: {e}")
+                    log_subprocess(prefix, f"Stream error: {e}")
 
             stdout_thread = threading.Thread(
-                target=stream_output, args=(self.process.stdout, "OUT"), daemon=True
+                target=stream_output,
+                args=(self.process.stdout, "SERVER-OUT"),
+                daemon=True,
             )
             stderr_thread = threading.Thread(
-                target=stream_output, args=(self.process.stderr, "ERR"), daemon=True
+                target=stream_output,
+                args=(self.process.stderr, "SERVER-ERR"),
+                daemon=True,
             )
             stdout_thread.start()
             stderr_thread.start()
 
             # Give the server a moment to start and create the socket
-            print("[IsaacSimulator] Waiting for server to initialize...")
+            global_console.log(
+                "isaacsim", "[IsaacSimulator] Waiting for server to initialize..."
+            )
             time.sleep(5)  # Increased wait time for Isaac Lab initialization
 
             # Connect to the server via Unix socket
-            print(f"[IsaacSimulator] Connecting to server via {self.socket_path}...")
+            global_console.log(
+                "isaacsim",
+                f"[IsaacSimulator] Connecting to server via {self.socket_path}...",
+            )
             self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
             # Try to connect with retries
@@ -345,7 +368,9 @@ class IsaacSimulator:
 
                 try:
                     self.socket.connect(self.socket_path)
-                    print("[IsaacSimulator] Connected to server successfully!")
+                    global_console.log(
+                        "isaacsim", "[IsaacSimulator] Connected to server successfully!"
+                    )
                     break
                 except (ConnectionRefusedError, FileNotFoundError):
                     if i == max_retries - 1:
@@ -355,15 +380,43 @@ class IsaacSimulator:
                             f"Process status: {'running' if self.process.poll() is None else 'terminated'}"
                         )
                     if i % 10 == 0:  # Print every 10 seconds
-                        print(
-                            f"[IsaacSimulator] Waiting for server socket... ({i + 1}/{max_retries})"
+                        global_console.log(
+                            "isaacsim",
+                            f"[IsaacSimulator] Waiting for server socket... ({i + 1}/{max_retries})",
                         )
                     time.sleep(1)
 
             # Connect to shared memory buffers
-            print("[IsaacSimulator] Connecting to shared memory buffers...")
+            global_console.log(
+                "isaacsim", "[IsaacSimulator] Connecting to shared memory buffers..."
+            )
+
+            import sys
+
+            _ui_stdout = sys.stdout
+            _ui_stderr = sys.stderr
+
+            try:
+                # 还原为系统原始 stdout/stderr (有真实 FD)
+                sys.stdout = sys.__stdout__
+                sys.stderr = sys.__stderr__
+
+                self.shm_manager.connect_buffers()
+
+            except Exception as e:
+                global_console.log(
+                    "error", f"[IsaacSimulator] Shared memory connection failed: {e}"
+                )
+                raise e
+            finally:
+                # [关键] 恢复 UI 接管
+                sys.stdout = _ui_stdout
+                sys.stderr = _ui_stderr
+
             self.shm_manager.connect_buffers()
-            print("[IsaacSimulator] Connected to shared memory")
+            global_console.log(
+                "isaacsim", "[IsaacSimulator] Connected to shared memory"
+            )
 
             # Wait for initialization signal from server
             self.socket.settimeout(480)  # Long timeout for Isaac Lab init
@@ -374,18 +427,25 @@ class IsaacSimulator:
                 self.is_initialized = True
                 self.action_space_info = response.get("action_space")
                 self.observation_space_info = response.get("observation_space")
-                print(
-                    "[IsaacSimulator] Simulation subprocess started and environment ready."
+                global_console.log(
+                    "isaacsim",
+                    "[IsaacSimulator] Simulation subprocess started and environment ready.",
                 )
                 return True
             else:
                 error_msg = response.get("error", "Unknown initialization error")
-                print(f"[IsaacSimulator] Subprocess initialization failed: {error_msg}")
+                global_console.log(
+                    "isaacsim",
+                    f"[IsaacSimulator] Subprocess initialization failed: {error_msg}",
+                )
                 self._cleanup_process()
                 return False
 
         except Exception as e:
-            print(f"[IsaacSimulator] Failed to start simulation subprocess: {e}")
+            global_console.log(
+                "isaacsim",
+                f"[IsaacSimulator] Failed to start simulation subprocess: {e}",
+            )
             traceback.print_exc()
             self._cleanup_process()
             return False
@@ -407,13 +467,33 @@ class IsaacSimulator:
 
         if self.process:
             try:
-                self.process.terminate()
+                global_console.log(
+                    "isaacsim",
+                    f"[IsaacSimulator] Cleaning up subprocess pid={self.process.pid}, poll={self.process.poll()}",
+                )
+            except Exception:
+                pass
+
+            try:
+                pgid = os.getpgid(self.process.pid)
+                os.killpg(pgid, signal.SIGTERM)
                 self.process.wait(timeout=5)
             except Exception:
                 try:
-                    self.process.kill()
+                    pgid = os.getpgid(self.process.pid)
+                    os.killpg(pgid, signal.SIGKILL)
                 except Exception:
-                    pass
+                    global_console.log(
+                        "isaacsim", "[IsaacSimulator] Failed to kill subprocess pgid"
+                    )
+
+            try:
+                global_console.log(
+                    "isaacsim",
+                    f"[IsaacSimulator] Subprocess exit code after cleanup: {self.process.poll()}",
+                )
+            except Exception:
+                pass
             self.process = None
 
         # Clean up shared memory
@@ -430,33 +510,49 @@ class IsaacSimulator:
 
     def shutdown(self):
         """Stop the Isaac simulation subprocess."""
-        print("[IsaacSimulator] Initiating shutdown...")
+        global_console.log("isaacsim", "[IsaacSimulator] Initiating shutdown...")
         if not self.is_running and not self.is_initialized:
-            print("[IsaacSimulator] Already shutdown or not started.")
+            global_console.log(
+                "isaacsim", "[IsaacSimulator] Already shutdown or not started."
+            )
             return
 
         try:
+            if self.process:
+                global_console.log(
+                    "isaacsim",
+                    f"[IsaacSimulator] Shutdown called with pid={self.process.pid}, poll={self.process.poll()}",
+                )
             if self.socket:
                 self._send_message({"command": "shutdown"})
                 # Wait for acknowledgment
                 try:
                     self.socket.settimeout(10)
                     ack = self._receive_message()
-                    print(
-                        f"[IsaacSimulator] Shutdown acknowledged by subprocess: {ack}"
+                    global_console.log(
+                        "isaacsim",
+                        f"[IsaacSimulator] Shutdown acknowledged by subprocess: {ack}",
                     )
                 except socket.timeout:
-                    print(
-                        "[IsaacSimulator] No shutdown acknowledgment from subprocess."
+                    global_console.log(
+                        "isaacsim",
+                        "[IsaacSimulator] No shutdown acknowledgment from subprocess.",
                     )
                 except Exception as e:
-                    print(f"[IsaacSimulator] Error receiving shutdown ack: {e}")
+                    global_console.log(
+                        "isaacsim",
+                        f"[IsaacSimulator] Error receiving shutdown ack: {e}",
+                    )
 
             self._cleanup_process()
-            print("[IsaacSimulator] Simulation shutdown completed.")
+            global_console.log(
+                "isaacsim", "[IsaacSimulator] Simulation shutdown completed."
+            )
 
         except Exception as e:
-            print(f"[IsaacSimulator] Error during simulation shutdown: {e}")
+            global_console.log(
+                "isaacsim", f"[IsaacSimulator] Error during simulation shutdown: {e}"
+            )
             traceback.print_exc()
             self._cleanup_process()
 
@@ -468,8 +564,9 @@ class IsaacSimulator:
         if isinstance(response, dict) and response.get("success") is False:
             error_message = response.get("error", "").lower()
             if "timeout" in error_message:
-                print(
-                    f"[IsaacSimulator._should_retry_command] Detected retryable error: {error_message}"
+                global_console.log(
+                    "isaacsim",
+                    f"[IsaacSimulator._should_retry_command] Detected retryable error: {error_message}",
                 )
                 return True
         return False
@@ -488,12 +585,18 @@ class IsaacSimulator:
         """Send a command and receive response with retries."""
         acquired = self._command_lock.acquire(timeout=60)
         if not acquired:
-            print("[IsaacSimulator] Failed to acquire command lock within timeout.")
+            global_console.log(
+                "isaacsim",
+                "[IsaacSimulator] Failed to acquire command lock within timeout.",
+            )
             return {"success": False, "error": "Command lock acquisition failed"}
 
         try:
             if not self.is_initialized or not self.socket:
-                print("[IsaacSimulator] Simulator not initialized or connection lost.")
+                global_console.log(
+                    "isaacsim",
+                    "[IsaacSimulator] Simulator not initialized or connection lost.",
+                )
                 return {"success": False, "error": "Simulator not initialized"}
 
             self._send_message(command)
@@ -501,25 +604,29 @@ class IsaacSimulator:
             response = self._receive_message()
 
             if "error" in response:
-                print(
-                    f"[IsaacSimulator] Error from subprocess for command {command.get('command')}: {response['error']}"
+                global_console.log(
+                    "isaacsim",
+                    f"[IsaacSimulator] Error from subprocess for command {command.get('command')}: {response['error']}",
                 )
             return response
 
         except socket.timeout:
-            print(
-                f"[IsaacSimulator] Timeout waiting for response to command: {command.get('command')}"
+            global_console.log(
+                "isaacsim",
+                f"[IsaacSimulator] Timeout waiting for response to command: {command.get('command')}",
             )
             return {"success": False, "error": "Timeout"}
         except (EOFError, BrokenPipeError, ConnectionError) as e:
-            print(
-                f"[IsaacSimulator] Communication pipe broken: {e}. Shutting down simulator."
+            global_console.log(
+                "isaacsim",
+                f"[IsaacSimulator] Communication pipe broken: {e}. Shutting down simulator.",
             )
             self.shutdown()
             return {"success": False, "error": f"Pipe broken: {e}"}
         except Exception as e:
-            print(
-                f"[IsaacSimulator] Error sending/receiving command {command.get('command')}: {e}"
+            global_console.log(
+                "isaacsim",
+                f"[IsaacSimulator] Error sending/receiving command {command.get('command')}: {e}",
             )
             return {"success": False, "error": str(e)}
         finally:
@@ -531,7 +638,10 @@ class IsaacSimulator:
             {"command": "set_env_decimation", "decimation": decimation}
         )
         if response and response.get("success"):
-            print(f"[IsaacSimulator] Environment decimation set to {decimation}")
+            global_console.log(
+                "isaacsim",
+                f"[IsaacSimulator] Environment decimation set to {decimation}",
+            )
             return True
         return False
 
@@ -558,7 +668,7 @@ class IsaacSimulator:
         if response and response.get("success"):
             failed_state = response.get("failed_state", [])
             # if failed_state:
-            #     print(
+            #     global_console.log("isaacsim",
             #         f"[IsaacSimulator] Warning: Failed to get states {failed_state} for target {target_name}"
             #     )
             return response.get("state_data", {})
@@ -595,7 +705,9 @@ class IsaacSimulator:
 
     def update(self, return_obs: bool = True) -> Optional[Observation]:
         """this is not a proxy method, it bundles multiple simulator calls into one for efficiency. useful for stepping env without actions."""
-        response = self._send_command_and_recv({"command": "step_sim","return_obs": return_obs})
+        response = self._send_command_and_recv(
+            {"command": "step_sim", "return_obs": return_obs}
+        )
         if response and response.get("success") and return_obs:
             obs_data = self.shm_manager.read_observation()
             obs = Observation(**obs_data) if obs_data else None

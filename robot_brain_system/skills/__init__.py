@@ -8,6 +8,7 @@ try:
     from . import basic_skills
     from . import manipulation_skills  # Re-enabled for migration testing
     from . import observation_skills  # Re-enabled for ObjectTracking test
+    from . import human_skills
 
     print("[Skills] Successfully imported skill modules")
 except ImportError as e:
@@ -21,4 +22,5 @@ __all__ = [
     "basic_skills",
     "manipulation_skills",
     "observation_skills",
+    "human_skills",
 ]

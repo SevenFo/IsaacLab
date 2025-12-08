@@ -97,7 +97,6 @@ class TransformersAdapter(BaseModelAdapter):
         # FIX: 修正了模型加载逻辑，使用 config 判断并加载正确的模型类
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
         model_type = getattr(config, "model_type", "").lower()
-        print(model_type)
         _initial_total_memory_mb = get_total_gpu_memory_allocated_mb()
         if "qwen2_5_vl" in model_type:
             self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
@@ -479,14 +478,22 @@ class OpenAIAdapter(BaseModelAdapter):
             raise ImportError("`openai` 是使用 OpenAIAdapter 的必要依赖。")
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.model_name = self.client.models.list().data[0].id
-        print(f"[OpenAIAdapter] 已连接到 OpenAI API: {self.model_name}")
+        self.print(f"已连接到 OpenAI API: {self.model_name}")
         # ## NEW: 验证并设置策略
         if video_conversion_strategy not in ["as_images", "as_video_url"]:
             raise ValueError(
                 "video_conversion_strategy 必须是 'as_images' 或 'as_video_url'"
             )
         self.video_conversion_strategy = video_conversion_strategy
-        print(f"[OpenAIAdapter] 视频处理策略已设置为: {self.video_conversion_strategy}")
+        self.print(
+            f"[OpenAIAdapter] 视频处理策略已设置为: {self.video_conversion_strategy}"
+        )
+
+    def print(self, msg: str):
+        """简单的打印日志方法。"""
+        from robot_brain_system.ui.console import global_console
+
+        global_console.log("adapter", f"[OpenAIAdapter] {msg}")
 
     def _data_to_base64_url(self, data_bytes: bytes, mime_type: str) -> str:
         """通用函数，将原始字节数据编码为 Base64 data URL。"""
@@ -653,15 +660,15 @@ class OpenAIAdapter(BaseModelAdapter):
         thinking = kwargs.pop("thinking", False)
         messages = self._convert_history_to_openai_input(history)
         sanitized_messages_for_log = self._sanitize_payload_for_logging(messages)
-        print("\n--- [OpenAIAdapter] Sending Payload ---")
+        self.print("\n--- [OpenAIAdapter] Sending Payload ---")
         try:
             json_str = json.dumps(
                 sanitized_messages_for_log, indent=2, ensure_ascii=False
             )
-            print(json_str.replace("\\n", "\n"))
+            self.print(json_str.replace("\\n", "\n"))
         except TypeError:
-            print(sanitized_messages_for_log)
-        print("-------------------------------------\n")
+            self.print(str(sanitized_messages_for_log))
+        self.print("-------------------------------------\n")
         completion = self.client.chat.completions.create(
             model=self.model_name,
             messages=messages,
@@ -681,15 +688,15 @@ class OpenAIAdapter(BaseModelAdapter):
             content = response
         usage = completion.usage
         finish_reason = completion.choices[0].finish_reason
-        print("\n--- [OpenAIAdapter] Received Response ---")
+        self.print("\n--- [OpenAIAdapter] Received Response ---")
         if reasoning_content:
-            print(f"[think]\n{reasoning_content}\n")
-        print(f"[content]\n{content}\n")
-        print(
+            self.print(f"[think]\n{reasoning_content}\n")
+        self.print(f"[content]\n{content}\n")
+        self.print(
             f"[usage] Prompt: {usage.prompt_tokens}, Completion: {usage.completion_tokens}, Total: {usage.total_tokens}"
         )
-        print(f"[finish_reason] {finish_reason}")
-        return content, completion
+        self.print(f"[finish_reason] {finish_reason}")
+        return content, reasoning_content
 
 
 def resize_image_by_short_side(image: Image.Image, target_size: int) -> Image.Image:

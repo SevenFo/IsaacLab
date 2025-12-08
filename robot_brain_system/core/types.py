@@ -8,8 +8,10 @@ from typing import Any, Dict, Optional, List, Union, Callable
 from dataclasses import dataclass, field
 import numpy as np
 import torch
+from PIL import Image
 
 from robot_brain_system.utils.config_utils import load_config
+from robot_brain_system.ui.console import global_console
 
 
 class SkillInitError(Exception):
@@ -119,8 +121,9 @@ class SkillPlan:
         if not (0 <= index < len(self.steps)):
             raise IndexError("Index is out of bounds.")
 
-        print(
-            f"[SkillPlan] Setting skill at index {index}: {skill.name}, {skill.params}, {skill.status.name}"
+        global_console.log(
+            "info",
+            f"[SkillPlan] Setting skill at index {index}: {skill.name}, {skill.params}, {skill.status.name}",
         )
         self.steps[index] = skill
 
@@ -131,7 +134,9 @@ class SkillPlan:
 
         new_step = SkillStep(name=name, params=params)
         self.steps.insert(index + 1, new_step)
-        print(f"[SkillPlan] Inserted after index {index}: {new_step.name}")
+        global_console.log(
+            "info", f"[SkillPlan] Inserted after index {index}: {new_step.name}"
+        )
 
     def delete_skill(self, index: int):
         """Deletes a skill at a specific index."""
@@ -139,7 +144,9 @@ class SkillPlan:
             raise IndexError("Deletion index is out of bounds.")
 
         removed_step = self.steps.pop(index)
-        print(f"[SkillPlan] Deleted skill at index {index}: {removed_step.name}")
+        global_console.log(
+            "info", f"[SkillPlan] Deleted skill at index {index}: {removed_step.name}"
+        )
 
     def modify_skill(
         self,
@@ -153,13 +160,15 @@ class SkillPlan:
             raise IndexError("Modification index is out of bounds.")
 
         if new_name:
-            print(
-                f"[SkillPlan] Modified skill {index}: name changed from '{skill.name}' to '{new_name}'"
+            global_console.log(
+                "info",
+                f"[SkillPlan] Modified skill {index}: name changed from '{skill.name}' to '{new_name}'",
             )
             skill.name = new_name
         if new_params is not None:  # Allow empty dict to be set
-            print(
-                f"[SkillPlan] Modified skill {index}: params changed from '{skill.params}' to '{new_params}'"
+            global_console.log(
+                "info",
+                f"[SkillPlan] Modified skill {index}: params changed from '{skill.params}' to '{new_params}'",
             )
             skill.params = new_params
         skill.status = SkillStatus.PENDING  # Reset status after modification
@@ -169,8 +178,9 @@ class SkillPlan:
         """Marks a skill as completed, failed, etc."""
         skill = self.get_skill(index)
         if skill:
-            print(
-                f"[SkillPlan] Set status for skill {index} ({skill.name}) to {status.name}"
+            global_console.log(
+                "info",
+                f"[SkillPlan] Set status for skill {index} ({skill.name}) to {status.name}",
             )
             skill.status = status
             self.set_skill(index, skill)
@@ -184,10 +194,10 @@ class SkillPlan:
                     if self.steps[j].status != SkillStatus.PENDING:
                         self.mark_status(j, SkillStatus.PENDING)
 
-                # print(f"[SkillPlan] Next pending skill found: step {i}: {step.name}")
+                # global_console.log("info",f"[SkillPlan] Next pending skill found: step {i}: {step.name}")
                 return (i, step)
 
-        print("[SkillPlan] No pending skills found.")
+        global_console.log("info", "[SkillPlan] No pending skills found.")
         return None
 
     def is_complete(self) -> bool:
@@ -196,8 +206,9 @@ class SkillPlan:
 
     def pretty_print(self) -> str:
         """Returns a nicely formatted string representation of the plan."""
-        header = f"--- Skill Plan for Task: {self.task_id} ---\n"
+        header = "--- Skill Plan for Current Task ---\n"
         plan_str = "\n".join(f"  Step {i}: {step}" for i, step in enumerate(self.steps))
+        plan_str += "\n-------Skill Plan End-------"
         return header + plan_str
 
 
@@ -240,7 +251,7 @@ class Task:
 
     id: str
     description: str
-    image: Optional[str] = None  # base64 encoded image
+    image: Optional[Image.Image] = None  # base64 encoded image
     priority: int = 1
     timeout: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -295,12 +306,11 @@ class SystemState:
 
     status: SystemStatus = SystemStatus.IDLE
     is_running: bool = False
-    # current_skill_generator: Optional[Generator] = None # Replaced by tracking status from IsaacSim
-    current_task: Optional[Task] = (
-        None  # To store the task being processed by the brain
-    )
+
+    # NOTE: current_task, current_plan, current_skill_index 由 Brain 统一管理
+    # 通过 brain.get_current_task(), brain.get_current_plan() 等 API 访问
+
     last_observation: Optional[Observation] = None
-    # last_action: Optional[Action] = None # Actions are now primarily handled in subprocess
     error_message: Optional[str] = None
     # New state for tracking skill execution in subprocess
     sub_skill_status: Dict[str, Any] = field(default_factory=dict)

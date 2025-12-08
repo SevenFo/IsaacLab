@@ -4,6 +4,7 @@ This proxy allows skills to access remote environment through IsaacSimulator,
 replacing direct env.unwrapped access with RPC calls.
 """
 
+import math
 from typing import Any, Dict, List, Optional
 from collections import deque
 import threading
@@ -11,6 +12,9 @@ import time
 import torch
 import numpy as np
 from copy import deepcopy
+from PIL import Image
+
+import isaaclab.utils.math as math_utils
 
 
 class DynamicProxyMixin:
@@ -77,7 +81,11 @@ class EnvProxy:
     """
 
     def __init__(
-        self, isaac_simulator, buffer_size: int = 500, store_images: bool = True
+        self,
+        isaac_simulator,
+        buffer_size: int = 500,
+        store_images: bool = True,
+        scene_mode: str = "default",
     ):
         """
         Initialize environment proxy.
@@ -86,6 +94,7 @@ class EnvProxy:
             isaac_simulator: IsaacSimulator instance (client to remote env server)
             buffer_size: Maximum number of observations to buffer (default: 500 frames = 10s @ 50Hz)
             store_images: Whether to store image data in buffer (default: True)
+            scene_mode: Scene mode for asset initialization (default: "default")
         """
         self._simulator = isaac_simulator
         self._device = torch.device(isaac_simulator.device)
@@ -108,6 +117,229 @@ class EnvProxy:
         self._obs_buffer_lock = threading.Lock()
         self._last_buffer_clear_time = time.time()
         self._store_images = store_images
+
+        # 新增：场景模式与基准位姿缓存
+        self.scene_mode = scene_mode
+        self._box_init_pose = None  # tuple(pos, quat)
+        self._spanner_init_pose = None  # tuple(pos, quat)
+        self._heavy_init_pose = None  # tuple(pos, quat)
+        self._box_far_pose = None
+        self._spanner_far_pose = None
+        self._roi_default = {
+            "x": (1.05, 1.36),
+            "y": (-3.53, -3.35),
+            "z": (2.6, 3.2),
+        }
+
+        self._ensure_init_poses()
+
+    def _ensure_init_poses(self):
+        """Capture canonical poses for box/spanner/heavy_box once using default_root_state."""
+        scene = self.scene
+        env_ids = torch.tensor([0], device=self.device)
+
+        box = scene["box"]
+        spanner = scene["spanner"]
+        heavy_box = scene["heavy_box"] if "heavy_box" in scene.keys() else None
+
+        if self._box_init_pose is None:
+            self._box_init_pose = (
+                box.data.root_pos_w[env_ids].clone()
+                + torch.tensor([[0.0, 0.1, 0.0]], device=self.device),
+                box.data.root_quat_w[env_ids].clone(),
+            )
+
+        if self._spanner_init_pose is None:
+            # Place spanner relative to box so that it sits inside the lid as skills expect
+            rel_pos = torch.tensor([0.0, -0.04, 0.001], device=self.device)
+            rel_rot = math_utils.quat_from_euler_xyz(
+                torch.tensor([0.0], device=self.device),
+                torch.tensor([0.0], device=self.device),
+                torch.tensor([math.pi / 2], device=self.device),
+            )
+            box_pos, box_quat = self._box_init_pose
+            spanner_pos = box_pos - rel_pos.unsqueeze(0)
+            spanner_quat = math_utils.quat_mul(box_quat, rel_rot)
+            self._spanner_init_pose = (spanner_pos, spanner_quat)
+
+        # if self._heavy_init_pose is None and heavy_box is not None:
+        #     self._heavy_init_pose = (
+        #         heavy_box.data.root_pos_w[env_ids].clone(),
+        #         heavy_box.data.root_quat_w[env_ids].clone(),
+        #     )
+
+        if self._box_far_pose is None:
+            offset = torch.tensor([[0.0, 2.0, 0.0]], device=self.device)
+            self._box_far_pose = (
+                self._box_init_pose[0] + offset,
+                self._box_init_pose[1],
+            )
+        # if self._spanner_far_pose is None:
+        #     offset = torch.tensor([[0.0, 2.0, 0.0]], device=self.device)
+        #     self._spanner_far_pose = (
+        #         self._spanner_init_pose[0] + offset,
+        #         self._spanner_init_pose[1],
+        #     )
+
+    def reset_spanner_position(self):
+        """Reset spanner to initial position inside box."""
+        scene = self.scene
+        box = scene["heavy_box"]
+        spanner = scene["spanner"]
+        env_ids = torch.tensor([0], device=self.device)
+        box_pos = box.data.root_pos_w[env_ids]
+        box_quat = box.data.root_quat_w[env_ids]
+
+        # 设置扳手的位置
+        spanner_rel_pos = torch.tensor(
+            [0, -0.04, 0.001], device=self.device
+        )  # asset2相对于asset1的位置偏移
+        spanner_rel_rot = (
+            math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
+                torch.tensor([0.0], device=self.device),
+                torch.tensor([0.0], device=self.device),
+                torch.tensor([math.pi / 2], device=self.device),
+            )
+        )
+        spanner_pos = box_pos[:, :3] - spanner_rel_pos.unsqueeze(0)
+        # 旋转 = asset1的旋转 * 相对旋转
+        spanner_orient = math_utils.quat_mul(box_quat, spanner_rel_rot)
+        spanner.write_root_pose_to_sim(
+            torch.cat([spanner_pos, spanner_orient], dim=-1),
+            env_ids=torch.tensor([0], device=self.device),
+        )
+        spanner.write_root_velocity_to_sim(
+            torch.zeros(1, 6, device=self.device),
+            env_ids=torch.tensor([0], device=self.device),
+        )
+
+        # 步进环境，确保状态刷新
+        for _ in range(5):
+            self.update(return_obs=True)
+
+        self._scene_cache_valid = False
+        return True
+
+    def reset_box_and_spanner(
+        self, mode: str = "normal", snapshot_path: str | None = None
+    ):
+        """Reset box and spanner placement.
+
+        mode:
+            - "normal": place box at canonical pose, spanner inside box; heavy box back to its default (far) pose.
+            - "far": move box+spanner far away to emulate missing box scenario; heavy box remains at its default.
+        """
+
+        scene = self.scene
+        box = scene["box"]
+        spanner = scene["spanner"]
+        heavy_box = scene["heavy_box"] if "heavy_box" in scene.keys() else None
+        env_ids = torch.tensor([0], device=self.device)
+
+        if mode == "normal":
+            # Only reset box/spanner poses (do NOT full reset_env to avoid disturbing other state)
+            box.write_root_pose_to_sim(torch.cat(self._box_init_pose, dim=-1), env_ids)
+            box.write_root_velocity_to_sim(
+                torch.zeros(1, 6, device=self.device), env_ids
+            )
+
+            # if heavy_box is not None and self._heavy_init_pose is not None:
+            #     heavy_box.write_root_pose_to_sim(
+            #         torch.cat(self._heavy_init_pose, dim=-1), env_ids
+            #     )
+            #     heavy_box.write_root_velocity_to_sim(
+            #         torch.zeros(1, 6, device=self.device), env_ids
+            #     )
+
+            # spanner.write_root_pose_to_sim(
+            #     torch.cat(self._spanner_init_pose, dim=-1), env_ids
+            # )
+            # spanner.write_root_velocity_to_sim(
+            #     torch.zeros(1, 6, device=self.device), env_ids
+            # )
+
+        elif mode == "far":
+            box.write_root_pose_to_sim(torch.cat(self._box_far_pose, dim=-1), env_ids)
+            box.write_root_velocity_to_sim(
+                torch.zeros(1, 6, device=self.device), env_ids
+            )
+
+            # if heavy_box is not None and self._heavy_init_pose is not None:
+            #     heavy_box.write_root_pose_to_sim(
+            #         torch.cat(self._heavy_init_pose, dim=-1), env_ids
+            #     )
+            #     heavy_box.write_root_velocity_to_sim(
+            #         torch.zeros(1, 6, device=self.device), env_ids
+            #     )
+
+            # spanner.write_root_pose_to_sim(
+            #     torch.cat(self._spanner_far_pose, dim=-1), env_ids
+            # )
+            # spanner.write_root_velocity_to_sim(
+            #     torch.zeros(1, 6, device=self.device), env_ids
+            # )
+        else:
+            raise ValueError(f"Unknown reset mode: {mode}")
+
+        # 步进环境，确保状态刷新
+        for _ in range(5):
+            self.update(return_obs=True)
+
+        self._scene_cache_valid = False
+
+        # Snapshot after placement (normal mode) if requested
+        if mode == "normal" and snapshot_path:
+            obs = self._simulator.get_current_observation()
+            if obs is not None:
+                try:
+                    inspector_rgb = (
+                        (
+                            obs.data.get("policy", {}).get(
+                                "inspector_side", torch.empty(1)
+                            )
+                        )[0]
+                        .cpu()
+                        .numpy()
+                    )
+                    Image.fromarray(inspector_rgb).save(snapshot_path)
+                except Exception:
+                    pass
+
+        return True
+
+    def check_box_presence(self, roi: dict | None = None) -> dict:
+        """Check whether the light box is inside the expected ROI.
+
+        Returns dict: {"ok": bool, "reason": str}
+        """
+
+        roi = roi or self._roi_default
+        try:
+            box_pos = self.scene["box"].data.root_pos_w[0]  # (3,)
+            env_origin = (
+                self.scene.env_origins[0]
+                if hasattr(self.scene, "env_origins")
+                else torch.zeros_like(box_pos)
+            )
+            box_pos_rel = box_pos - env_origin
+            in_roi = (
+                roi["x"][0] <= box_pos_rel[0] <= roi["x"][1]
+                and roi["y"][0] <= box_pos_rel[1] <= roi["y"][1]
+                and roi["z"][0] <= box_pos_rel[2] <= roi["z"][1]
+            )
+            if in_roi:
+                return {"ok": True, "reason": "box within ROI"}
+            return {
+                "ok": False,
+                "reason": "box out of ROI: (%.2f, %.2f, %.2f)"
+                % (
+                    float(box_pos_rel[0].item()),
+                    float(box_pos_rel[1].item()),
+                    float(box_pos_rel[2].item()),
+                ),
+            }
+        except Exception as e:
+            return {"ok": False, "reason": f"roi check failed: {e}"}
 
         print(
             f"[EnvProxy] Initialized with buffer_size={buffer_size}, store_images={store_images}"
@@ -270,7 +502,11 @@ class EnvProxy:
         if success:
             # Invalidate cache on reset
             self._scene_cache_valid = False
-            # Get new observation
+
+            # 如果是缺箱子测试场景，重置后直接把箱子移走
+            if self.scene_mode == "missing_box_human_intervention_test":
+                self.reset_box_and_spanner("far")
+
             obs = self._simulator.get_current_observation()
             return (obs.data if obs else None), {}
         return None, {}
@@ -888,7 +1124,7 @@ class ActionManagerProxy:
         return self._total_action_dim
 
 
-def create_env_proxy(isaac_simulator) -> EnvProxy:
+def create_env_proxy(isaac_simulator, scene_mode: str = "default") -> EnvProxy:
     """
     Factory function to create environment proxy.
 
@@ -898,4 +1134,4 @@ def create_env_proxy(isaac_simulator) -> EnvProxy:
     Returns:
         EnvProxy instance
     """
-    return EnvProxy(isaac_simulator)
+    return EnvProxy(isaac_simulator, scene_mode=scene_mode)

@@ -468,15 +468,15 @@ def main():
                             current_obs = _env.observation_manager.compute()
                             _env.obs_buf = current_obs
                         _t_ = time.time()
-                        print(f"[IsaacLabServer-step_sim] step_take: {_t_ - _t:.4f}s")
+                        # print(f"[IsaacLabServer-step_sim] step_take: {_t_ - _t:.4f}s")
                         # Write new observation to shared memory
                         if return_obs:
                             obs_payload = _prepare_observation(_env.obs_buf)
                             shm_manager.write_observation(obs_payload)
                         _t_t = time.time()
-                        print(
-                            f"[IsaacLabServer-step_sim] write_obs_take: {_t_t - _t_:.4f}s"
-                        )
+                        # print(
+                        #     f"[IsaacLabServer-step_sim] write_obs_take: {_t_t - _t_:.4f}s"
+                        # )
                         send_message(client_sock, {"success": True})
 
                     elif cmd == "step_env":
@@ -498,9 +498,9 @@ def main():
                             )
                             latest_action = action_tensor
                             time_after_step = time.time()
-                            print(
-                                f"[IsaacLabServer-step_env] step_take: {time_after_step - _t:.4f}s"
-                            )
+                            # print(
+                            #     f"[IsaacLabServer-step_env] step_take: {time_after_step - _t:.4f}s"
+                            # )
                             # Evaluate success criterion if skill_name present
                             skill_success_flag = False
                             try:
@@ -530,16 +530,16 @@ def main():
                             except Exception:
                                 skill_success_flag = False
                             t_after_success = time.time()
-                            print(
-                                f"[IsaacLabServer-step_env] success_item_take: {t_after_success - time_after_step:.4f}s"
-                            )
+                            # print(
+                            #     f"[IsaacLabServer-step_env] success_item_take: {t_after_success - time_after_step:.4f}s"
+                            # )
                             # Write new observation to shared memory
                             obs_payload = _prepare_observation(current_obs)
                             shm_manager.write_observation(obs_payload)
                             time_after_write = time.time()
-                            print(
-                                f"[IsaacLabServer-step_env] write_obs_take: {time_after_write - t_after_success:.4f}s"
-                            )
+                            # print(
+                            #     f"[IsaacLabServer-step_env] write_obs_take: {time_after_write - t_after_success:.4f}s"
+                            # )
                             send_message(
                                 client_sock,
                                 {
@@ -1063,9 +1063,9 @@ def main():
                 loop_dua.append(time_end - time_start)
                 if len(loop_dua) == loop_dua.maxlen:
                     avg_loop_time = sum(loop_dua) / len(loop_dua)
-                    print(
-                        f"[IsaacLabServer] Average loop time over last {loop_dua.maxlen} iterations: {avg_loop_time * 1000:.2f} ms, hz: {1.0 / avg_loop_time:.2f}"
-                    )
+                    # print(
+                    #     f"[IsaacLabServer] Average loop time over last {loop_dua.maxlen} iterations: {avg_loop_time * 1000:.2f} ms, hz: {1.0 / avg_loop_time:.2f}"
+                    # )
                     loop_dua.clear()
             except (ConnectionError, BrokenPipeError, EOFError) as e:
                 print(f"[IsaacLabServer] Connection error: {e}")

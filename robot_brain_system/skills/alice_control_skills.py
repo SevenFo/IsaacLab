@@ -11,6 +11,7 @@ from ..core.types import BaseSkill
 from ..utils.logging_utils import get_logger
 from .MotionCaptureReceiverv2 import MotionCaptureReceiver
 from robot_brain_system.core.env_proxy import EnvProxy
+from robot_brain_system.ui.console import global_console
 
 
 class AliceControl(BaseSkill):
@@ -39,13 +40,13 @@ class AliceControl(BaseSkill):
         env: EnvProxy,
     ):
         super().initialize(env)
-        print("Initializing AliceControl Skill...")
+        global_console.log("skill", "Initializing AliceControl Skill...")
         # --- 1. 初始化机器人姿态 (您的代码) ---
-        print("Alice robot initialized to starting pose.")
+        global_console.log("skill", "Alice robot initialized to starting pose.")
         alice = self.env.scene["alice"]
         self.initial_root_state = torch.tensor(
             [
-                [-1.8, -1, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
+                [-1.8, -2.5, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
             ],  # [-1.8, 0.95, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
             device=self.env.device,
             dtype=torch.float32,
@@ -64,7 +65,7 @@ class AliceControl(BaseSkill):
         )
         # --- 2. 初始化并启动Mocap接收服务器 ---
         if self.motion_capture_receiver is None and self.mode == "dynamic":
-            print("Starting MotionCaptureReceiver server...")
+            global_console.log("skill", "Starting MotionCaptureReceiver server...")
             self.motion_capture_receiver = MotionCaptureReceiver(
                 data_handler_callback=self._update_mocap_data
             )
@@ -75,8 +76,9 @@ class AliceControl(BaseSkill):
 
             self._server_thread = threading.Thread(target=run_mocap_server, daemon=True)
             self._server_thread.start()
-            print(
-                "MotionCaptureReceiver server task has been scheduled in background thread."
+            global_console.log(
+                "skill",
+                "MotionCaptureReceiver server task has been scheduled in background thread.",
             )
         obs = env.update(return_obs=True)
         self.init_root_pose = self.initial_root_state[:, :3].clone().squeeze()
@@ -137,7 +139,7 @@ class AliceControl(BaseSkill):
             obs.data["policy"]["camera_left"][0].cpu().numpy()
         )  # Ensure the observation is processed
         Image.fromarray(frame).save("alice_operation_position.png")
-        print("Moved Alice to operation position.")
+        global_console.log("skill", "Moved Alice to operation position.")
 
     def move_to_play_position(self):
         """将 Alice 移动到操作位置的示例方法。"""
@@ -150,7 +152,7 @@ class AliceControl(BaseSkill):
         )
         alice.write_root_state_to_sim(operation_position)
         self.env.update(return_obs=False)
-        print("Moved Alice to play position.")
+        global_console.log("skill", "Moved Alice to play position.")
 
     def _apply_fixed_action(self, return_obs: bool = False, update_sim: bool = False):
         if False:
@@ -566,8 +568,9 @@ class AliceControl(BaseSkill):
         self._t_offsets = torch.tensor(offsets, device=device, dtype=torch.float32)
 
         self._mapping_initialized = True
-        print(
-            f"Mocap mapping compiled: {len(self._t_robot_joint_idxs)} joint mappings optimized."
+        global_console.log(
+            "skill",
+            f"Mocap mapping compiled: {len(self._t_robot_joint_idxs)} joint mappings optimized.",
         )
 
     def _apply_dynamic_action(self, return_obs: bool = False, update_sim=False):
@@ -667,7 +670,7 @@ class AliceControl(BaseSkill):
             root_state = self.initial_root_state.clone()
 
         end_cal_t = time.time()
-        print(f"Vectorized Cal time: {end_cal_t - cal_t:.6f} sec")
+        # global_console.log("skill", f"Vectorized Cal time: {end_cal_t - cal_t:.6f} sec")
 
         with env:
             alice.set_joint_position_target(current_target)
@@ -696,6 +699,6 @@ class AliceControl(BaseSkill):
                 return_obs=return_obs, update_sim=update_sim
             )
             if not obs:
-                self.logger.warning("No valid mocap data received, skipping action.")
+                # self.logger.warning("No valid mocap data received, skipping action.")
                 return None
         return obs

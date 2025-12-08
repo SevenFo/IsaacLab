@@ -28,6 +28,7 @@ import isaaclab.utils.math as math_utils
 from ..core.types import SkillType, ExecutionMode, Action, BaseSkill
 from ..core.skill_manager import skill_register, get_skill_registry
 from ..skills.observation_skills import ObjectTracking
+from robot_brain_system.ui.console import global_console
 
 # Attempt to import Robomimic, make it optional
 ROBOMIMIC_AVAILABLE = False
@@ -38,8 +39,9 @@ try:
 
     ROBOMIMIC_AVAILABLE = True
 except ImportError:
-    print(
-        "[Skill] Warning: robomimic library not found. Assemble skill will not be functional."
+    global_console.log(
+        "skill",
+        "[Skill] Warning: robomimic library not found. Assemble skill will not be functional.",
     )
 
 # Type hinting for Isaac Lab environment if available
@@ -65,8 +67,9 @@ def pixcel_normalize(image: torch.Tensor) -> torch.Tensor:
     """Resize and normalize an image tensor to have pixel values in the range [0, 1]."""
 
     if image.dtype != torch.uint8:
-        print(
-            f"[Warning] Image is not in uint8 format ({image.dtype}), remaining in the original format."
+        global_console.log(
+            "skill",
+            f"[Warning] Image is not in uint8 format ({image.dtype}), remaining in the original format.",
         )
         return image
 
@@ -103,7 +106,7 @@ class GO1Client:
             # 1. 使用 msgpack 序列化（自动处理 numpy 数组）
             packed = msgpack.packb(payload, use_bin_type=True)
         except Exception as e:
-            print(f"[GO1Client] Failed to serialize payload: {e}")
+            global_console.log("skill", f"[GO1Client] Failed to serialize payload: {e}")
             return None
 
         # 2. 发送二进制数据
@@ -115,8 +118,10 @@ class GO1Client:
         )
 
         if response.status_code != 200:
-            print(f"[GO1Client] Request failed: {response.status_code}")
-            print(f"[GO1Client] Error: {response.text}")
+            global_console.log(
+                "skill", f"[GO1Client] Request failed: {response.status_code}"
+            )
+            global_console.log("skill", f"[GO1Client] Error: {response.text}")
             return None
 
         # 3. 解包响应
@@ -131,7 +136,9 @@ class GO1Client:
             return action
 
         except Exception as e:
-            print(f"[GO1Client] Failed to deserialize response: {e}")
+            global_console.log(
+                "skill", f"[GO1Client] Failed to deserialize response: {e}"
+            )
             return None
 
 
@@ -151,10 +158,9 @@ class GO1Client:
 )
 class PressButton(BaseSkill):
     """这个技能能够自动控制机械臂的末端执行器移动到红色箱子前方，并按下箱子上的按钮，从而打开箱子。
-    这个技能的执行前提是箱子位于绿色的标志框中，并且按钮朝向正对机械臂。
+    这个技能的执行前提是箱子**完全**位于绿色的标志框中，并且箱子按钮朝向正对机械臂基座方向，两个条件缺一不可，否则请使用其他技能移动箱子到合适位置再执行该技能
     执行该技能无需先移动到红色箱子上方。
-    红色箱子盖子上有一个黑色的把手，箱子的盖子可以左右滑动，按下红色的按钮之后，箱子的盖子会滑开，里面有一把黄色的扳手。
-    Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get nessessary parameters from the environment.
+    Expected params: None, NO NEED TO PASS ANY PARAMS, the skill will automatically get necessary parameters from the environment.
     """
 
     def __init__(self, policy_device: str = "cuda", **running_params):
@@ -162,14 +168,14 @@ class PressButton(BaseSkill):
         self.policy_device = policy_device
         self.running_params = running_params
 
-        print("[Skill: PressButton] Starting...")
+        global_console.log("skill", "[Skill: PressButton] Starting...")
 
         self.action_client = GO1Client(
             host=self.cfg.get("host", "localhost"), port=self.cfg.get("port", 2000)
         )
         self.ctrl_freq = 10.0
 
-        print("[Skill: PressButton] Policy loaded")
+        global_console.log("skill", "[Skill: PressButton] Policy loaded")
         self.num_steps = 0
         self.trans_fn = Compose([lambda x: x])
         self.camera_keys = {
@@ -185,8 +191,9 @@ class PressButton(BaseSkill):
         """Switch the light box to heavy box in specified envs."""
         env = self.env.unwrapped
         if getattr(env, "switch_heavybox", None) is not None:
-            print(
-                f"[Skill: PressButton] Environment already switched to heavy box. env.switch_heavybox={getattr(env, 'switch_heavybox')}"
+            global_console.log(
+                "skill",
+                f"[Skill: PressButton] Environment already switched to heavy box. env.switch_heavybox={getattr(env, 'switch_heavybox')}",
             )
             return
         light_box = env.scene["box"]
@@ -257,7 +264,9 @@ class PressButton(BaseSkill):
         Initialize the skill by setting up the environment and zero action.
         This method is called before the skill starts executing.
         """
-        print(f"[Skill: PressButton] Initializing skill with:{args},{kwargs}")
+        global_console.log(
+            "skill", f"[Skill: PressButton] Initializing skill with:{args},{kwargs}"
+        )
         super().initialize(*args, **kwargs)
         self.switch_to_heavy_box()
         env = self.env
@@ -278,11 +287,11 @@ class PressButton(BaseSkill):
             dtype=torch.float32,
         )
         self.zero_action[..., -1] = +1.0  # Ensure gripper is open
-        print("[Skill: PressButton] switched to heavy box")
+        global_console.log("skill", "[Skill: PressButton] switched to heavy box")
         for i in range(5):
             obs, reward, terminated, truncated, info = env.step(self.zero_action)
             time.sleep(0.1)
-        print("[Skill: PressButton] Initialization complete.")
+        global_console.log("skill", "[Skill: PressButton] Initialization complete.")
         return obs
 
     def reset_env(self, random_reset=True):
@@ -353,16 +362,18 @@ class PressButton(BaseSkill):
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= 200:
-            print(
-                "[Skill: PressButton] Maximum steps reached, stopping skill execution."
+            global_console.log(
+                "skill",
+                "[Skill: PressButton] Maximum steps reached, stopping skill execution.",
             )
             return Action(
                 [], metadata={"info": "timeout", "reason": "max_steps_reached"}
             )
         policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
-            print(
-                f"[Skill: PressButton] Error: Key '{policy_obs_key}' not found in initial observations."
+            global_console.log(
+                "skill",
+                f"[Skill: PressButton] Error: Key '{policy_obs_key}' not found in initial observations.",
             )
             raise ValueError(
                 f"Expected key '{policy_obs_key}' not found in obs_dict: {obs_dict.keys()}"
@@ -394,8 +405,9 @@ class PressButton(BaseSkill):
         )  # Get action from policy
 
         if not isinstance(action_np, np.ndarray):
-            print(
-                f"[Skill: PressButton] Error: Policy output is not a numpy array (got {type(action_np)})."
+            global_console.log(
+                "skill",
+                f"[Skill: PressButton] Error: Policy output is not a numpy array (got {type(action_np)}).",
             )
             raise ValueError(f"Expected numpy array from policy, got {type(action_np)}")
         self.num_steps += 1
@@ -424,7 +436,8 @@ class PressButton(BaseSkill):
 )
 class GraspSpanner(BaseSkill):
     """
-    GRAB & LIFT SPANNER: Grasp tool from red box and lift it, this skill can not move spanner to any other position. If you want to move spanner to other position, plz call other skill
+    GRAB & LIFT SPANNER: Grasp spanner and lift it. 如果场景中没有扳手，请勿执行该技能。
+    This skill can not move spanner to any other position. If you want to move spanner to other position, plz call other skill
 
     PARAMETERS: None
     """
@@ -434,14 +447,14 @@ class GraspSpanner(BaseSkill):
         self.policy_device = policy_device
         self.running_params = running_params
 
-        print("[Skill: GraspSpanner] Starting...")
+        global_console.log("skill", "[Skill: GraspSpanner] Starting...")
 
         self.action_client = GO1Client(
             host=self.cfg.get("host", "localhost"), port=self.cfg.get("port", 2000)
         )
         self.ctrl_freq = 10.0
 
-        print("[Skill: GraspSpanner] Policy loaded")
+        global_console.log("skill", "[Skill: GraspSpanner] Policy loaded")
 
         self.num_steps = 0
         self.trans_fn = Compose([lambda x: x])
@@ -457,8 +470,9 @@ class GraspSpanner(BaseSkill):
         Initialize the skill by setting up the environment and zero action.
         This method is called before the skill starts executing.
         """
-        print(
-            "[Skill: GraspSpanner] Initializing skill make joints move to default positions..."
+        global_console.log(
+            "skill",
+            "[Skill: GraspSpanner] Initializing skill make joints move to default positions...",
         )
         super().initialize(*args, **kwargs)
         env = self.env
@@ -553,16 +567,18 @@ class GraspSpanner(BaseSkill):
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= 300:
-            print(
-                "[Skill: GraspSpanner] Maximum steps reached, stopping skill execution."
+            global_console.log(
+                "skill",
+                "[Skill: GraspSpanner] Maximum steps reached, stopping skill execution.",
             )
             return Action(
                 [], metadata={"info": "timeout", "reason": "max_steps_reached"}
             )
         policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
-            print(
-                f"[Skill: GraspSpanner] Error: Key '{policy_obs_key}' not found in initial observations."
+            global_console.log(
+                "skill",
+                f"[Skill: GraspSpanner] Error: Key '{policy_obs_key}' not found in initial observations.",
             )
             raise ValueError(
                 f"Expected key '{policy_obs_key}' not found in obs_dict: {obs_dict.keys()}"
@@ -594,8 +610,9 @@ class GraspSpanner(BaseSkill):
         )  # Get action from policy
 
         if not isinstance(action_np, np.ndarray):
-            print(
-                f"[Skill: GraspSpanner] Error: Policy output is not a numpy array (got {type(action_np)})."
+            global_console.log(
+                "skill",
+                f"[Skill: GraspSpanner] Error: Policy output is not a numpy array (got {type(action_np)}).",
             )
             raise ValueError(f"Expected numpy array from policy, got {type(action_np)}")
         self.num_steps += 1
@@ -619,7 +636,7 @@ class GraspSpanner(BaseSkill):
     requires_env=True,
 )
 class LiftAndMoveBox(BaseSkill):
-    """这个技能用于将箱子提起并移动到目标框中，并且让箱子的朝向转动到易于机械臂按下按钮打开箱子的方向
+    """这个技能用于将箱子提起并移动到目标框中，并且让箱子的朝向转动到易于机械臂按下按钮打开箱子的方向。该技能的前提是视野中已经有一个箱子，如果没有箱子则无法执行该技能。
 
     Expected params: None, NO NEED TO PASS ANY PARAMS.
     """
@@ -629,13 +646,13 @@ class LiftAndMoveBox(BaseSkill):
         self.policy_device = policy_device
         self.running_params = running_params
 
-        print("[Skill: LiftAndMoveBox] Starting...")
+        global_console.log("skill", "[Skill: LiftAndMoveBox] Starting...")
 
         self.action_client = GO1Client(
             host=self.cfg.get("host", "localhost"), port=self.cfg.get("port", 2000)
         )
 
-        print("[Skill: LiftAndMoveBox] Policy loaded")
+        global_console.log("skill", "[Skill: LiftAndMoveBox] Policy loaded")
 
         self.num_steps = 0
         self.trans_fn = Compose([lambda x: x])
@@ -651,8 +668,9 @@ class LiftAndMoveBox(BaseSkill):
         Initialize the skill by setting up the environment and zero action.
         This method is called before the skill starts executing.
         """
-        print(
-            "[Skill: LiftAndMoveBox] Initializing skill make joints move to default positions..."
+        global_console.log(
+            "skill",
+            "[Skill: LiftAndMoveBox] Initializing skill make joints move to default positions...",
         )
         super().initialize(*args, **kwargs)
         env = self.env
@@ -678,7 +696,7 @@ class LiftAndMoveBox(BaseSkill):
             obs, reward, terminated, truncated, info = env.step(zero_action)
 
         self.ctrl_freq = 10.0
-        # print(
+        # global_console.log("skill",
         #     f"[Skill: LiftAndMoveBox] env decimation: {env.cfg.decimation}, dim_dt: {env.cfg.sim.dt}"
         # )
         self.max_steps = int(self.cfg.get("timeout", 60.0) * self.ctrl_freq)
@@ -686,16 +704,18 @@ class LiftAndMoveBox(BaseSkill):
 
     def select_action(self, obs_dict: dict) -> Action:
         if self.num_steps >= self.max_steps:
-            print(
-                "[Skill: LiftAndMoveBox] Maximum steps reached, stopping skill execution."
+            global_console.log(
+                "skill",
+                "[Skill: LiftAndMoveBox] Maximum steps reached, stopping skill execution.",
             )
             return Action(
                 [], metadata={"info": "timeout", "reason": "max_steps_reached"}
             )
         policy_obs_key = "policy"  # Common key in Isaac Lab tasks for policy inputs
         if policy_obs_key not in obs_dict:
-            print(
-                f"[Skill: LiftAndMoveBox] Error: Key '{policy_obs_key}' not found in initial observations."
+            global_console.log(
+                "skill",
+                f"[Skill: LiftAndMoveBox] Error: Key '{policy_obs_key}' not found in initial observations.",
             )
             raise ValueError(
                 f"Expected key '{policy_obs_key}' not found in obs_dict: {obs_dict.keys()}"
@@ -726,8 +746,9 @@ class LiftAndMoveBox(BaseSkill):
         )  # Get action from policy
 
         if not isinstance(action_np, np.ndarray):
-            print(
-                f"[Skill: LiftAndMoveBox] Error: Policy output is not a numpy array (got {type(action_np)})."
+            global_console.log(
+                "skill",
+                f"[Skill: LiftAndMoveBox] Error: Policy output is not a numpy array (got {type(action_np)}).",
             )
             raise ValueError(f"Expected numpy array from policy, got {type(action_np)}")
         self.num_steps += 1
@@ -786,8 +807,12 @@ class MoveToTarget(BaseSkill):
     ):
         super().__init__()
         if "target_pose" not in running_params:
-            assert "target_object" in running_params, "No moving target is specified."
-        target_object = running_params.get("target_object", None)
+            assert "target_object" in running_params or "target" in running_params, (
+                "No moving target is specified."
+            )
+        target_object = running_params.get("target_object", None) or running_params.get(
+            "target", None
+        )
         self.gripper_state: float = int(
             running_params.get("gripper_state", 1.0)
         )  # gripper_state (float, optional): Command for the gripper. Defaults to 0.0.
@@ -807,7 +832,7 @@ class MoveToTarget(BaseSkill):
         self.dt = running_params.get("dt", 0.3)  # 默认 50Hz
         self.z_offset = offset
         enable_verification: bool = True
-        print("[Skill: MoveToTarget] Initializing...")
+        global_console.log("skill", "[Skill: MoveToTarget] Initializing...")
         self.device = policy_device
         self.enable_verification = enable_verification
         self.target_object = target_object
@@ -823,13 +848,17 @@ class MoveToTarget(BaseSkill):
 
             self.target_pos = self.target_pose[:, :3]
             self.target_quat = self.target_pose[:, 3:7]
-            print(
-                f"[Skill: MoveToTarget] Target pose set to: {self.target_pose.cpu().numpy().tolist()}"
+            global_console.log(
+                "skill",
+                f"[Skill: MoveToTarget] Target pose set to: {self.target_pose.cpu().numpy().tolist()}",
             )
         else:
             self.target_pose = None
             self.target_object = target_object
-            print(f"[Skill: MoveToTarget] Target object set to: {self.target_object}")
+            global_console.log(
+                "skill",
+                f"[Skill: MoveToTarget] Target object set to: {self.target_object}",
+            )
         self.pos_gain = pos_gain
         self.rot_gain = rot_gain
         self.max_pos_vel = max_pos_vel
@@ -840,19 +869,21 @@ class MoveToTarget(BaseSkill):
         self.step_counter = 0  # Initialize step counter
         self.finishing = False
         if self.enable_verification:
-            print(
-                "[Skill: MoveToTarget] VERIFICATION MODE IS ENABLED. SciPy will be used to check torch results."
+            global_console.log(
+                "skill",
+                "[Skill: MoveToTarget] VERIFICATION MODE IS ENABLED. SciPy will be used to check torch results.",
             )
 
-        print("[Skill: MoveToTarget] Initialized successfully.")
+        global_console.log("skill", "[Skill: MoveToTarget] Initialized successfully.")
 
     def initialize(self, *args, **kwargs):
         """
         Initialize the skill by setting up the environment and zero action.
         This method is called before the skill starts executing.
         """
-        print(
-            "[Skill: GraspSpanner] Initializing skill make joints move to default positions..."
+        global_console.log(
+            "skill",
+            "[Skill: GraspSpanner] Initializing skill make joints move to default positions...",
         )
         obs_dict = super().initialize(*args, **kwargs)
         env = self.env
@@ -895,8 +926,9 @@ class MoveToTarget(BaseSkill):
         if "policy" not in obs_dict or not all(
             key in obs_dict["policy"] for key in eef_pose_key
         ):
-            print(
-                f"[Skill: MoveToTarget] Error: Key '{eef_pose_key}' not found in observations."
+            global_console.log(
+                "skill",
+                f"[Skill: MoveToTarget] Error: Key '{eef_pose_key}' not found in observations.",
             )
             return Action(
                 [],
@@ -928,8 +960,9 @@ class MoveToTarget(BaseSkill):
         if self.target_pose is None:
             _k = f"{self.target_object}_aabb"
             if _k not in obs_dict["policy"]:
-                print(
-                    f"[Skill: MoveToTarget] Error: Target object '{self.target_object}' not found in observations."
+                global_console.log(
+                    "skill",
+                    f"[Skill: MoveToTarget] Error: Target object '{self.target_object}' not found in observations.",
                 )
                 return Action(
                     [],
@@ -948,7 +981,7 @@ class MoveToTarget(BaseSkill):
             # self.env.move_target_visualizer.visualize(target_center[None, ...])
             raw_target_quat = current_quat.clone()
             if self.cfg.get("visualize", False):
-                # print(
+                # global_console.log("skill",
                 #     f"[Skill: MoveToTarget] Target AABB 8p: {np.array2string(np.asarray(target_aabb.get_box_points()), precision=2, separator=', ')}"
                 # )
                 ...
@@ -978,10 +1011,10 @@ class MoveToTarget(BaseSkill):
         target_quat = raw_target_quat
 
         if self.cfg.get("visualize", False):
-            # print(
+            # global_console.log("skill",
             #     f"[Skill: MoveToTarget] Current position: {np.array2string(current_pos.cpu().numpy(), precision=2)}, Target position: {np.array2string(target_pos.cpu().numpy(), precision=2)}"
             # )
-            # print(
+            # global_console.log("skill",
             #     f"[Skill: MoveToTarget] Current quaternion: {np.array2string(current_quat.cpu().numpy(), precision=2)}, Target quaternion: {np.array2string(target_quat.cpu().numpy(), precision=2)}"
             # )
             ...
@@ -1034,7 +1067,9 @@ class MoveToTarget(BaseSkill):
                     size=(current_pos.shape[0], 7), device=self.device
                 )
             zero_action[..., -1] = self.gripper_state
-            print("[Skill: MoveToTarget] Delta is too small, skill finishing.")
+            global_console.log(
+                "skill", "[Skill: MoveToTarget] Delta is too small, skill finishing."
+            )
 
             if self.delay_steps > 0:
                 self.delay_steps -= 1
@@ -1088,8 +1123,9 @@ class MoveToTarget(BaseSkill):
             [delta_pose_action, gripper_action],
             dim=1,
         )
-        print(
-            f"[MoveToTarget]: action: {np.array2string(action.cpu().numpy(), precision=2)}"
+        global_console.log(
+            "skill",
+            f"[MoveToTarget]: action: {np.array2string(action.cpu().numpy(), precision=2)}",
         )
         return Action(action, metadata={"info": "success", "reason": "none"})
 

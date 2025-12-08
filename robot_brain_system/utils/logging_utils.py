@@ -4,8 +4,83 @@ Logging utilities for the robot brain system.
 
 import logging
 import os
-import sys  # ## 新增：导入 sys 模块
+import sys
 from typing import Optional
+
+_console_ref = None
+_level_map = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "system": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+}
+
+
+def _get_console():
+    global _console_ref
+    if _console_ref is None:
+        try:
+            from robot_brain_system.ui.console import global_console
+
+            _console_ref = global_console
+        except ImportError:
+            pass
+    return _console_ref
+
+
+class TUIHandler(logging.Handler):
+    """
+    自定义日志处理器，将日志转发给 ConsoleUI。
+    """
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            console = _get_console()
+
+            # 映射 logging level 到 UI category
+            category = "info"
+            if record.levelno >= logging.ERROR:
+                category = "error"
+            elif record.levelno >= logging.WARNING:
+                category = "wrarning"
+
+            if console:
+                # 发送到 UI 的日志窗口
+                console.log(category, msg)
+            else:
+                # UI 未启动时，仍然输出到 stderr，避免日志静默
+                sys.stderr.write(msg + "\n")
+        except Exception:
+            self.handleError(record)
+
+
+def console_log(category: str, message: str):
+    """
+    Unified console logging helper.
+    - If UI exists, use it.
+    - Otherwise, fall back to standard logger (robot_brain_system).
+    """
+    console = _get_console()
+    level = _level_map.get(category.lower(), logging.INFO)
+    if console:
+        console.log(category, message)
+    else:
+        logging.getLogger("robot_brain_system").log(level, message)
+
+
+def silence_terminal_logging():
+    """Remove default stream handlers to avoid breaking TUI layout.
+
+    Call this after UI starts to prevent logs printing to the terminal.
+    """
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    root.addHandler(logging.NullHandler())
+    root.propagate = False
 
 
 # ## 新增：定义流重定向类
@@ -32,70 +107,58 @@ class StreamToLogger:
         # This method is required for the file-like interface.
         pass
 
+    def isatty(self):
+        """Mimic a file object behavior."""
+        return False
+
 
 def setup_logging(
     log_level: str = "INFO",
     log_file: Optional[str] = None,
     log_format: Optional[str] = None,
-    redirect_print: bool = True,  # ## 新增：控制是否重定向 print
+    redirect_print: bool = False,  # [MODIFIED] 默认为 False，由 UI 接管
 ) -> logging.Logger:
     """
-    Setup logging configuration for the robot brain system.
-
-    Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        log_file: Optional log file path
-        log_format: Optional custom log format
-        redirect_print: If True, redirects stdout and stderr to the logger. ## 新增
+    Setup logging configuration.
     """
     if log_format is None:
-        log_format = "[%(asctime)s] %(name)s - %(levelname)s - %(message)s"
+        # 简化格式，因为 UI 已经有时间戳和分类颜色了
         log_format = "%(message)s"
 
     numeric_log_level = getattr(logging, log_level.upper())
 
-    # Configure root logger - this is fine as a base
-    logging.basicConfig(
-        level=numeric_log_level,
-        format=log_format,
-        handlers=[],  # Start with no handlers on the root
-    )
-
-    # Create console handler
-    console_handler = logging.StreamHandler(
-        sys.__stdout__
-    )  # ## 修改：确保 handler 输出到原始终端
-    console_handler.setLevel(numeric_log_level)
-    console_formatter = logging.Formatter(log_format)
-    console_handler.setFormatter(console_formatter)
-
-    # Get robot brain system logger
+    # 1. 获取 Logger
     logger = logging.getLogger("robot_brain_system")
     logger.handlers.clear()
-    logger.propagate = False  # ## 新增：防止日志向上传播导致重复打印
+    logger.setLevel(numeric_log_level)
+    logger.propagate = False
 
-    # Add console handler
-    logger.addHandler(console_handler)
+    # 2. [CRITICAL] 添加 TUI Handler
+    # 这确保了 logger.info() 的内容会进入 UI 窗口，而不是直接打印到屏幕
+    tui_handler = TUIHandler()
+    tui_handler.setLevel(numeric_log_level)
+    tui_handler.setFormatter(logging.Formatter(log_format))
+    logger.addHandler(tui_handler)
 
-    # Create and add file handler if specified
+    # 3. 文件 Handler (保持不变)
     if log_file:
         log_dir = os.path.dirname(log_file)
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
-
         file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
         file_handler.setLevel(numeric_log_level)
-        file_formatter = logging.Formatter(log_format)
-        file_handler.setFormatter(file_formatter)
+        file_handler.setFormatter(
+            logging.Formatter("[%(asctime)s] %(name)s - %(levelname)s - %(message)s")
+        )
         logger.addHandler(file_handler)
 
-    logger.setLevel(numeric_log_level)
+    # 4. 可选：在没有 UI 时，将 print 重定向到 logger（用于离线脚本）
+    if redirect_print and _get_console() is None:
+        sys.stdout = StreamToLogger(logger)
+        sys.stderr = StreamToLogger(logger, log_level=logging.ERROR)
 
-    # ## 新增：重定向标准输出和标准错误
-    if redirect_print:
-        sys.stdout = StreamToLogger(logger, logging.INFO)
-        sys.stderr = StreamToLogger(logger, logging.ERROR)
-        logger.info("标准输出 (print) 已被重定向到日志系统。")
+    # 注意：当 UI 启动后，ConsoleUI.run() 会接管 sys.stdout/err，
+    # print 会进入 UI；logger 仍通过 TUIHandler 进入 UI + 文件。
 
     return logger
 
