@@ -71,6 +71,7 @@ def backend_worker(cfg: DictConfig):
 
     # 5. 执行任务
     task_instruction = "先调整箱子的位置和方向，然后 grasp the spanner in the red box, then move the spanner to the white hand palm, and release it there."
+    task_instruction = "请将桌面的红色工具箱摆放至按钮正对机械臂的位置，然后按下黄色按钮打开工具箱，从工具箱中取出黄色扳手并递到手掌上。"
     # task_instruction = "move to the red box"
 
     global_console.log("brain", f"Executing Task: {task_instruction}")
