@@ -86,27 +86,27 @@ class ObservationsCfg:
         camera_top = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("topcamera"), "normalize": False},
-        )  # RGB相机图像
+        )  # RGB 相机图像
         camera_side = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("sidecamera"), "normalize": False},
-        )  # RGB相机图像
+        )  # RGB 相机图像
         camera_wrist = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("wristcamera"), "normalize": False},
-        )  # RGB相机图像
+        )  # RGB 相机图像
         inspector_side = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("inspector_side"), "normalize": False},
-        )  # RGB相机图像
+        )  # RGB 相机图像
         inspector_top = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("inspector_top"), "normalize": False},
-        )  # RGB相机图像
+        )  # RGB 相机图像
         camera_left = ObsTerm(
             func=mdp.image,
             params={"sensor_cfg": SceneEntityCfg("leftcamera"), "normalize": False},
-        )  # RGB相机图像
+        )  # RGB 相机图像
         pointcloud_camera_left = ObsTerm(
             func=mdp.camera_pointcloud,
             params={"sensor_cfg": SceneEntityCfg("leftcamera"), "normalize": True},
@@ -120,7 +120,7 @@ class ObservationsCfg:
     class RGBCameraPolicyCfg(ObsGroup):
         """Observations for policy group with RGB images."""
 
-        # camera_rgbd = ObsTerm(func=mdp.camera_rgbd)     # RGBD相机图像
+        # camera_rgbd = ObsTerm(func=mdp.camera_rgbd)     # RGBD 相机图像
 
         def __post_init__(self):
             self.enable_corruption = False
@@ -231,3 +231,22 @@ class MoveEnvCfg(ManagerBasedRLEnvCfg):
             enable_global_illumination=True,
             enable_shadows=True,
         )
+        self.sim.render.enable_dl_denoiser = (
+            True  # 开启 AI 降噪（最关键，能瞬间消除大部分颗粒噪点）
+        )
+        # --- 采样与光照质量 ---
+        self.sim.render.samples_per_pixel = (
+            4  # 增加采样数（默认 1 太低，设为 4 或更高可以大幅提升光影细腻度）
+        )
+        self.sim.render.enable_direct_lighting = True
+        self.sim.render.enable_shadows = True
+        # --- 抗锯齿与图像重建 ---
+        self.sim.render.antialiasing_mode = "DLAA"  # 使用 DLAA（基于 AI 的抗锯齿，不缩减分辨率，画质比 DLSS 更清晰、无抖动）
+        # --- 间接光照处理（权衡项） ---
+        self.sim.render.enable_reflections = (
+            True  # 开启反射（开启会增加噪点压力，但配合 Denoiser 效果较好）
+        )
+        self.sim.render.enable_global_illumination = (
+            True  # 开启全局光照（这是最大的噪点来源，开启后必须确保 Denoiser 为 True）
+        )
+        self.sim.render.enable_ambient_occlusion = True  # 环境光遮蔽，增加细节阴影

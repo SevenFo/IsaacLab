@@ -276,13 +276,45 @@ while [[ $# -gt 0 ]]; do
             # install the python packages in IsaacLab/source directory
             echo "[INFO] Installing extensions inside the Isaac Lab repository..."
             python_exe=$(extract_python_exe)
-            # recursively look into directories and install them
-            # this does not check dependencies between extensions
-            export -f extract_python_exe
-            export -f install_isaaclab_extension
-            # source directory
-            find -L "${ISAACLAB_PATH}/source" -mindepth 1 -maxdepth 1 -type d -exec bash -c 'install_isaaclab_extension "{}"' \;
-            # install the python packages for supported reinforcement learning frameworks
+            # --- 构建 pip 安装参数列表 ---
+            # 使用数组来存储参数，比字符串拼接更安全
+            install_args=()
+
+            # 1. 收集 IsaacLab 自身的 extensions (source 目录)
+            # 遍历 source 下的一级子目录
+            while IFS= read -r ext_dir; do
+                # 只有包含 setup.py 的目录才被视为扩展
+                if [ -f "$ext_dir/setup.py" ]; then
+                    install_args+=("-e" "$ext_dir")
+                fi
+            done < <(find "${ISAACLAB_PATH}/source" -mindepth 1 -maxdepth 1 -type d)
+
+            # 2. 收集 Thirdparty 库 (按需添加)
+            
+            # 添加 requirements.txt
+            if [ -f "${ISAACLAB_PATH}/thirdparty/ImagePipeline/requirements.txt" ]; then
+                install_args+=("-r" "${ISAACLAB_PATH}/thirdparty/ImagePipeline/requirements.txt")
+            fi
+
+            # 使用 [ -d ... ] 检查目录是否存在，防止脚本因找不到目录报错
+            [ -d "${ISAACLAB_PATH}/thirdparty/MocapApi" ]          && install_args+=("-e" "${ISAACLAB_PATH}/thirdparty/MocapApi")
+            [ -d "${ISAACLAB_PATH}/thirdparty/robot-retargeting" ] && install_args+=("-e" "${ISAACLAB_PATH}/thirdparty/robot-retargeting")
+            [ -d "${ISAACLAB_PATH}/thirdparty/sam2" ]              && install_args+=("-e" "${ISAACLAB_PATH}/thirdparty/sam2")
+            [ -d "${ISAACLAB_PATH}/thirdparty/Cutie" ]             && install_args+=("-e" "${ISAACLAB_PATH}/thirdparty/Cutie")
+
+
+            # 3. 添加额外的 PyPI 包 (不锁定版本，让 pip 自动推断)
+            install_args+=("textual" "msgpack_numpy")
+            install_args+=("torch==2.5.1" "torchvision==0.20.1")
+
+            # --- 执行统一安装 ---
+            echo "[INFO] Running unified pip install..."
+            
+            # 这里的 "${install_args[@]}" 会自动正确处理空格和路径
+            ${python_exe} -m pip install "${install_args[@]}"
+
+
+            # --- 之后的逻辑保持不变 (安装 RL Frameworks) ---
             echo "[INFO] Installing extra requirements such as learning frameworks..."
             # check if specified which rl-framework to install
             if [ -z "$2" ]; then
@@ -297,24 +329,24 @@ while [[ $# -gt 0 ]]; do
                 framework_name=$2
                 shift # past argument
             fi
-            # install the learning frameworks specified
-            ${python_exe} -m pip install -e ${ISAACLAB_PATH}/source/isaaclab_rl["${framework_name}"]
-            ${python_exe} -m pip install -e ${ISAACLAB_PATH}/source/isaaclab_mimic["${framework_name}"]
+            
+            # 如果不是 none，继续安装 RL 框架
+            # 注意：这里可能会触发二次安装，但由于上面的统一安装已经解决了基础依赖，
+            # pip 在这里通常只会安装缺失的特定 RL 库，不会破坏环境。
+            # if [ "$framework_name" != "none" ]; then
+            #      ${python_exe} -m pip install -e "${ISAACLAB_PATH}/source/isaaclab_rl[${framework_name}]"
+            #      ${python_exe} -m pip install -e "${ISAACLAB_PATH}/source/isaaclab_mimic[${framework_name}]"
+            # fi
 
-            # check if we are inside a docker container or are building a docker image
-            # in that case don't setup VSCode since it asks for EULA agreement which triggers user interaction
+            # docker 判断及 vscode 设置
             if is_docker; then
                 echo "[INFO] Running inside a docker container. Skipping VSCode settings setup."
                 echo "[INFO] To setup VSCode settings, run 'isaaclab -v'."
             else
-                # update the vscode settings
                 update_vscode_settings
             fi
 
-            # unset local variables
-            unset extract_python_exe
-            unset install_isaaclab_extension
-            shift # past argument
+            shift 
             ;;
         -c|--conda)
             # use default name if not provided

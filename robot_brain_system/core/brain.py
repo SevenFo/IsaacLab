@@ -40,10 +40,10 @@ if TYPE_CHECKING:
 @dataclass
 class BrainState:
     """
-    Brain的内部工作状态。
+    Brain 的内部工作状态。
 
-    注意: Brain不维护系统级status,系统状态由System统一管理。
-    Brain只负责任务规划和监控,通过返回值通知System状态变化。
+    注意：Brain 不维护系统级 status，系统状态由 System 统一管理。
+    Brain 只负责任务规划和监控，通过返回值通知 System 状态变化。
     """
 
     current_task: Optional[Task] = None
@@ -115,9 +115,9 @@ class BrainMemory:
         self, last_n: int = 5, prune_multimedia: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        获取系统提示以及最后N轮对话。
+        获取系统提示以及最后 N 轮对话。
 
-        新增了一个参数 `prune_multimedia` 来优化多模态历史记录的处理，减少token消耗。
+        新增了一个参数 `prune_multimedia` 来优化多模态历史记录的处理，减少 token 消耗。
 
         Args:
             last_n (int): 获取的对话轮数。一轮包含一个用户输入和一个助手输出。
@@ -150,7 +150,7 @@ class BrainMemory:
             return system_prompt + history_slice
 
         # 3. 如果启用剪枝，处理历史记录
-        # 使用深拷贝(deepcopy)来确保不会修改原始的 self.history
+        # 使用深拷贝 (deepcopy) 来确保不会修改原始的 self.history
         processed_history = copy.deepcopy(history_slice)
 
         # 遍历除最后一个条目（即最新的用户输入）之外的所有历史记录
@@ -304,7 +304,7 @@ class QwenVLBrain:
         self.adapter_type = self.qwen_config.get(
             "adapter_type", "mock"
         )  # "qwen_vl", "openai", or "mock"
-        # 从主配置中获取模型和API相关的通用配置
+        # 从主配置中获取模型和 API 相关的通用配置
         model_path = self.qwen_config.get("model_path")
         device = self.qwen_config.get("device", "auto")
         model_name = self.qwen_config.get("model")  # for OpenAI
@@ -326,13 +326,13 @@ class QwenVLBrain:
                     **self.qwen_config.get("transformers_adapter_args", {}),
                 )
             elif self.adapter_type == "vllm":
-                # vLLM的特定参数也可以从config传入
+                # vLLM 的特定参数也可以从 config 传入
                 self.model_adapter = VLLMAdapter(
                     model_path=model_path,
                     **self.qwen_config.get("vllm_adapter_args", {}),
                 )
             elif self.adapter_type == "lmdeploy":
-                # LMDeploy的特定参数
+                # LMDeploy 的特定参数
                 self.model_adapter = LMDeployAdapter(
                     model_path=model_path,
                     **self.qwen_config.get("lmd_adapter_args", {}),
@@ -343,19 +343,19 @@ class QwenVLBrain:
                     **self.qwen_config.get("args", {"api_key": "", "base_url": ""}),
                 )
             else:
-                # 保留mock作为备用
+                # 保留 mock 作为备用
                 self.print("[QwenVLBrain] 未知的 adapter_type，将使用 mock 实现。")
                 self.adapter_type = "mock"
                 self.model_adapter = None
 
             if self.model_adapter:
-                self.print(f"[QwenVLBrain] 成功初始化适配器: {self.adapter_type}")
+                self.print(f"[QwenVLBrain] 成功初始化适配器：{self.adapter_type}")
 
         except Exception as e:
             import traceback
 
-            self.print(f"[QwenVLBrain] 初始化模型适配器失败: {e}")
-            traceback.print_exc()
+            self.print(f"[QwenVLBrain] 初始化模型适配器失败：{e}")
+            self.print(traceback.format_exc())
             self.print("[QwenVLBrain] 回退到 mock 实现。")
             self.adapter_type = "mock"
             self.model_adapter = None
@@ -489,7 +489,7 @@ class QwenVLBrain:
     def summary_skill_execution(
         self, skill_info: dict, obs: Observation, only_image=True
     ):
-        # TODO 只提供image不提供text试试！
+        # TODO 只提供 image 不提供 text 试试！
         # self.monitor_memory.add_user_input(
         #     contents=[f"skill execution result: {skill_info['result']}"]
         # )
@@ -568,6 +568,11 @@ class QwenVLBrain:
         sum_memory = BrainMemory()
         sum_memory.add_system_prompt("You are a professional dialogue summarizer.")
         sum_memory.add_user_input(contents=content)
+
+        if self.model_adapter is None:
+            # mock
+            return "N/A"
+
         response_text, _ = self.model_adapter.generate(
             sum_memory.history, thinking=True
         )
@@ -592,8 +597,8 @@ class QwenVLBrain:
         """
         根据当前执行情况重新规划任务。
 
-        注意: 此方法不修改系统状态,只返回新计划。
-        状态管理由System负责。
+        注意：此方法不修改系统状态，只返回新计划。
+        状态管理由 System 负责。
 
         Args:
             task: The task to plan for
@@ -609,12 +614,8 @@ class QwenVLBrain:
             if not self.skill_registry:
                 raise RuntimeError("Skill registry not available")
 
-            if self.model_adapter is None:
-                # Fallback to mock implementation
-                raise ValueError("self.model_adapter is None")
-
             try:
-                # 移除: self.state.status = SystemStatus.THINKING
+                # 移除：self.state.status = SystemStatus.THINKING
 
                 # 1. Prepare System Prompt (Static Instructions)
                 system_prompt = self._format_system_prompt_for_replanning()
@@ -662,19 +663,25 @@ class QwenVLBrain:
                     contents=[text_prompt, current_image]
                 )
 
-                self.print(f"[QwenVLBrain] 开始为任务进行再规划: {task.description}")
-                response_text, reasoning_content = self.model_adapter.generate(
-                    history=replan_session_memory.fetch_history(
-                        last_n=0, prune_multimedia=True
-                    ),
-                    max_tokens=self.max_tokens,
-                    thinking=True,
-                )  # type: ignore
+                self.print(f"[QwenVLBrain] 开始为任务进行再规划：{task.description}")
+                if self.model_adapter is None:
+                    response_text = "```json\n[\n]\n```\n\n"
+                    reasoning_content = (
+                        "brain model is unavaliable, return mock response"
+                    )
+                else:
+                    response_text, reasoning_content = self.model_adapter.generate(
+                        history=replan_session_memory.fetch_history(
+                            last_n=0, prune_multimedia=True
+                        ),
+                        max_tokens=self.max_tokens,
+                        thinking=True,
+                    )  # type: ignore
                 # Parse the response to extract skill plan
 
                 # ----------------- Old implementation (to be removed) -----------------
                 # operations = self._parse_json_response(response_text)
-                # # 移除: self.state.status = SystemStatus.EXECUTING
+                # # 移除：self.state.status = SystemStatus.EXECUTING
                 # if not operations:
                 #     self.print(
                 #         "[QwenVLBrain] No operations suggested by LLM. Plan remains unchanged."
@@ -933,10 +940,10 @@ class QwenVLBrain:
 
     def execute_task(self, task: Task) -> SkillPlan:
         """
-        开始执行任务,生成执行计划。
+        开始执行任务，生成执行计划。
 
-        注意: 此方法不设置系统状态,只负责规划和存储任务信息。
-        系统状态由System统一管理。
+        注意：此方法不设置系统状态，只负责规划和存储任务信息。
+        系统状态由 System 统一管理。
 
         Args:
             task: Task to execute
@@ -945,7 +952,7 @@ class QwenVLBrain:
             The execution plan
         """
         try:
-            # 移除: self.state.status = SystemStatus.THINKING
+            # 移除：self.state.status = SystemStatus.THINKING
             self.state.current_task = task
 
             # Create execution plan
@@ -960,15 +967,15 @@ class QwenVLBrain:
                 update_type="initial_plan",
             )
 
-            # 移除: self.state.status = SystemStatus.EXECUTING
+            # 移除：self.state.status = SystemStatus.EXECUTING
             self.initial_monitor()
             self.print(f"[QwenVLBrain] Started executing task: {task.description}")
             return plan
 
         except Exception as e:
-            # 移除: self.state.status = SystemStatus.ERROR
+            # 移除：self.state.status = SystemStatus.ERROR
             self.state.error_message = str(e)
-            raise  # 让System处理错误状态
+            raise  # 让 System 处理错误状态
 
     def initial_monitor(self):
         assert self.state.current_task is not None
@@ -1071,8 +1078,8 @@ class QwenVLBrain:
         """
         监控当前技能执行并给出决策建议。
 
-        注意: 此方法不设置系统状态,只返回监控结果。
-        System根据返回结果决定是否需要状态转换。
+        注意：此方法不设置系统状态，只返回监控结果。
+        System 根据返回结果决定是否需要状态转换。
 
         Args:
             obs_history: obs_history
@@ -1087,30 +1094,30 @@ class QwenVLBrain:
             current_skill = self.get_next_skill()
             assert current_skill
 
-            # 移除: self.state.status = SystemStatus.MONITORING
+            # 移除：self.state.status = SystemStatus.MONITORING
 
             # Use Qwen VL to analyze current situation
             result = self._query_qwen_for_monitoring(
                 self.state.current_task, current_skill, obs_history
             )
-            # 移除: self.state.status = SystemStatus.EXECUTING
+            # 移除：self.state.status = SystemStatus.EXECUTING
             return result
 
         except Exception as e:
-            # 移除: self.state.status = SystemStatus.ERROR
+            # 移除：self.state.status = SystemStatus.ERROR
             self.state.error_message = str(e)
             return {"result": "progress", "reason": str(e)}
 
     def interrupt_task(self, reason: str = "User interrupt"):
         """
-        中断当前任务执行,清理Brain的任务数据。
+        中断当前任务执行，清理 Brain 的任务数据。
 
-        注意: 此方法不设置系统状态,只清理Brain内部数据。
-        系统状态由System统一管理。
+        注意：此方法不设置系统状态，只清理 Brain 内部数据。
+        系统状态由 System 统一管理。
         """
         if self.state.current_task:
             self.print(f"[QwenVLBrain] Interrupting task: {reason}")
-            # 移除: self.state.status = SystemStatus.IDLE
+            # 移除：self.state.status = SystemStatus.IDLE
             self.state.current_task = None
             self.state.current_plan = None
             self.state.current_skill_index = 0
@@ -1119,7 +1126,7 @@ class QwenVLBrain:
     def get_status(self) -> Dict[str, Any]:
         """Get current brain status."""
         return {
-            # 移除 status 字段,改为返回任务和计划状态
+            # 移除 status 字段，改为返回任务和计划状态
             "has_task": self.has_task(),
             "has_plan": self.has_plan(),
             "has_pending_skills": self.has_pending_skills(),
@@ -1286,26 +1293,24 @@ class QwenVLBrain:
         self, task: Task, skill_descriptions: str, use_mock=False
     ) -> SkillPlan:
         if self.model_adapter is None or use_mock:
-            self.print("[QwenVLBrain] Mock模式：返回一个预设的计划。")
+            self.print("[QwenVLBrain] Mock 模式：返回一个预设的计划。")
 
             mock_plan = """```json
 [
     {
         "step": 1,
-        "method": "open_box",
+        "method": "move_box_to_suitable_position",
         "params": {}
     },
     {
         "step": 2,
-        "method": "grasp_spanner",
+        "method": "open_box",
         "params": {}
     },
     {
         "step": 3,
-        "method": "object_tracking",
-        "params": {
-            "target_object": "palm"
-        }
+        "method": "grasp_spanner",
+        "params": {}
     },
     {
         "step": 4,
@@ -1322,11 +1327,11 @@ class QwenVLBrain:
         # 1. 准备一个临时的 BrainMemory 用于本次规划
         planning_memory = BrainMemory()
 
-        # 2. 格式化并添加系统提示 (静态内容: 角色、技能、输出格式)
+        # 2. 格式化并添加系统提示 (静态内容：角色、技能、输出格式)
         system_prompt = self._format_system_prompt_for_planning()
         planning_memory.add_system_prompt(system_prompt)
 
-        # 3. 添加用户输入 (动态内容: 任务描述、图像)
+        # 3. 添加用户输入 (动态内容：任务描述、图像)
         user_prompt = self._format_user_prompt_for_planning(task)
         user_content = [user_prompt]
         if task.image:
@@ -1354,7 +1359,7 @@ class QwenVLBrain:
         except Exception as e:
             import traceback
 
-            self.print(f"[QwenVLBrain] 规划时出错: {e}")
+            self.print(f"[QwenVLBrain] 规划时出错：{e}")
             traceback.print_exc()
             # 出错时回退
             raise RuntimeError("Failed to create plan")
@@ -1427,7 +1432,7 @@ class QwenVLBrain:
         Uses the configured model adapter to analyze the current situation
         and output the current skill execution status.
         """
-        if not enable:
+        if not enable or self.adapter_type is None:
             # Fallback to mock implementation
             return self._mock_monitoring_decision(task, current_skill, obs_history)
         assert type(obs_history) is list
@@ -1441,7 +1446,7 @@ class QwenVLBrain:
                 )
                 import matplotlib.pyplot as plt
 
-                fig, axs = plt.subplots(1, 2, figsize=(10, 5))  # 创建1行2列的子图
+                fig, axs = plt.subplots(1, 2, figsize=(10, 5))  # 创建 1 行 2 列的子图
                 axs[0].imshow(inspector_rgb)
                 axs[0].axis("off")
                 axs[0].set_title("Inspector View")
@@ -1460,7 +1465,7 @@ class QwenVLBrain:
             video_frames_inspect = []
             video_frames_front = []
 
-            # TODO 提取 obs 这部分应该要放在外面才对，这里面只进行query_qwen的逻辑
+            # TODO 提取 obs 这部分应该要放在外面才对，这里面只进行 query_qwen 的逻辑
             # 计算可用的观察帧数
             available_frames = len(obs_history)
 
@@ -1617,14 +1622,14 @@ class QwenVLBrain:
         self, response_text: str, repair_by_llm=False
     ) -> Dict | List:
         """
-        从响应文本中提取并解析JSON内容.
-        如果初次解析失败,会尝试请求模型生成有效的JSON再次解析.
+        从响应文本中提取并解析 JSON 内容。
+        如果初次解析失败，会尝试请求模型生成有效的 JSON 再次解析。
 
         Args:
-            response_text: 包含可能JSON内容的原始文本
+            response_text: 包含可能 JSON 内容的原始文本
 
         Returns:
-            解析成功的字典或列表对象，失败返回None
+            解析成功的字典或列表对象，失败返回 None
         """
         parsed_data = extract_json_from_text(response_text, repair=not repair_by_llm)
 
@@ -1691,7 +1696,7 @@ class QwenVLBrain:
         """
         Format the SYSTEM prompt for planning.
 
-        System Prompt 包含:
+        System Prompt 包含：
         - 角色定义 (你是谁)
         - 可用技能列表 (你能做什么)
         - 输出格式要求 (你应该怎么输出)
@@ -1737,9 +1742,9 @@ class QwenVLBrain:
         """
         Format the USER prompt for planning.
 
-        User Prompt 包含:
+        User Prompt 包含：
         - 当前任务描述 (动态)
-        - 当前场景图像 (动态, 在调用处添加)
+        - 当前场景图像 (动态，在调用处添加)
 
         这些是每次请求都不同的动态内容。
         """
@@ -1753,7 +1758,7 @@ class QwenVLBrain:
         """
         Format the SYSTEM prompt for replanning.
 
-        System Prompt 包含所有静态内容:
+        System Prompt 包含所有静态内容：
         - 角色定义 (Expert Plan Corrector)
         - 可用技能列表
         - 决策流程指导
@@ -1765,6 +1770,11 @@ class QwenVLBrain:
             "You are an expert robot task plan corrector. Your goal is to analyze execution results and correct the plan *only if* there is a failure or issue.\n\n"
             "## Available Skills\n"
             f"{self.skill_registry.get_skill_descriptions()}\n\n"
+            "**Handling Missing Skills:**\n"
+            "If the task requires an action (e.g., 'give to human', 'pour water') but no specific skill exists for it:\n"
+            "- Use generic skills like `move_to_target_pose` or `move_to_target_object` to approximate the action.\n"
+            "- OR use `human_intervention` to ask for help.\n"
+            "- **NEVER** simply stop and claim success if the action is not performed.\n"
             "## Decision Process\n"
             "Follow this process for every replan request:\n"
             "1. **Analyze the Past (Outcome Analysis):**\n"
@@ -1830,7 +1840,7 @@ class QwenVLBrain:
         """
         Format the SYSTEM prompt for replanning.
 
-        System Prompt 包含所有静态内容:
+        System Prompt 包含所有静态内容：
         - 角色定义 (Expert Plan Corrector)
         - 可用技能列表
         - 决策流程指导
@@ -1839,7 +1849,12 @@ class QwenVLBrain:
         - 输出格式要求
         """
         prompt = (
-            "You are an expert robot task plan corrector. Your goal is to analyze execution results and correct the plan *only if* there is a failure or issue.\n\n"
+            "You are an expert robot task plan corrector.\n"
+            "Your PRIMARY GOAL is to ensure the robot **fully completes the Original Task**.\n"
+            "You must analyze the current situation and update the plan if:\n"
+            "1. The last skill failed.\n"
+            "2. The current plan is **incomplete** (missing steps to reach the final goal).\n"
+            "3. The plan is inefficient or wrong.\n\n"
             "## Available Skills\n"
             f"{self.skill_registry.get_skill_descriptions()}\n\n"
             "## Decision Process\n"
@@ -1847,10 +1862,14 @@ class QwenVLBrain:
             "1. **Analyze the Past (Outcome Analysis):**\n"
             "   - Use the `Execution Summary` to determine the TRUE outcome of the last skill. Visual evidence is the absolute truth.\n"
             "   - If the reported status contradicts the visual evidence, note this for your replanning.\n"
-            "2. **Validate the Future (Plan Validation):**\n"
+            "2. **Check Goal Completion:**\n"
+            "   - Compare the **Current Robot State** and **Scene** against the **Original Task** requirements.\n"
+            "   - Ask: 'Is the task *fully* finished?' (e.g., Is the object actually in the hand? Is the drawer closed?)\n"
+            "   - If the Plan is empty but the Task is NOT finished, you **MUST** insert new steps.\n"
+            "3. **Validate the Future (Plan Validation):**\n"
             "   - Review remaining `PENDING` skills.\n"
-            "   - Ask: 'Given the current scene and outcome of the last skill, can this plan achieve the Original Task?'\n"
-            "3. **Choose Operations:**\n"
+            "   - If pending skills are missing, insert them.\n"
+            "4. **Choose Operations:**\n"
             "   - Identify the index of the first step that requires correction, insertion, or is simply the next logical step to execute (let's call this Step N).\n"
             "   - Provide a JSON array representing the **entire remaining plan** starting from Step N.\n"
             "   - **CRITICAL:** You must output Step N and **ALL** subsequent steps required to complete the task, even if those subsequent steps are unchanged from the original plan.\n"
@@ -1915,7 +1934,7 @@ class QwenVLBrain:
         """
         Format the USER prompt for replanning.
 
-        User Prompt 只包含动态内容:
+        User Prompt 只包含动态内容：
         - 原始任务描述
         - 任务进度记忆
         - 当前计划状态
@@ -1949,7 +1968,7 @@ class QwenVLBrain:
         # 任务进度记忆
         task_memory_context = self._get_task_memory_context()
         if task_memory_context:
-            prompt += f"## Task Progress Memory\n{task_memory_context}\n\n"
+            prompt += f"{task_memory_context}\n\n"
 
         prompt += (
             f"## Current Plan:\n{current_plan_state}\n\n"
@@ -1968,7 +1987,11 @@ class QwenVLBrain:
             )
 
         prompt += "Please analyze the current situation and provide your correction operations."
-
+        prompt += (
+            "## FINAL CHECK\n"
+            "If the plan is empty `[]` but the physical goal (e.g. object delivery) is not visible in the scene, "
+            "do NOT return `[]`. You MUST generate the missing steps."
+        )
         return prompt
 
     def _format_system_prompt_for_monitoring(

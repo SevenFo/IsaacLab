@@ -245,7 +245,7 @@ class RobotBrainSystem:
 
         self.print(f"[RobotBrainSystem] Received task instruction: {instruction}")
         try:
-            # 状态转换: IDLE -> THINKING
+            # 状态转换：IDLE -> THINKING
             self.state.status = SystemStatus.THINKING
             obs = self.env_proxy.get_latest_observation()
             if obs is None:
@@ -269,7 +269,7 @@ class RobotBrainSystem:
             # Brain 解析并存储任务
             task = self.brain.parse_task(instruction, image_data)
 
-            # Brain规划任务 (Brain不修改系统状态，但会存储 task 和 plan)
+            # Brain 规划任务 (Brain 不修改系统状态，但会存储 task 和 plan)
             plan = self.brain.execute_task(task)
             if not plan or not plan.steps:
                 self.print("[RobotBrainSystem] Brain did not produce a valid plan.")
@@ -281,7 +281,7 @@ class RobotBrainSystem:
             # 记录到历史（但不再在 state 中存储 current_task/current_plan 副本）
             self.state.plan_history.append(plan)
 
-            # 状态转换: THINKING -> EXECUTING
+            # 状态转换：THINKING -> EXECUTING
             self.state.status = SystemStatus.EXECUTING
             self.print(
                 f"[RobotBrainSystem] Brain planned {len(plan.steps)} skills. Starting execution..."
@@ -294,7 +294,7 @@ class RobotBrainSystem:
             traceback.print_exc()
             self.state.error_message = str(e)
             self.state.status = SystemStatus.ERROR
-            # Brain异常时清理状态
+            # Brain 异常时清理状态
             if self.brain.has_task():
                 self.brain.interrupt_task(f"Error during task start: {e}")
             return False
@@ -377,13 +377,13 @@ class RobotBrainSystem:
         # 从 Brain 获取当前任务信息
         current_task = self.brain.get_current_task() if self.brain else None
 
-        # 根据System状态和Brain状态构造详细的当前操作描述
+        # 根据 System 状态和 Brain 状态构造详细的当前操作描述
         current_system_op = self.state.status.value
 
         if self.state.status == SystemStatus.EXECUTING:
-            # System处于执行状态
+            # System 处于执行状态
             if brain_s.get("has_pending_skills"):
-                # Brain还有待执行的技能
+                # Brain 还有待执行的技能
                 executor_status = sim_status.get("skill_executor", {})
                 if executor_status.get("status") == "running":
                     # 技能正在运行
@@ -396,7 +396,7 @@ class RobotBrainSystem:
                     else:
                         current_system_op = "executing_plan (transitioning)"
             else:
-                # Brain没有待执行技能,计划即将完成
+                # Brain 没有待执行技能，计划即将完成
                 current_system_op = "executing_plan (finishing)"
 
         elif self.state.status == SystemStatus.THINKING:
@@ -520,6 +520,7 @@ class RobotBrainSystem:
                 self.state.skill_history[-1]["execution_summary"] = "N/A"
 
         if self.state.skill_history[-1]["name"] == "grasp_spanner":
+            # 如果成功抓起来 spanner，则移动 Alice 到操作位置
             self.skill_executor.move_alice_to_operation_position()
             obs = self.env_proxy.get_latest_observation()
 
@@ -684,7 +685,7 @@ class RobotBrainSystem:
                 )
                 skill_status_info = self.skill_executor.status_info
 
-                # Capture human feedback; if来自 human_intervention，则存入其摘要而不触发中断重规划提示
+                # Capture human feedback; if 来自 human_intervention，则存入其摘要而不触发中断重规划提示
                 if skill_status_info:
                     info_lower = skill_status_info.lower()
                     if info_lower.startswith("human feedback:"):
@@ -819,7 +820,7 @@ class RobotBrainSystem:
                     self._manage_skill_lifecycle(skill_status)
 
                 # 5. Final system state check
-                if self.brain.state.error_message:  # Brain有错误信息
+                if self.brain.state.error_message:  # Brain 有错误信息
                     self.console.log(
                         "error",
                         f"Brain encountered error: {self.brain.state.error_message}",

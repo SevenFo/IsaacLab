@@ -14,6 +14,7 @@ import msgpack_numpy as msgnp
 from torchvision.transforms import Compose
 from torchvision.transforms.functional import convert_image_dtype
 from scipy.spatial.transform import Rotation as R
+from collections import OrderedDict
 
 msgnp.patch()  # 服务端也要启用 numpy 支持
 
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Dict, List
 
 import isaaclab.utils.math as math_utils
 
-# TODO 不要包含 isaacsim 相关的package，后续可以从 sub process 获取 skill description
+# TODO 不要包含 isaacsim 相关的 package，后续可以从 sub process 获取 skill description
 # from isaaclab.assets.rigid_object import RigidObject
 
 from ..core.types import SkillType, ExecutionMode, Action, BaseSkill
@@ -30,19 +31,6 @@ from ..core.skill_manager import skill_register, get_skill_registry
 from ..skills.observation_skills import ObjectTracking
 from robot_brain_system.ui.console import global_console
 
-# Attempt to import Robomimic, make it optional
-ROBOMIMIC_AVAILABLE = False
-try:
-    import robomimic.utils.torch_utils as TorchUtils
-    import robomimic.utils.file_utils as FileUtils
-    from collections import OrderedDict  # Used by robomimic example
-
-    ROBOMIMIC_AVAILABLE = True
-except ImportError:
-    global_console.log(
-        "skill",
-        "[Skill] Warning: robomimic library not found. Assemble skill will not be functional.",
-    )
 
 # Type hinting for Isaac Lab environment if available
 if TYPE_CHECKING:
@@ -217,16 +205,14 @@ class PressButton(BaseSkill):
         # 设置扳手的位置
         spanner_rel_pos = torch.tensor(
             [0, -0.04, 0.001], device=env.device
-        )  # asset2相对于asset1的位置偏移
-        spanner_rel_rot = (
-            math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
-                torch.tensor([0.0], device=env.device),
-                torch.tensor([0.0], device=env.device),
-                torch.tensor([math.pi / 2], device=env.device),
-            )
+        )  # asset2 相对于 asset1 的位置偏移
+        spanner_rel_rot = math_utils.quat_from_euler_xyz(  # asset2 相对于 asset1 的旋转 (绕 x 轴 90 度)
+            torch.tensor([0.0], device=env.device),
+            torch.tensor([0.0], device=env.device),
+            torch.tensor([math.pi / 2], device=env.device),
         )
         spanner_pos = heavy_box_target_pose[:, :3] - spanner_rel_pos.unsqueeze(0)
-        # 旋转 = asset1的旋转 * 相对旋转
+        # 旋转 = asset1 的旋转 * 相对旋转
         spanner_orient = math_utils.quat_mul(
             heavy_box_target_pose[:, 3:7], spanner_rel_rot
         )
@@ -248,7 +234,7 @@ class PressButton(BaseSkill):
             torch.zeros(1, 6, device=env.device),
             env_ids=torch.tensor([cur_env], device=env.device),
         )
-        # # 设置asset2的位姿
+        # # 设置 asset2 的位姿
         spanner.write_root_pose_to_sim(
             torch.cat([spanner_pos, spanner_orient], dim=-1),
             env_ids=torch.tensor([0], device=env.device),
@@ -299,11 +285,11 @@ class PressButton(BaseSkill):
         env = self.env
         spanner = env.scene["spanner"]
         box = env.scene["box"]
-        # 定义asset2相对于asset1的初始位置偏移和旋转
+        # 定义 asset2 相对于 asset1 的初始位置偏移和旋转
         rel_pos = torch.tensor(
             [0.0, -0.04, 0.001], device=env.device
-        )  # asset2相对于asset1的位置偏移
-        rel_rot = math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
+        )  # asset2 相对于 asset1 的位置偏移
+        rel_rot = math_utils.quat_from_euler_xyz(  # asset2 相对于 asset1 的旋转 (绕 x 轴 90 度)
             torch.tensor([0.0], device=env.device),
             torch.tensor([0.0], device=env.device),
             torch.tensor([math.pi / 2], device=env.device),
@@ -330,7 +316,7 @@ class PressButton(BaseSkill):
             )
         )
         if random_reset:
-            # 设置asset1的位姿
+            # 设置 asset1 的位姿
             box.write_root_pose_to_sim(
                 torch.cat([positions1, orientations1], dim=-1),
                 env_ids=torch.tensor([0], device=env.device),
@@ -344,10 +330,10 @@ class PressButton(BaseSkill):
             time.sleep(0.1)
 
         positions2 = positions1 - rel_pos.unsqueeze(0)
-        # 旋转 = asset1的旋转 * 相对旋转
+        # 旋转 = asset1 的旋转 * 相对旋转
         orientations2 = math_utils.quat_mul(orientations1, rel_rot)
 
-        # # 设置asset2的位姿
+        # # 设置 asset2 的位姿
         spanner.write_root_pose_to_sim(
             torch.cat([positions2, orientations2], dim=-1),
             env_ids=torch.tensor([0], device=env.device),
@@ -504,11 +490,11 @@ class GraspSpanner(BaseSkill):
         env = self.env
         spanner = env.scene["spanner"]
         box = env.scene["box"]
-        # 定义asset2相对于asset1的初始位置偏移和旋转
+        # 定义 asset2 相对于 asset1 的初始位置偏移和旋转
         rel_pos = torch.tensor(
             [0.0, -0.04, 0.001], device=env.device
-        )  # asset2相对于asset1的位置偏移
-        rel_rot = math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
+        )  # asset2 相对于 asset1 的位置偏移
+        rel_rot = math_utils.quat_from_euler_xyz(  # asset2 相对于 asset1 的旋转 (绕 x 轴 90 度)
             torch.tensor([0.0], device=env.device),
             torch.tensor([0.0], device=env.device),
             torch.tensor([math.pi / 2], device=env.device),
@@ -535,7 +521,7 @@ class GraspSpanner(BaseSkill):
             )
         )
         if random_reset:
-            # 设置asset1的位姿
+            # 设置 asset1 的位姿
             box.write_root_pose_to_sim(
                 torch.cat([positions1, orientations1], dim=-1),
                 env_ids=torch.tensor([0], device=env.device),
@@ -549,10 +535,10 @@ class GraspSpanner(BaseSkill):
             time.sleep(0.1)
 
         positions2 = positions1 - rel_pos.unsqueeze(0)
-        # 旋转 = asset1的旋转 * 相对旋转
+        # 旋转 = asset1 的旋转 * 相对旋转
         orientations2 = math_utils.quat_mul(orientations1, rel_rot)
 
-        # # 设置asset2的位姿
+        # # 设置 asset2 的位姿
         spanner.write_root_pose_to_sim(
             torch.cat([positions2, orientations2], dim=-1),
             env_ids=torch.tensor([0], device=env.device),
@@ -1103,15 +1089,15 @@ class MoveToTarget(BaseSkill):
         # 在移动过程中保持当前抓夹状态，而不是设置为期望状态
         # 判断当前抓夹是开着还是关着的：如果平均绝对值大于阈值，说明抓夹是打开的
         current_gripper_open_level = current_gripper_pos.abs().mean(dim=1, keepdim=True)
-        # 保持当前状态：大于0.5认为是关闭的(-1.0)，小于等于0.5认为是打开的(+1.0)
+        # 保持当前状态：大于 0.5 认为是关闭的 (-1.0)，小于等于 0.5 认为是打开的 (+1.0)
         gripper_action = torch.where(current_gripper_open_level > 0.5, -1.0, 1.0)
         gripper_action = -torch.ones_like(gripper_action, device=gripper_action.device)
 
         R_world_to_base = torch.tensor(
             [
-                [0, -1, 0],  # 世界X → 基Y
-                [1, 0, 0],  # 世界Y → 基-X
-                [0, 0, 1],  # 世界Z → 基Z
+                [0, -1, 0],  # 世界 X → 基 Y
+                [1, 0, 0],  # 世界 Y → 基-X
+                [0, 0, 1],  # 世界 Z → 基 Z
             ],
             device=delta_pose_action.device,
             dtype=delta_pose_action.dtype,

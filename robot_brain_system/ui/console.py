@@ -108,19 +108,39 @@ class RobotBrainApp(App):
         self.set_interval(0.5, self.update_status_bar)
         self.set_interval(0.2, self.check_intervention_request)
         self.query_one(Input).focus()
+        self.query_one(RichLog).auto_scroll = False
 
     def poll_logs_from_queue(self) -> None:
         if not _UI_INSTANCE:
             return
         log_widget = self.query_one(RichLog)
+        # 1. 获取当前的滚动状态
+        # scroll_offset.y 是当前顶部显示的行号
+        # max_scroll_y 是能够滚动的最大行号
+        # size.height 是控件的高度
+
+        # 判断当前是否在最底部（允许 2 行的误差，防止差一点点没对齐就失效）
+        # 如果 (最大滚动距离 - 当前滚动位置) < 2，说明用户正在看最新的内容
+        distance_from_bottom = log_widget.max_scroll_y - log_widget.scroll_offset.y
+        is_at_bottom = distance_from_bottom <= 2
+
         count = 0
+        has_new_content = False
+
         while not _UI_INSTANCE.log_queue.empty() and count < 50:
             try:
                 text_obj = _UI_INSTANCE.log_queue.get_nowait()
+                # 写入日志，这会增加 max_scroll_y，但通常不会改变 scroll_offset.y
                 log_widget.write(text_obj)
                 count += 1
+                has_new_content = True
             except queue.Empty:
                 break
+
+        # --- 核心修改结束 ---
+        # 2. 只有当原本就在底部，且有新内容时，才强制滚到底部
+        if has_new_content and is_at_bottom:
+            log_widget.scroll_end(animate=False)
 
     def check_intervention_request(self) -> None:
         """Check if there's an intervention dialog request."""

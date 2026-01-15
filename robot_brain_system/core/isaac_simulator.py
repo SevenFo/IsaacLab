@@ -133,7 +133,7 @@ class SharedMemoryManager:
         if not self.shm_obs:
             raise RuntimeError("Observation shared memory not initialized")
 
-        # 读取前4个字节获取大小
+        # 读取前 4 个字节获取大小
         # memoryview 也可以直接切片读取，避免 bytes() 拷贝
         size_data = self.shm_obs.buf[:4]
         size = struct.unpack("!I", size_data)[0]
@@ -355,7 +355,7 @@ class IsaacSimulator:
             self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
             # Try to connect with retries
-            max_retries = 120  # 120 seconds timeout for Isaac Lab startup
+            max_retries = 600  # 600 seconds timeout for Isaac Lab startup
             for i in range(max_retries):
                 # Check if process is still alive
                 if self.process.poll() is not None:

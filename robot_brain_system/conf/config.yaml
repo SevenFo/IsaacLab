@@ -25,3 +25,77 @@ skills:
     success_item: "leave_spanner"
   move_box_to_suitable_position:
     success_item: "lift_eef"
+  alicecontrol:
+    initial_root_state: [-1.8, -2.5, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
+    operation_state: [0.4067, -3.2, 2.7, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
+    play_state: [-1.8, 0.95, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
+    joint_name_to_indices:
+      "D6Joint_RightUpLeg:0": 0
+      "D6Joint_RightUpLeg:1": 1
+      "D6Joint_RightUpLeg:2": 2
+      "D6Joint_LeftUpLeg:0": 3
+      "D6Joint_LeftUpLeg:1": 4
+      "D6Joint_LeftUpLeg:2": 5
+      "D6Joint_Spine:0": 6
+      "D6Joint_Spine:1": 7
+      "D6Joint_Spine:2": 8
+      "RevoluteJoint_RightKnee": 9
+      "RevoluteJoint_LeftKnee": 10
+      "RevoluteJoint_RightAnkle": 11
+      "RevoluteJoint_LeftAnkle": 12
+      "D6Joint_Spine2:0": 13
+      "D6Joint_Spine2:1": 14
+      "D6Joint_Spine2:2": 15
+      "D6Joint_RightArm:0": 16
+      "D6Joint_RightArm:1": 17
+      "D6Joint_RightArm:2": 18
+      "D6Joint_LeftArm:0": 19
+      "D6Joint_LeftArm:1": 20
+      "D6Joint_LeftArm:2": 21
+      "D6Joint_Neck:0": 22
+      "D6Joint_Neck:1": 23
+      "D6Joint_Neck:2": 24
+      "D6Joint_RightForeArm:0": 25
+      "D6Joint_RightForeArm:1": 26
+      "D6Joint_RightForeArm:2": 27
+      "D6Joint_LeftForeArm:0": 28
+      "D6Joint_LeftForeArm:1": 29
+      "D6Joint_LeftForeArm:2": 30
+      "D6Joint_RightWrist:0": 31
+      "D6Joint_RightWrist:1": 32
+      "D6Joint_RightWrist:2": 33
+      "D6Joint_LeftWrist:0": 34
+      "D6Joint_LeftWrist:1": 35
+      "D6Joint_LeftWrist:2": 36
+      "D6Joint_RightHandThumb1:0": 37
+      "D6Joint_RightHandThumb1:1": 38
+      "D6Joint_RightHandThumb1:2": 39
+      "RevoluteJoint_RightHandIndex1": 40
+      "RevoluteJoint_RightHandMiddle1": 41
+      "RevoluteJoint_RightHandRing1": 42
+      "RevoluteJoint_RightHandPinky1": 43
+      "RevoluteJoint_LeftHandThumb1": 44
+      "RevoluteJoint_LeftHandIndex1": 45
+      "RevoluteJoint_LeftHandMiddle1": 46
+      "RevoluteJoint_LeftHandRing1": 47
+      "RevoluteJoint_LeftHandPinky1": 48
+      "RevoluteJoint_RightHandThumb2": 49
+      "RevoluteJoint_RightHandIndex2": 50
+      "RevoluteJoint_RightHandMiddle2": 51
+      "RevoluteJoint_RightHandRing2": 52
+      "RevoluteJoint_RightHandPinky2": 53
+      "RevoluteJoint_LeftHandThumb2": 54
+      "RevoluteJoint_LeftHandIndex2": 55
+      "RevoluteJoint_LeftHandMiddle2": 56
+      "RevoluteJoint_LeftHandRing2": 57
+      "RevoluteJoint_LeftHandPinky2": 58
+      "RevoluteJoint_RightHandThumb3": 59
+      "RevoluteJoint_RightHandIndex3": 60
+      "RevoluteJoint_RightHandMiddle3": 61
+      "RevoluteJoint_RightHandRing3": 62
+      "RevoluteJoint_RightHandPinky3": 63
+      "RevoluteJoint_LeftHandThumb3": 64
+      "RevoluteJoint_LeftHandIndex3": 65
+      "RevoluteJoint_LeftHandMiddle3": 66
+      "RevoluteJoint_LeftHandRing3": 67
+      "RevoluteJoint_LeftHandPinky3": 68

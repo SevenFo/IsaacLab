@@ -1,6 +1,5 @@
 import threading
 import time
-from typing import Any, Dict
 import torch
 import math
 from PIL import Image
@@ -15,10 +14,7 @@ from robot_brain_system.ui.console import global_console
 
 
 class AliceControl(BaseSkill):
-    """Moves the robot's end-effector to a specified target pose. in samecase, this skill can be helpful for trying a failed skill.
-    Args:
-        target_pose (List[float]): The target pose [x, y, z, qw, qx, qy, qz].
-    """
+    """控制 Alice 机器人的技能。支持固定动作执行 (fixed) 和 动捕实时重定向 (dynamic)。"""
 
     def __init__(self, device="cuda", mode="fixed"):
         super().__init__()
@@ -29,6 +25,10 @@ class AliceControl(BaseSkill):
         self._mocap_lock = (
             threading.Lock()
         )  # To safely update/read mocap data across threads
+        # 内部状态
+        self.joint_names_to_indices = {}
+        self.mocap_map = {}
+        self._mapping_initialized = False
 
     def _update_mocap_data(self, data: dict):
         """[回调函数] 当接收器收到新数据时，此方法会被异步调用。"""
@@ -41,180 +41,17 @@ class AliceControl(BaseSkill):
     ):
         super().initialize(env)
         global_console.log("skill", "Initializing AliceControl Skill...")
-        # --- 1. 初始化机器人姿态 (您的代码) ---
-        global_console.log("skill", "Alice robot initialized to starting pose.")
         alice = self.env.scene["alice"]
-        self.initial_root_state = torch.tensor(
-            [
-                [-1.8, -2.5, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
-            ],  # [-1.8, 0.95, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
-            device=self.env.device,
-            dtype=torch.float32,
-        )
-        alice.write_root_state_to_sim(self.initial_root_state)
-        self.init_alice_joint_position_target = torch.zeros_like(
-            alice.data.joint_pos_target
-        )
-        alice.set_joint_position_target(
-            self.init_alice_joint_position_target,
-        )
-        # write the joint state to sim to directly change the joint position at one step
-        alice.write_joint_state_to_sim(
-            self.init_alice_joint_position_target,
-            torch.zeros_like(self.init_alice_joint_position_target, device=env.device),
-        )
-        # --- 2. 初始化并启动Mocap接收服务器 ---
-        if self.motion_capture_receiver is None and self.mode == "dynamic":
-            global_console.log("skill", "Starting MotionCaptureReceiver server...")
-            self.motion_capture_receiver = MotionCaptureReceiver(
-                data_handler_callback=self._update_mocap_data
-            )
 
-            # 启动服务器在单独线程中运行，以避免阻塞主模拟循环
-            def run_mocap_server():
-                asyncio.run(self.motion_capture_receiver.start_server())
-
-            self._server_thread = threading.Thread(target=run_mocap_server, daemon=True)
-            self._server_thread.start()
-            global_console.log(
-                "skill",
-                "MotionCaptureReceiver server task has been scheduled in background thread.",
-            )
-        obs = env.update(return_obs=True)
-        self.init_root_pose = self.initial_root_state[:, :3].clone().squeeze()
-        self.init_root_quat = self.initial_root_state[:, 3:7].clone().squeeze()
-        frame = (
-            obs.data["policy"]["camera_left"][0].cpu().numpy()
-        )  # Ensure the observation is processed
-        Image.fromarray(frame).save("alice_initialization.png")
-        return obs
-
-    def move_to_operation_position(self):
-        """将 Alice 移动到操作位置的示例方法。"""
-        self.mode = "fixed"
-        alice = self.env.scene["alice"]
-        operation_position = torch.tensor(
-            [[0.4067, -3.2, 2.7, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
-            device=self.env.device,
-            dtype=torch.float32,
-        )
-        init_joint_position_target = self.init_alice_joint_position_target.clone()
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightArm:0"]
-        ] = 0.0
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightArm:1"]
-        ] = math.radians(66.7)
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightArm:2"]
-        ] = math.radians(50.7)
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightForeArm:0"]
-        ] = 0.0
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightForeArm:1"]
-        ] = math.radians(25.9)
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightForeArm:2"]
-        ] = math.radians(-23.2)
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightWrist:0"]
-        ] = math.radians(-141.8)
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightWrist:1"]
-        ] = math.radians(-11.0)
-        init_joint_position_target[
-            :, self.joint_names_to_indices["D6Joint_RightWrist:2"]
-        ] = math.radians(-41.7)
-        alice.write_root_state_to_sim(operation_position)
-        alice.set_joint_position_target(init_joint_position_target)
-        # write the joint state to sim to directly change the joint position at one step
-        alice.write_joint_state_to_sim(
-            init_joint_position_target,
-            torch.zeros_like(init_joint_position_target, device=self.env.device),
-        )
-        for i in range(10):
-            obs = self.env.update(return_obs=True)
-        frame = (
-            obs.data["policy"]["camera_left"][0].cpu().numpy()
-        )  # Ensure the observation is processed
-        Image.fromarray(frame).save("alice_operation_position.png")
-        global_console.log("skill", "Moved Alice to operation position.")
-
-    def move_to_play_position(self):
-        """将 Alice 移动到操作位置的示例方法。"""
-        self.mode = "dynamic"
-        alice = self.env.scene["alice"]
-        operation_position = torch.tensor(
-            [[-1.8, 0.95, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
-            device=self.env.device,
-            dtype=torch.float32,
-        )
-        alice.write_root_state_to_sim(operation_position)
-        self.env.update(return_obs=False)
-        global_console.log("skill", "Moved Alice to play position.")
-
-    def _apply_fixed_action(self, return_obs: bool = False, update_sim: bool = False):
-        if False:
-            env = self.env
-            alice = env.scene["alice"]
-            current_target = alice.data.joint_pos_target.clone()
-            # 修正: 根据初始化, D6Joint_1:1 是索引1 (D6Joint_1:0=0, :1=1, :2=2)
-            # 但原注释说 D6Joint_1:1 对应索引2, 可能意为 D6Joint_1:2? 假设为索引1
-            joint_idx = self.joint_names_to_indices[
-                "D6Joint_RightArm:1"
-            ]  # 修正为 D6Joint_1:1
-            # 定义增量和限制范围（弧度）
-            increment = math.radians(0.1)
-            lower_limit = math.radians(55)
-            upper_limit = math.radians(75)
-            # 初始化或检查方向张量（每个实例一个方向）
-            if (
-                not hasattr(self, "direction")
-                or self.direction.shape[0] != current_target.shape[0]
-            ):
-                self.direction = torch.ones(
-                    current_target.shape[0], device=env.device, dtype=torch.float32
-                )
-            # 获取当前角度
-            current_angles = current_target[:, joint_idx]
-            # 计算下一个角度
-            next_angles = current_angles + increment * self.direction
-            # 检测是否超出边界并反转方向
-            exceeded_upper = next_angles > upper_limit
-            exceeded_lower = next_angles < lower_limit
-            # 更新方向（到达边界则反转）
-            self.direction[exceeded_upper | exceeded_lower] *= -1
-            # 限制角度在范围内
-            next_angles = torch.clamp(next_angles, lower_limit, upper_limit)
-            # 更新目标角度
-            current_target[:, joint_idx] = next_angles
-            # 将目标位置设置回环境
-            alice.set_joint_position_target(current_target)
-            # 写入模拟器，立即生效
-            alice.write_joint_state_to_sim(
-                current_target,
-                torch.zeros_like(current_target, device=self.env.device),
-            )
-        if update_sim:
-            return self.env.update(return_obs=return_obs)
-        else:
-            return None
-
-    def _create_mocap_to_robot_map(self) -> Dict[str, Any]:
-        """
-        创建一个从动捕骨骼到机器人关节的映射字典。
-        这是整个重定向逻辑的核心，您需要在这里定义所有映射关系。
-        使用 find_joints 来获取实际索引。
-        假设关节名称格式为 "D6Joint_LinkName:0", "D6Joint_LinkName:1", "D6Joint_LinkName:2" 对于D6Joint,
-        和 "RevoluteJoint_LinkName" 对于RevoluteJoint。
-        动捕欧拉角索引: 0=X (roll), 1=Y (pitch), 2=Z (yaw) 从 euler_xyz_from_quat
-        axis_mapping: (mocap_axis_idx, scale, offset_rad)
-        """
-        env = self.env
-        alice = env.scene["alice"]
-        # 定义映射: mocap_bone -> {"joint_names": [list of str], "axis_mapping": list of tuples}
-        prelim_map = {
+        # --- 1. 定义机器人结构映射 (核心元数据) ---
+        # 创建一个从动捕骨骼到机器人关节的映射字典。
+        # 这是整个重定向逻辑的核心，您需要在这里定义所有映射关系。
+        # 使用 find_joints 来获取实际索引。
+        # 假设关节名称格式为 "D6Joint_LinkName:0", "D6Joint_LinkName:1", "D6Joint_LinkName:2" 对于 D6Joint,
+        # 和 "RevoluteJoint_LinkName" 对于 RevoluteJoint。
+        # 动捕欧拉角索引：0=X (roll), 1=Y (pitch), 2=Z (yaw) 从 euler_xyz_from_quat
+        # axis_mapping: (mocap_axis_idx, scale, offset_rad)
+        self.prelim_map = {
             "RightArm": {
                 "joint_names": [
                     "D6Joint_RightArm:0",
@@ -286,7 +123,7 @@ class AliceControl(BaseSkill):
             },
             "RightHandMiddle3": {
                 "joint_names": ["RevoluteJoint_RightHandMiddle3"],
-                "axis_mapping": [(2, 1.0, 0.0)],  # 对于手指，只需要映射z轴角度
+                "axis_mapping": [(2, 1.0, 0.0)],  # 对于手指，只需要映射 z 轴角度
             },
             # "RightInHandRing": {
             #     "joint_names": ["RevoluteJoint_RightInHandRing"],
@@ -476,45 +313,210 @@ class AliceControl(BaseSkill):
                 "joint_names": ["RevoluteJoint_LeftAnkle"],
                 "axis_mapping": [(0, 1.0, 0.0)],
             },
-            # Hips 骨骼通常用于驱动根骨骼(root state)，不在关节映射中处理，代码中已有单独逻辑
+            # Hips 骨骼通常用于驱动根骨骼 (root state)，不在关节映射中处理，代码中已有单独逻辑
         }
 
-        # 收集所有关节名称（假设无重复）
-        all_joint_names = []
-        for info in prelim_map.values():
-            all_joint_names.extend(info["joint_names"])
+        # --- 2. 动态获取索引 ---
+        # 展平所有关节名
+        all_requested_names = []
+        for info in self.prelim_map.values():
+            all_requested_names.extend(info["joint_names"])
 
-        # 只调用一次 find_joints
-        mocap_map = {}
+        # 去重并查找
+        all_requested_names = list(set(all_requested_names))
         try:
-            response = alice.find_joints(all_joint_names)
-            if not response.get("success", False):
-                self.logger.warning(f"Failed to find joints: {response}")
-                return mocap_map
-
-            all_indices, all_found_names = response["result"]
-            if len(all_indices) != len(all_joint_names):
-                self.logger.warning(
-                    f"Global mismatch in joints: expected {len(all_joint_names)}, found {len(all_indices)}"
+            response = alice.find_joints(all_requested_names)
+            if response.get("success", False):
+                indices, names = response["result"]
+                self.joint_names_to_indices = dict(zip(names, indices))
+                global_console.log(
+                    "skill",
+                    f"Successfully discovered {len(names)} joints from simulation.",
                 )
-                return mocap_map
-            self.joint_names_to_indices = dict(zip(all_found_names, all_indices))
-            offset = 0
-            for bone_name, info in prelim_map.items():
-                num = len(info["joint_names"])
-                expected_names = info["joint_names"]
-                joint_indices = [self.joint_names_to_indices[n] for n in expected_names]
+            else:
+                self.joint_names_to_indices = self.cfg.get("joint_name_to_indices", {})
+                global_console.log(
+                    "warning", "Simulation find_joints failed. Used config backup."
+                )
+        except Exception as e:
+            self.logger.error(f"Error during joint discovery: {e}")
 
-                mocap_map[bone_name] = {
-                    "joint_indices": joint_indices,
+        # --- 3. 构建动捕专用的结构化 Map ---
+        # 此时已经有了索引，直接填充 self.mocap_map
+        for bone_name, info in self.prelim_map.items():
+            valid_indices = []
+            for j_name in info["joint_names"]:
+                if j_name in self.joint_names_to_indices:
+                    valid_indices.append(self.joint_names_to_indices[j_name])
+
+            if len(valid_indices) == len(info["joint_names"]):
+                self.mocap_map[bone_name] = {
+                    "joint_indices": valid_indices,
                     "axis_mapping": info["axis_mapping"],
                 }
-                offset += num
 
-        except Exception as e:
-            self.logger.warning(f"Error finding joints: {e}")
+        # --- 4. 基础机器人状态初始化 (Root/Joints) ---
+        global_console.log("skill", "Alice robot initialized to starting pose.")
+        self.initial_root_state = torch.tensor(
+            [
+                [-1.8, -2.5, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
+            ],  # [-1.8, 0.95, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]
+            device=self.env.device,
+            dtype=torch.float32,
+        )
+        alice.write_root_state_to_sim(self.initial_root_state)
 
-        return mocap_map
+        self.init_alice_joint_position_target = torch.zeros_like(
+            alice.data.joint_pos_target
+        )
+        alice.set_joint_position_target(
+            self.init_alice_joint_position_target,
+        )
+        # write the joint state to sim to directly change the joint position at one step
+        alice.write_joint_state_to_sim(
+            self.init_alice_joint_position_target,
+            torch.zeros_like(self.init_alice_joint_position_target, device=env.device),
+        )
+
+        # --- 5. 初始化动捕服务器 (仅 dynamic 模式) ---
+        if self.mode == "dynamic":
+            self._compile_mocap_mapping()
+            global_console.log("skill", "Starting MotionCaptureReceiver server...")
+            self.motion_capture_receiver = MotionCaptureReceiver(
+                data_handler_callback=self._update_mocap_data
+            )
+
+            # 启动服务器在单独线程中运行，以避免阻塞主模拟循环
+            def run_mocap_server():
+                asyncio.run(self.motion_capture_receiver.start_server())
+
+            self._server_thread = threading.Thread(target=run_mocap_server, daemon=True)
+            self._server_thread.start()
+            global_console.log(
+                "skill",
+                "MotionCaptureReceiver server task has been scheduled in background thread.",
+            )
+
+        # 保存初始状态快照
+        obs = env.update(return_obs=True)
+        self.init_root_pose = self.initial_root_state[:, :3].clone().squeeze()
+        self.init_root_quat = self.initial_root_state[:, 3:7].clone().squeeze()
+        frame = (
+            obs.data["policy"]["camera_left"][0].cpu().numpy()
+        )  # Ensure the observation is processed
+        Image.fromarray(frame).save("alice_initialization.png")
+        return obs
+
+    def move_to_operation_position(self):
+        """将 Alice 移动到操作位置的示例方法。"""
+        self.mode = "fixed"
+        alice = self.env.scene["alice"]
+        operation_position = torch.tensor(
+            [[0.4067, -3.2, 2.7, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
+            device=self.env.device,
+            dtype=torch.float32,
+        )
+        init_joint_position_target = self.init_alice_joint_position_target.clone()
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightArm:0"]
+        ] = 0.0
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightArm:1"]
+        ] = math.radians(66.7)
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightArm:2"]
+        ] = math.radians(50.7)
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightForeArm:0"]
+        ] = 0.0
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightForeArm:1"]
+        ] = math.radians(25.9)
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightForeArm:2"]
+        ] = math.radians(-23.2)
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightWrist:0"]
+        ] = math.radians(-141.8)
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightWrist:1"]
+        ] = math.radians(-11.0)
+        init_joint_position_target[
+            :, self.joint_names_to_indices["D6Joint_RightWrist:2"]
+        ] = math.radians(-41.7)
+        alice.write_root_state_to_sim(operation_position)
+        alice.set_joint_position_target(init_joint_position_target)
+        # write the joint state to sim to directly change the joint position at one step
+        alice.write_joint_state_to_sim(
+            init_joint_position_target,
+            torch.zeros_like(init_joint_position_target, device=self.env.device),
+        )
+        for i in range(10):
+            obs = self.env.update(return_obs=True)
+        frame = (
+            obs.data["policy"]["camera_left"][0].cpu().numpy()
+        )  # Ensure the observation is processed
+        Image.fromarray(frame).save("alice_operation_position.png")
+        global_console.log("skill", "Moved Alice to operation position.")
+
+    def move_to_play_position(self):
+        """将 Alice 移动到操作位置的示例方法。"""
+        self.mode = "dynamic"
+        alice = self.env.scene["alice"]
+        operation_position = torch.tensor(
+            [[-1.8, 0.95, 2.8, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
+            device=self.env.device,
+            dtype=torch.float32,
+        )
+        alice.write_root_state_to_sim(operation_position)
+        self.env.update(return_obs=False)
+        global_console.log("skill", "Moved Alice to play position.")
+
+    def _apply_fixed_action(self, return_obs: bool = False, update_sim: bool = False):
+        """执行固定的演示动作（例如让右臂在一定范围内摆动）。"""
+        env = self.env
+        alice = env.scene["alice"]
+
+        # 检查是否有关节索引
+        joint_key = "D6Joint_RightArm:1"
+        if joint_key not in self.joint_names_to_indices:
+            return env.update(return_obs=return_obs) if update_sim else None
+
+        current_target = alice.data.joint_pos_target.clone()
+        joint_idx = self.joint_names_to_indices[joint_key]
+
+        # 运动逻辑
+        increment = math.radians(0.001)
+        lower_limit = math.radians(55)
+        upper_limit = math.radians(75)
+
+        if not hasattr(self, "direction"):
+            self.direction = torch.ones(current_target.shape[0], device=env.device)
+
+        # 获取当前角度
+        current_angles = current_target[:, joint_idx]
+        # 计算下一个角度
+        next_angles = current_angles + increment * self.direction
+        # 边界检测与反转
+        exceeded_upper = next_angles > upper_limit
+        exceeded_lower = next_angles < lower_limit
+        # 更新方向（到达边界则反转）
+        self.direction[exceeded_upper | exceeded_lower] *= -1
+        # 限制角度在范围内
+        next_angles = torch.clamp(next_angles, lower_limit, upper_limit)
+        # 更新目标角度
+        current_target[:, joint_idx] = next_angles
+
+        # 将目标位置设置回环境
+        alice.set_joint_position_target(current_target)
+        # 写入模拟器，立即生效
+        alice.write_joint_state_to_sim(
+            current_target,
+            torch.zeros_like(current_target, device=self.env.device),
+        )
+        if update_sim:
+            return self.env.update(return_obs=return_obs)
+        return None
 
     def _compile_mocap_mapping(self):
         """
@@ -533,7 +535,7 @@ class AliceControl(BaseSkill):
         offsets = []
 
         # 遍历生成的 mocap_map
-        # mocap_map 结构: bone_name -> {"joint_indices": [...], "axis_mapping": [(axis, scale, offset), ...]}
+        # mocap_map 结构：bone_name -> {"joint_indices": [...], "axis_mapping": [(axis, scale, offset), ...]}
         for bone_idx, (bone_name, info) in enumerate(self.mocap_map.items()):
             map_bone_names.append(bone_name)
 
@@ -584,21 +586,14 @@ class AliceControl(BaseSkill):
 
         alice = env.scene["alice"]
 
-        # 确保 map 存在且已编译
-        if not hasattr(self, "mocap_map"):
-            self.mocap_map = self._create_mocap_to_robot_map()
-            self._compile_mocap_mapping()  # 编译索引
-
-            # 初始化 Hips 位置 (同原代码)
-            if "Hips" in local_mocap_data:
-                pos_data = local_mocap_data["Hips"]["local_position"]
-                self.init_hips_pos = (
-                    torch.tensor(pos_data, device=env.device, dtype=torch.float32) / 100
-                )
-
-        # 如果尚未编译（例如 map 为空），直接返回
-        if not hasattr(self, "_mapping_initialized"):
+        if not self._mapping_initialized:
             return self.env.update(return_obs=return_obs) if update_sim else None
+
+        if not hasattr(self, "init_hips_pos") and "Hips" in local_mocap_data:
+            pos_data = local_mocap_data["Hips"]["local_position"]
+            self.init_hips_pos = (
+                torch.tensor(pos_data, device=env.device, dtype=torch.float32) / 100
+            )
 
         # --- 向量化核心开始 ---
 
@@ -622,7 +617,7 @@ class AliceControl(BaseSkill):
         all_eulers = torch.stack([roll, pitch, yaw], dim=-1).squeeze()
 
         # 3. 使用预计算的索引提取需要的值 -> (N_mappings,)
-        # 从 all_eulers 中选出对应的骨骼(source_bone)和对应的轴(source_axis)
+        # 从 all_eulers 中选出对应的骨骼 (source_bone) 和对应的轴 (source_axis)
         target_raw_angles = all_eulers[
             self._t_source_bone_idxs, self._t_source_axis_idxs
         ]
@@ -632,7 +627,7 @@ class AliceControl(BaseSkill):
 
         # 5. 批量处理角度限制 (Wrap to -pi, pi)
         # 替代原本的 if target > pi ... elif target < -pi ...
-        # 公式: (x + pi) % (2*pi) - pi
+        # 公式：(x + pi) % (2*pi) - pi
         target_vals = torch.remainder(target_vals + math.pi, 2 * math.pi) - math.pi
 
         # 6. 将计算结果一次性赋值给目标 Tensor
