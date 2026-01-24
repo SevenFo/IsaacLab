@@ -633,7 +633,6 @@ class LiftAndMoveBox(BaseSkill):
         self.running_params = running_params
 
         global_console.log("skill", "[Skill: LiftAndMoveBox] Starting...")
-
         self.action_client = GO1Client(
             host=self.cfg.get("host", "localhost"), port=self.cfg.get("port", 2000)
         )

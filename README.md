@@ -162,3 +162,7 @@ skill_executor.status                     # 当前技能状态
 | 动作无响应                | 共享内存名称不匹配，或 Server 已崩溃         |
 
 
+## QWEN3-VL 模型部署
+```bash
+CUDA_VISIBLE_DEVICES=0,2 vllm serve /quick_data/models/Qwen/Qwen3-VL-30B-A3B-Instruct-FP8/   --tensor-parallel-size 2   --mm-encoder-tp-mode data   --enable-expert-parallel   --async-schedulin --max-model-len 40000
+```

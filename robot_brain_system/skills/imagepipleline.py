@@ -41,10 +41,10 @@ class ImagePipeline:
         """
         多目标分割与跟踪管道（集成视觉语言模型）
 
-        参数:
-        sam_checkpoint: SAM模型权重路径
-        sam_model_config: SAM模型类型配置 (i.e. "configs/sam2.1/sam2.1_hiera_l.yaml")
-        cutie_model: 预加载的CUTIE模型实例
+        参数：
+        sam_checkpoint: SAM 模型权重路径
+        sam_model_config: SAM 模型类型配置 (i.e. "configs/sam2.1/sam2.1_hiera_l.yaml")
+        cutie_model: 预加载的 CUTIE 模型实例
         vl_adapter: 视觉语言模型适配器实例（QwenVLAdapter）
         """
         self.device = device
@@ -60,7 +60,7 @@ class ImagePipeline:
                 build_sam2(sam_model_config, sam_checkpoint, device=self.device)
             )
 
-        # 初始化CUTIE - 确保模型在正确设备上
+        # 初始化 CUTIE - 确保模型在正确设备上
         self.cutie = cutie_model.to(self.device)
         self.processor = InferenceCore(self.cutie, cfg=self.cutie.cfg)
         self.processor.max_internal_size = -1
@@ -74,7 +74,7 @@ class ImagePipeline:
         self.instruction = ""
 
     def _image_to_base64(self, image: np.ndarray) -> str:
-        """将numpy图像转换为base64编码字符串"""
+        """将 numpy 图像转换为 base64 编码字符串"""
         pil_img = Image.fromarray(image)
         buffered = BytesIO()
         pil_img.save(buffered, format="JPEG")
@@ -91,11 +91,11 @@ class ImagePipeline:
         """
         使用视觉语言模型生成目标边界框
 
-        参数:
-        frame: RGB格式的输入图像 [H, W, 3]
+        参数：
+        frame: RGB 格式的输入图像 [H, W, 3]
         instruction: 自然语言指令（如"the red cup on the left"）
 
-        返回:
+        返回：
         bboxes: 边界框列表 [[x1,y1,x2,y2], ...]
         """
 
@@ -158,7 +158,7 @@ class ImagePipeline:
             # 无法识别的格式，抛出错误以便上层处理
             raise ValueError(f"Unsupported bbox format or out-of-range values: {bbox}")
 
-        # 构建VL模型输入
+        # 构建 VL 模型输入
         prompt = BrainMemory()
         prompt.add_user_input(
             [
@@ -175,7 +175,7 @@ class ImagePipeline:
 
         global_console.log("skill", f"response from vl: \n{response}")
 
-        # 提取JSON部分
+        # 提取 JSON 部分
         json_str = response[response.find("```json") : response.rfind("```") + 3]
         global_console.log("skill", f"json_str: \n{json_str}")
         bbox_list = json_repair.loads(json_str)
@@ -224,16 +224,16 @@ class ImagePipeline:
         visualize: bool = False,
     ) -> tuple[np.ndarray, list | None]:
         """
-        端到端初始化流程：VL生成bbox -> SAM分割 -> CUTIE初始化
+        端到端初始化流程：VL 生成 bbox -> SAM 分割 -> CUTIE 初始化
 
-        参数:
-        frame: RGB格式的输入图像
+        参数：
+        frame: RGB 格式的输入图像
         instruction: 自然语言指令
 
-        返回:
-        combined_mask: 组合后的多目标mask
+        返回：
+        combined_mask: 组合后的多目标 mask
         """
-        # Step 1: 通过VL模型获取bbox
+        # Step 1: 通过 VL 模型获取 bbox
         self.instruction = instruction
         bboxes = self.get_bbox_from_vl(frame, instruction)
         if not bboxes:
@@ -244,7 +244,7 @@ class ImagePipeline:
                 bboxes,
                 save_path=f"vis_{instruction}_{int(time.time() * 10)}.png",
             )
-        # Step 2: SAM生成mask
+        # Step 2: SAM 生成 mask
         if return_bbox:
             return self.initialize_masks(frame, bboxes), bboxes
         else:
@@ -256,37 +256,37 @@ class ImagePipeline:
         """
         初始化多目标分割
 
-        参数:
-        frame: RGB格式的输入图像 [H, W, 3]
+        参数：
+        frame: RGB 格式的输入图像 [H, W, 3]
         bboxes: 多个目标的边界框列表 [[x1, y1, x2, y2], ...]
 
-        返回:
-        combined_mask: 组合后的多目标mask，每个目标用不同整数ID表示
+        返回：
+        combined_mask: 组合后的多目标 mask，每个目标用不同整数 ID 表示
         """
-        # 转换颜色空间并设置SAM图像
+        # 转换颜色空间并设置 SAM 图像
         rgb_frame = frame
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
             self.predictor.set_image(rgb_frame)
 
-            # 生成并组合多个目标的mask
+            # 生成并组合多个目标的 mask
             combined_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
             object_ids = []
             for obj_idx, bbox in enumerate(bboxes):
-                # SAM预测最佳mask
+                # SAM 预测最佳 mask
                 masks, scores, _ = self.predictor.predict(
                     box=np.array(bbox), multimask_output=True
                 )
                 best_mask = masks[np.argmax(scores)]
 
-                # 确保mask是布尔类型
+                # 确保 mask 是布尔类型
                 best_mask = best_mask.astype(bool)
 
-                # 分配唯一对象ID (从1开始)
+                # 分配唯一对象 ID (从 1 开始)
                 obj_id = obj_idx + 1
                 combined_mask[best_mask] = obj_id
                 object_ids.append(obj_id)
 
-        # 初始化CUTIE处理器
+        # 初始化 CUTIE 处理器
         mask_tensor = torch.from_numpy(combined_mask).to(self.device)
         self.processor.clear_memory()
         self.processor.step(
@@ -313,11 +313,11 @@ class ImagePipeline:
         """
         更新多目标跟踪结果
 
-        参数:
-        frame: RGB格式的新帧 [H, W, 3]
+        参数：
+        frame: RGB 格式的新帧 [H, W, 3]
 
-        返回:
-        list: 每个目标的二值mask列表 [mask1, mask2, ...]
+        返回：
+        list: 每个目标的二值 mask 列表 [mask1, mask2, ...]
         """
         if not self.is_initialized:
             raise RuntimeError("Pipeline not initialized. Call initialize_masks first.")
@@ -335,7 +335,7 @@ class ImagePipeline:
             if image_tensor.dtype == torch.uint8 or torch.max(image_tensor) > 1.0:
                 image_tensor = image_tensor.float() / 255.0
 
-        # CUTIE推理
+        # CUTIE 推理
         with torch.no_grad():
             output_prob = self.processor.step(image_tensor)
             current_mask = self.processor.output_prob_to_mask(output_prob)
@@ -347,7 +347,7 @@ class ImagePipeline:
                 current_mask_np,
                 save_path=f"vis_mask_{self.instruction}_{int(time.time() * 10)}.png",
             )
-        # 分离各个目标的mask
+        # 分离各个目标的 mask
         return current_mask_np, [
             (current_mask_np == obj_id) for obj_id in self.current_objects
         ]
@@ -356,14 +356,14 @@ class ImagePipeline:
         """
         动态添加新目标到现有跟踪
 
-        参数:
-        frame: RGB格式的当前帧
+        参数：
+        frame: RGB 格式的当前帧
         bbox: 新目标的边界框 [x1, y1, x2, y2]
 
-        返回:
-        new_mask: 新目标的单独mask
+        返回：
+        new_mask: 新目标的单独 mask
         """
-        # 生成新目标mask
+        # 生成新目标 mask
         rgb_frame = frame[..., ::-1]
         self.predictor.set_image(rgb_frame)
         masks, scores, _ = self.predictor.predict(
@@ -371,13 +371,13 @@ class ImagePipeline:
         )
         new_mask = masks[np.argmax(scores)]
 
-        # 分配新ID
+        # 分配新 ID
         new_id = max(self.current_objects) + 1 if self.current_objects else 1
         new_mask_tensor = torch.from_numpy(new_mask.astype(np.uint8) * new_id).to(
             self.device
         )
 
-        # 合并到现有mask
+        # 合并到现有 mask
         combined_mask = self.processor.output_prob_to_mask(self.processor.prob)
         combined_mask = torch.where(new_mask_tensor > 0, new_mask_tensor, combined_mask)
 
@@ -443,11 +443,11 @@ class ImagePipeline:
 
     def cleanup(self):
         """
-        彻底清理并释放所有占用的资源，特别是GPU显存。
+        彻底清理并释放所有占用的资源，特别是 GPU 显存。
         """
         global_console.log("skill", "[ImagePipeline] Starting cleanup process...")
 
-        # 步骤 1: 将所有模型移到CPU，主动释放GPU张量
+        # 步骤 1: 将所有模型移到 CPU，主动释放 GPU 张量
         if "cuda" in self.device:
             self.move_to("cpu")
 
@@ -464,7 +464,7 @@ class ImagePipeline:
         if hasattr(self, "vl_adapter"):
             del self.vl_adapter
 
-        # 步骤 3: (关键!) 调用垃圾回收并强制PyTorch清理其缓存
+        # 步骤 3: (关键!) 调用垃圾回收并强制 PyTorch 清理其缓存
         gc.collect()
         if torch.cuda.is_available():
             global_console.log(
