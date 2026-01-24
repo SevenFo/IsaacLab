@@ -11,6 +11,9 @@ from hydra.core.global_hydra import GlobalHydra  # [新增]
 # 导入全局控制台
 from robot_brain_system.ui.console import global_console
 
+# 导入状态枚举用于比较
+from robot_brain_system.core.types import SystemStatus
+
 
 def backend_worker(cfg: DictConfig):
     """
@@ -71,7 +74,7 @@ def backend_worker(cfg: DictConfig):
 
     # 5. 执行任务
     task_instruction = "先调整箱子的位置和方向，然后 grasp the spanner in the red box, then move the spanner to the white hand palm, and release it there."
-    task_instruction = "请将桌面的红色工具箱摆放至按钮正对机械臂的位置，然后按下黄色按钮打开工具箱，从工具箱中取出黄色扳手并递到手掌上。"
+    task_instruction = "请将桌面的红色工具箱旋转至按钮朝向机械臂，然后按下黄色按钮打开工具箱，从工具箱中取出黄色扳手并递到手掌上。"
     # task_instruction = "move to the red box"
 
     global_console.log("brain", f"Executing Task: {task_instruction}")
@@ -92,25 +95,34 @@ def backend_worker(cfg: DictConfig):
         while system.state.is_running:
             time.sleep(2)
 
-            status = system.get_status()
-            system_op = status.get("system", {}).get("status", "unknown")
-            brain_op = status.get("brain", {}).get("status", "unknown")
-            sim_skill_op = (
-                status.get("simulator", {})
+            # 直接从 SystemState 获取状态枚举，而非从 get_status() 字符串判断
+            system_status = system.state.status  # SystemStatus 枚举
+            status_dict = system.get_status()
+
+            # Brain 状态：从 status 字典获取布尔标志
+            brain_has_task = status_dict.get("brain", {}).get("has_task", False)
+            brain_has_pending_skills = status_dict.get("brain", {}).get(
+                "has_pending_skills", False
+            )
+
+            # Skill Executor 状态
+            skill_executor_status = (
+                status_dict.get("simulator", {})
                 .get("skill_executor", {})
                 .get("status", "unknown")
             )
 
-            # # 在 UI 中打印状态
+            # 调试日志（可选）
             # global_console.log(
             #     "info",
-            #     f"STATUS | Sys: {system_op} | Brain: {brain_op} | Skill: {sim_skill_op}",
+            #     f"STATUS | Sys: {system_status.name} | Brain has_task: {brain_has_task} | Skill: {skill_executor_status}",
             # )
 
-            # 成功重启逻辑
-            if system_op == "idle" and brain_op == "idle":
+            # === 成功完成判断 ===
+            # 系统处于 IDLE 且 Brain 没有待执行任务
+            if system_status == SystemStatus.IDLE and not brain_has_task:
                 global_console.log(
-                    "success", "Task completed: System and Brain are both idle."
+                    "success", "Task completed: System is IDLE and Brain has no task."
                 )
                 success_times += 1
 
@@ -120,27 +132,40 @@ def backend_worker(cfg: DictConfig):
 
                 global_console.log(
                     "brain",
-                    f"Restarting Task (Run {success_times + failed_times + 1})...",
+                    f"Restarting Task (Run {success_times, failed_times + 1}/{success_times}:{failed_times}/{running_times})...",
                 )
-                system.reset()
+                if not system.reset():
+                    global_console.log("error", "System reset failed.")
+                    failed_times += 1
+                    continue
+
                 if not system.execute_task(task_instruction):
                     global_console.log("error", "Failed to restart task.")
+                    failed_times += 1
 
-            # 错误重启逻辑
-            if "error" in str(system_op).lower() or "error" in str(brain_op).lower():
-                error_msg = status.get("system", {}).get("error_message") or status.get(
-                    "brain", {}
-                ).get("error_message")
+            # === 错误处理 ===
+
+            elif system_status == SystemStatus.ERROR:
+                error_msg = system.state.error_message or "Unknown error"
                 global_console.log("error", f"System entered ERROR state: {error_msg}")
                 failed_times += 1
 
                 if success_times + failed_times >= running_times:
+                    global_console.log(
+                        "system", "Target run count reached (with errors)."
+                    )
                     break
 
-                global_console.log("brain", "System reset after error. Retrying...")
-                system.reset()
+                global_console.log(
+                    "brain",
+                    f"Resetting after error (Attempt {success_times + failed_times}/{running_times})...",
+                )
+                if not system.reset():
+                    global_console.log("error", "System reset failed after error.")
+                    continue
+
                 if not system.execute_task(task_instruction):
-                    global_console.log("error", "Failed to retry task.")
+                    global_console.log("error", "Failed to retry task after error.")
 
     except Exception as e:
         global_console.log("error", f"Unexpected error in backend loop: {e}")

@@ -1721,11 +1721,13 @@ class QwenVLBrain:
             "DO NOT USE any placeholder values in the JSON.\n"
             "BEFORE JSON CONTENT, include a brief explanation of your reasoning including your analysis of the scene and task.\n\n"
             "**Example Response (normal case):**\n"
-            "reasoning: There is a closed drawer on the table. To pick up the tool inside, we first need to open the drawer, then grasp the tool.\n"
+            "reasoning: The task requires opening a red toolbox and retrieving a yellow wrench. The toolbox is already fully inside the green marker frame, but its current orientation is facing forward, not toward the right-side robot arm as required by the `open_box` skill. Therefore, the first step must be to reorient the box using `move_box_to_suitable_position` so that the yellow button faces the robot. After that, the box can be opened, the wrench grasped, and finally handed over.\n"
             "```json\n"
             "[\n"
-            '    {"step": 1, "method": "open_drawer", "params": {}},\n'
-            '    {"step": 2, "method": "grasp_object", "params": {"target": "tool"}}\n'
+            '    {"step": 1, "method": "move_box_to_suitable_position", "params": {}},\n'
+            '    {"step": 2, "method": "open_box", "params": {}},\n'
+            '    {"step": 3, "method": "grasp_spanner", "params": {}},\n'
+            '    {"step": 4, "method": "move_to_target_object", "params": {"target_object": "hand"}}\n'
             "]\n"
             "```\n"
             "\n**Example Response (cannot start, requires human help):**\n"

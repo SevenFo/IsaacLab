@@ -412,7 +412,7 @@ class AliceControl(BaseSkill):
         self.mode = "fixed"
         alice = self.env.scene["alice"]
         operation_position = torch.tensor(
-            [[0.4067, -3.2, 2.7, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
+            [[0.3067, -3.4, 2.7, 0.5, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]],
             device=self.env.device,
             dtype=torch.float32,
         )
@@ -437,13 +437,13 @@ class AliceControl(BaseSkill):
         ] = math.radians(-23.2)
         init_joint_position_target[
             :, self.joint_names_to_indices["D6Joint_RightWrist:0"]
-        ] = math.radians(-141.8)
+        ] = math.radians(-150)  # (-141.8)
         init_joint_position_target[
             :, self.joint_names_to_indices["D6Joint_RightWrist:1"]
-        ] = math.radians(-11.0)
+        ] = math.radians(10)  # (-11.0)
         init_joint_position_target[
             :, self.joint_names_to_indices["D6Joint_RightWrist:2"]
-        ] = math.radians(-41.7)
+        ] = math.radians(8)  # (-41.7)
         alice.write_root_state_to_sim(operation_position)
         alice.set_joint_position_target(init_joint_position_target)
         # write the joint state to sim to directly change the joint position at one step

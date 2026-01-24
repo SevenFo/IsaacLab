@@ -435,8 +435,8 @@ class RobotBrainSystem:
             self.print("[RobotBrainSystem] Simulator not ready for reset.")
             return False
         try:
-            resp = self.simulator.reset_env()
-            if resp:
+            resp, _ = self.env_proxy.reset()
+            if resp is not None:
                 self.print("[RobotBrainSystem] Simulation reset successfully.")
                 return True
             else:
@@ -451,14 +451,38 @@ class RobotBrainSystem:
 
     def reset(self) -> bool:
         self.print("[RobotBrainSystem] Resetting system...")
+
+        # 1. Reset simulation environment
         self.reset_simulation()
+
+        # 2. Reset Brain (includes BrainState with task_memory, and BrainMemory instances)
         self.brain.reset()
 
+        # 3. Reset SystemState (creates new instance, clears all history)
         self.state = SystemState()
         self.is_shutdown_requested = False
         self.state.is_running = True
 
-        # Core components - use global registry
+        # 4. Clear pending human feedback
+        self.pending_human_feedback = None
+
+        # 5. Clear EnvProxy observation buffer if exists
+        if self.env_proxy:
+            self.env_proxy.clear_observation_buffer()
+            self.print("[RobotBrainSystem] EnvProxy observation buffer cleared")
+
+        # 6. Reset SkillExecutor state if exists
+        if self.skill_executor:
+            # Ensure no thread is running
+            if self.skill_executor.is_running():
+                self.skill_executor.terminate_current_skill()
+            # Reset executor status
+            self.skill_executor.status = SkillStatus.IDLE
+            self.skill_executor.status_info = ""
+            self.skill_executor._reset_current_skill_state()
+            self.print("[RobotBrainSystem] SkillExecutor state reset")
+
+        # 7. Core components - use global registry
         self.skill_registry = get_skill_registry()
         self.print("[RobotBrainSystem] Initialized")
         if self.skill_registry is None:
@@ -471,7 +495,7 @@ class RobotBrainSystem:
             f"[RobotBrainSystem] get {len(self.skill_registry.list_skills())} skills from simulator."
         )
 
-        # Connect brain to skill registry (for planning purposes)
+        # 8. Connect brain to skill registry (for planning purposes)
         self.brain.set_skill_registry(self.skill_registry)
         self.brain.set_system_state(state=self.state)
 
@@ -1040,7 +1064,12 @@ class RobotBrainSystem:
                 )
             except Exception as e:
                 self.console.log("error", f"/reset_spanner failed: {e}")
-
+        elif cmd == "reset":
+            try:
+                self.reset()
+                self.console.log("system", "/reset completed.")
+            except Exception as e:
+                self.console.log("error", f"/reset failed: {e}")
         else:
             self.console.log("error", f"Unknown command: {cmd}")
 

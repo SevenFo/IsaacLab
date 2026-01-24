@@ -193,16 +193,14 @@ class EnvProxy:
         # 设置扳手的位置
         spanner_rel_pos = torch.tensor(
             [0, -0.04, 0.001], device=self.device
-        )  # asset2相对于asset1的位置偏移
-        spanner_rel_rot = (
-            math_utils.quat_from_euler_xyz(  # asset2相对于asset1的旋转(绕x轴90度)
-                torch.tensor([0.0], device=self.device),
-                torch.tensor([0.0], device=self.device),
-                torch.tensor([math.pi / 2], device=self.device),
-            )
+        )  # asset2 相对于 asset1 的位置偏移
+        spanner_rel_rot = math_utils.quat_from_euler_xyz(  # asset2 相对于 asset1 的旋转 (绕 x 轴 90 度)
+            torch.tensor([0.0], device=self.device),
+            torch.tensor([0.0], device=self.device),
+            torch.tensor([math.pi / 2], device=self.device),
         )
         spanner_pos = box_pos[:, :3] - spanner_rel_pos.unsqueeze(0)
-        # 旋转 = asset1的旋转 * 相对旋转
+        # 旋转 = asset1 的旋转 * 相对旋转
         spanner_orient = math_utils.quat_mul(box_quat, spanner_rel_rot)
         spanner.write_root_pose_to_sim(
             torch.cat([spanner_pos, spanner_orient], dim=-1),
@@ -502,7 +500,7 @@ class EnvProxy:
         if success:
             # Invalidate cache on reset
             self._scene_cache_valid = False
-
+            self.switch_heavybox = None  # reset heavy box switch state
             # 如果是缺箱子测试场景，重置后直接把箱子移走
             if self.scene_mode == "missing_box_human_intervention_test":
                 self.reset_box_and_spanner("far")
