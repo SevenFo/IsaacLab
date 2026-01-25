@@ -564,6 +564,18 @@ def main():
 
                     elif cmd == "reset_env":
                         # Reset environment
+                        # 可选：设置测试场景（用于 visual test 环境）
+                        scene_name = command_data.get("scene_name")
+                        if scene_name is not None:
+                            try:
+                                from isaaclab_tasks.manager_based.manipulation.move_rot_0923.mdp.visual_test_events import (
+                                    set_current_scene,
+                                )
+
+                                set_current_scene(scene_name)
+                            except ImportError:
+                                pass  # 不是 visual test 环境，忽略
+
                         current_obs, info = env.reset()
                         obs_payload = _prepare_observation(current_obs)
                         shm_manager.write_observation(obs_payload)

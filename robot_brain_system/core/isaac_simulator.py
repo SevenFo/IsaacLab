@@ -743,9 +743,17 @@ class IsaacSimulator:
             )
         return None
 
-    def reset_env(self) -> bool:
-        """Reset the simulation environment(s)."""
-        response = self._send_command_and_recv({"command": "reset_env"})
+    def reset_env(self, scene_name: str | None = None) -> bool:
+        """Reset the simulation environment(s).
+
+        Args:
+            scene_name: Optional test scene name for visual test environments.
+                       ("red_box", "spanner", "hand") or None for default behavior.
+        """
+        cmd = {"command": "reset_env"}
+        if scene_name is not None:
+            cmd["scene_name"] = scene_name
+        response = self._send_command_and_recv(cmd)
         if response and response.get("success"):
             return True
         return False

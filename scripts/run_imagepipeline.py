@@ -59,6 +59,14 @@ class ImagePipelineTester:
         self.scene_modes = ["default", "random"]
         self.current_scene_mode_idx = 0
 
+        # 测试场景
+        self.test_scenes = {
+            "scene1": "red_box",  # 红色工具箱 + 干扰箱子
+            "scene2": "spanner",  # 扳手 + 干扰工具
+            "scene3": "hand",  # 人手检测
+        }
+        self.current_test_scene: str | None = None
+
     def initialize(self) -> bool:
         """初始化测试环境"""
         try:
@@ -101,17 +109,25 @@ class ImagePipelineTester:
                 return False
 
             obs_dict = obs.data.get("policy", {})
+            # 查找所有相机观测（包括 camera_*, inspector_* 等）
+            camera_prefixes = ("camera_", "inspector_")
             self.available_cameras = [
                 k
                 for k in obs_dict.keys()
-                if k.startswith("camera_") and isinstance(obs_dict[k], torch.Tensor)
+                if k.startswith(camera_prefixes)
+                and isinstance(obs_dict[k], torch.Tensor)
             ]
 
             if not self.available_cameras:
                 global_console.log("error", "[Tester] No cameras found in observation")
                 return False
 
-            self.current_camera = self.available_cameras[0]
+            # 优先使用 inspector_top 作为默认相机
+            preferred_camera = "inspector_top"
+            if preferred_camera in self.available_cameras:
+                self.current_camera = preferred_camera
+            else:
+                self.current_camera = self.available_cameras[0]
             global_console.log(
                 "system", f"[Tester] Available cameras: {self.available_cameras}"
             )
@@ -324,16 +340,91 @@ class ImagePipelineTester:
         except Exception as e:
             global_console.log("error", f"[Tester] Reset failed: {e}")
 
-    def reset_box_and_spanner(self, mode: str = "normal"):
-        """重置箱子和扳手位置"""
+    def enable_test_scene(self, scene_name: str):
+        """启用指定的测试场景
+
+        Args:
+            scene_name: 场景名称 (scene1, scene2, scene3 或 red_box, spanner, hand)
+        """
+        # 映射场景名称
+        scene_map = {
+            "scene1": "red_box",
+            "1": "red_box",
+            "red_box": "red_box",
+            "box": "red_box",
+            "scene2": "spanner",
+            "2": "spanner",
+            "spanner": "spanner",
+            "tool": "spanner",
+            "scene3": "hand",
+            "3": "hand",
+            "hand": "hand",
+            "alice": "hand",
+        }
+
+        scene_key = scene_map.get(scene_name.lower())
+        if scene_key is None:
+            global_console.log(
+                "error",
+                f"[Tester] Unknown scene: {scene_name}. Available: scene1/red_box, scene2/spanner, scene3/hand",
+            )
+            return
+
+        self.current_test_scene = scene_key
+        global_console.log("system", f"[Tester] Test scene enabled: {scene_key}")
+
+        # 重置环境以应用场景（场景名会通过 reset 命令传递给子进程）
+        self.reset_test_scene()
+
+    def reset_test_scene(self):
+        """重置当前测试场景（重新随机化）"""
+        if self.current_test_scene is None:
+            global_console.log(
+                "error",
+                "[Tester] No test scene selected. Use 'scene <name>' to select one.",
+            )
+            return
+
         global_console.log(
-            "system", f"[Tester] Resetting box/spanner to '{mode}' mode..."
+            "system", f"[Tester] Resetting test scene: {self.current_test_scene}..."
         )
+
         try:
-            self.env_proxy.reset_box_and_spanner(mode)
-            global_console.log("system", f"[Tester] Box/spanner reset to '{mode}' mode")
+            # 通过重置环境来触发场景随机化
+            # 场景名会传递给子进程，在 reset 之前设置 _current_scene
+            self.env_proxy._simulator.reset_env(scene_name=self.current_test_scene)
+
+            # 更新 env_proxy 缓存状态
+            self.env_proxy._scene_cache_valid = False
+
+            # 清理 pipeline 状态
+            if self.pipeline:
+                self.pipeline.cleanup()
+                self.pipeline = None
+
+            global_console.log(
+                "system",
+                f"[Tester] Test scene '{self.current_test_scene}' reset complete",
+            )
         except Exception as e:
-            global_console.log("error", f"[Tester] Reset box/spanner failed: {e}")
+            global_console.log("error", f"[Tester] Reset test scene failed: {e}")
+
+    def list_test_scenes(self):
+        """列出所有可用的测试场景"""
+        global_console.log("info", "[Tester] Available test scenes:")
+        scenes_info = [
+            ("scene1 / red_box", "红色工具箱检测 + 0-3 个干扰箱子"),
+            ("scene2 / spanner", "扳手检测 + 0-2 个干扰工具"),
+            ("scene3 / hand", "人手检测 (Alice 模型)"),
+        ]
+        for name, desc in scenes_info:
+            marker = (
+                " (current)"
+                if self.current_test_scene
+                and name.split(" / ")[1] == self.current_test_scene
+                else ""
+            )
+            global_console.log("info", f"  {name}: {desc}{marker}")
 
     def capture_frame(self, camera_name: str | None = None):
         """保存当前帧"""
@@ -390,6 +481,12 @@ def print_help():
 ║   update               测试 update_masks (需先 test)              ║
 ║   track [N]            连续追踪 N 帧 (默认 10)                     ║
 ║                                                                   ║
+║ 场景命令：                                                        ║
+║   scenes               列出所有测试场景                            ║
+║   scene <name>         启用测试场景                                ║
+║                        例：scene 1 / scene red_box                ║
+║   rerandom             重新随机化当前测试场景                       ║
+║                                                                   ║
 ║ 相机命令：                                                        ║
 ║   cameras              列出所有可用相机                            ║
 ║   cam <name>           切换当前相机                                ║
@@ -397,8 +494,6 @@ def print_help():
 ║                                                                   ║
 ║ 环境命令：                                                        ║
 ║   reset                重置整个环境                                ║
-║   normal               重置 box/spanner 到正常位置                 ║
-║   far                  移走 box/spanner (测试缺失场景)             ║
 ║                                                                   ║
 ║ 其他命令：                                                        ║
 ║   help, h, ?           显示此帮助                                  ║
@@ -446,15 +541,18 @@ def backend_worker(cfg: DictConfig):
         try:
             # 非阻塞检查输入队列
             try:
-                cmd = global_console.input_queue.get(timeout=0.5)
+                cmd = global_console.input_queue.get(timeout=0.01)
             except Exception:
+                tester.env_proxy.update(return_obs=False) if tester.env_proxy else None
                 continue
 
             if not cmd:
+                tester.env_proxy.update(return_obs=False) if tester.env_proxy else None
                 continue
 
             parts = cmd.strip().split()
             if not parts:
+                tester.env_proxy.update(return_obs=False) if tester.env_proxy else None
                 continue
 
             command = parts[0].lower()
@@ -528,12 +626,21 @@ def backend_worker(cfg: DictConfig):
             elif command == "reset":
                 tester.reset_environment()
 
-            # 重置 box/spanner 位置
-            elif command == "normal":
-                tester.reset_box_and_spanner("normal")
+            # 场景命令
+            elif command == "scenes":
+                tester.list_test_scenes()
 
-            elif command == "far":
-                tester.reset_box_and_spanner("far")
+            elif command == "scene":
+                if not args:
+                    global_console.log(
+                        "error", "Usage: scene <name>  (e.g., scene 1 / scene red_box)"
+                    )
+                    tester.list_test_scenes()
+                    continue
+                tester.enable_test_scene(args[0])
+
+            elif command in ["rerandom", "randomize", "rand"]:
+                tester.reset_test_scene()
 
             # 状态
             elif command == "status":
@@ -542,6 +649,10 @@ def backend_worker(cfg: DictConfig):
                 )
                 global_console.log(
                     "info", f"[Status] Available cameras: {tester.available_cameras}"
+                )
+                global_console.log(
+                    "info",
+                    f"[Status] Current test scene: {tester.current_test_scene or 'None'}",
                 )
                 global_console.log(
                     "info",
